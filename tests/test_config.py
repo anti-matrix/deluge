@@ -1,4 +1,5 @@
 import dataclasses
+import shutil
 
 import pytest
 import yaml
@@ -35,6 +36,8 @@ def test_hash_is_stable():
 
 
 def _write(tmp_path, data):
+    # The config names the knowledge graph file next to it (Round 4); copy it along.
+    shutil.copy(DEFAULT_CONFIG_PATH.parent / data["knowledge"]["graph_file"], tmp_path)
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump(data), encoding="utf-8")
     return p

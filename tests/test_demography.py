@@ -20,6 +20,13 @@ from deluge.world.climate import Drought
 
 WORLD = 1
 HISTORIES = (1, 2, 3, 4, 5)
+# Round 3 behaviour is that of foragers: these tests switch off the teachers and
+# invention (Round 4), so no settlement learns herding or farming.
+FORAGERS = {"teachers": {"enabled": False}, "knowledge": {"invention_scale": 0.0}}
+
+
+def foragers(**kw) -> DelugeModel:
+    return DelugeModel(config=load_config(overrides=FORAGERS), **kw)
 
 
 def check_invariants(m: DelugeModel) -> None:
@@ -40,7 +47,7 @@ def check_invariants(m: DelugeModel) -> None:
 def run3000():
     """World 1, history 1 to year 3,000 (through the sea-level rise), invariants checked
     every year. Built for 3,100 years so later years can be stepped from it."""
-    m = DelugeModel(world_seed=WORLD, history_seed=1, years=3100)
+    m = foragers(world_seed=WORLD, history_seed=1, years=3100)
     check_invariants(m)
     while m.year < 3000:
         m.step()
@@ -52,7 +59,7 @@ def run3000():
 
 
 def test_history_seed_keeps_the_world(run3000):
-    other = DelugeModel(world_seed=WORLD, history_seed=2, years=1)
+    other = foragers(world_seed=WORLD, history_seed=2, years=1)
     np.testing.assert_array_equal(other.world.elevation, run3000.world.elevation)
     assert [f.cell for f in other.lineages.founders] != [f.cell for f in run3000.lineages.founders]
 
@@ -98,7 +105,9 @@ def test_pinned_placement(run3000):
                 min_size=1, max_size=50))
 def test_population_never_negative(rows):
     pop, ratio, noise = (np.array(c) for c in zip(*rows))
-    new, deaths = next_population(pop, ratio, load_config().demography, noise)
+    d = load_config().demography
+    new, deaths = next_population(pop, ratio, np.full(len(pop), d.forage_abundance),
+                                  np.full(len(pop), d.forage_max_growth), d, noise)
     assert (new >= 0).all() and (deaths >= 0).all()
     assert (deaths <= pop + 1e-9).all()
 
@@ -106,7 +115,7 @@ def test_population_never_negative(rows):
 def test_bands_grow_toward_capacity_and_stabilize():
     """With splitting switched off, each founding band grows until it holds its cell's
     capacity, then stays there."""
-    cfg = load_config().with_overrides({"migration": {"split_threshold": 1e9}})
+    cfg = load_config(overrides=FORAGERS).with_overrides({"migration": {"split_threshold": 1e9}})
     m = DelugeModel(config=cfg, world_seed=WORLD, history_seed=1, years=4000)
     sids = [f.settlement for f in m.lineages.founders]
     ratios = []
@@ -138,12 +147,12 @@ def test_bands_spread_over_centuries(run3000):
 
 
 def test_population_in_range_and_no_lineage_lost_everywhere():
-    """Acceptance on world seed 1, history seeds 1-5: total population at year 3,000
-    between 0.5 and 10 million, and every founding group survives in some run."""
+    """Round 3 acceptance (foragers) on world seed 1, history seeds 1-5: total population
+    at year 3,000 between 0.5 and 10 million, and every founding group survives in some run."""
     survived = np.zeros(5, dtype=bool)
     totals = []
     for h in HISTORIES:
-        m = DelugeModel(world_seed=WORLD, history_seed=h, years=3000)
+        m = foragers(world_seed=WORLD, history_seed=h, years=3000)
         m.run()
         totals.append(m.population)
         survived |= m.lineage_population > 0

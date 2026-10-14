@@ -28,11 +28,14 @@ from mesa.discrete_space import PropertyLayer
 
 from deluge.agents.founders import landmass_labels, place_founders
 from deluge.agents.lineage import LineageRegistry
-from deluge.agents.settlement import Settlement, SettlementTable
+from deluge.agents.settlement import MODES, Settlement, SettlementTable
+from deluge.agents.teachers import TeachersState
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
+from deluge.data.events import EventLog, entity
 from deluge.rng import RngStreams
-from deluge.systems import capacity, climate, demography, subsistence
+from deluge.systems import capacity, climate, demography, knowledge, subsistence
+from deluge.systems.knowledge import KnowledgeGraph, usable_mask
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
 from deluge.world.climate import ClimateShocks, sea_level_curve, temp_anomaly_series
@@ -45,9 +48,11 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
     subsistence.run,
     demography.grow,
     demography.migrate,
+    knowledge.run,
 )
 
-YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost")
+YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost", "techniques_learned",
+              "techniques_lost", "losses_after_crash", "latent_expired")
 
 
 class DelugeModel(mesa.Model):
@@ -120,16 +125,29 @@ class DelugeModel(mesa.Model):
         self.drought_cells = 0
         self.k_forage = self.k_herd = self.k_farm = 0.0
 
-        # People.
-        self.settlements = SettlementTable()
+        # People and knowledge.
+        self.knowledge = KnowledgeGraph.from_config(cfg.knowledge)
+        self.events = EventLog(cfg.events.min_magnitude)
+        self.settlements = SettlementTable(len(self.knowledge.names))
         self.settlement_agents: dict[int, Settlement] = {}
         self.occupant = np.full(self.geom.n_cells, -1, dtype=np.int64)  # settlement id per cell
         self.forage_health = np.ones(self.geom.n_cells)  # 1 = forage untouched by overuse
         self.lineages = LineageRegistry()
         self.stats = dict.fromkeys(YEAR_STATS, 0.0)
+        n_tech = len(self.knowledge.names)
+        self.first_known_year = np.full(n_tech, -1)  # first year any settlement held each technique
+        self.first_invented_year = np.full(n_tech, -1)  # first independent invention
+        self.first_farming_year = np.full(len(cfg.founders.names), -1)  # per group, farming >= use_share
         self._place_founders()
+        self.lineage_openness = np.array([f.culture["openness"] for f in self.lineages.founders])
+        self.teachers_state = TeachersState(cfg.teachers, len(self.lineages.founders), self.knowledge.index,
+                                            streams["teachers"])
         self.population_layer = PropertyLayer.from_data("population", as_field(self.geom, self.cell_population()))
         self.grid.add_property_layer(self.population_layer)
+        self.knowledge_layer = PropertyLayer.from_data("knowledge", as_field(self.geom, np.zeros(self.geom.n_cells)))
+        self.grid.add_property_layer(self.knowledge_layer)
+        self.latent_layer = PropertyLayer.from_data("latent_knowledge", as_field(self.geom, np.zeros(self.geom.n_cells)))
+        self.grid.add_property_layer(self.latent_layer)
         self._update_people_summary()
 
         self.datacollector = make_datacollector(self.lineages.names)
@@ -144,17 +162,20 @@ class DelugeModel(mesa.Model):
         landmass = landmass_labels(self.geom, self.elevation_flat, float(self.sea_level_series[0]),
                                    cfg.world.landmasses)
         self.founder_capacity, self.founder_landmass = k0, landmass  # what placement saw
-        cells, sizes = place_founders(self.geom, k0, ~self.is_sea, landmass, cfg.founders,
-                                      self.streams["founders"])
-        for name, cell, size in zip(cfg.founders.names, cells, sizes):
+        rng = self.streams["founders"]
+        cells, sizes = place_founders(self.geom, k0, ~self.is_sea, landmass, cfg.founders, rng)
+        f = cfg.founders
+        for name, cell, size in zip(f.names, cells, sizes):
+            culture = {trait: float(rng.uniform(f.culture_min, f.culture_max)) for trait in f.culture_traits}
             sid = self.found_settlement(cell, float(size), lineage=len(self.lineages.founders), parent=-1)
-            self.lineages.add_founder(name, sid, cell, size, self.year)
+            self.lineages.add_founder(name, sid, cell, size, self.year, culture)
 
     def found_settlement(self, cell: int, population: float, lineage: int, parent: int,
-                         store: float = 0.0) -> int:
+                         store: float = 0.0, knows=None, strength=None, shares=None, practised=None) -> int:
         if self.occupant[cell] >= 0 or self.is_sea[cell]:
             raise ValueError(f"cell {cell} is not free land")
-        sid = self.settlements.add(cell, population, lineage, parent, self.year, store)
+        sid = self.settlements.add(cell, population, lineage, parent, self.year, store, knows, strength, shares,
+                                   practised)
         self.occupant[cell] = sid
         self.settlement_agents[sid] = Settlement(self, sid, self.grid[self.geom.xy(cell)])
         return sid
@@ -167,12 +188,15 @@ class DelugeModel(mesa.Model):
         self.settlements.cell[sid] = cell
         self.settlement_agents[sid].cell = self.grid[self.geom.xy(cell)]
 
-    def end_settlement(self, sid: int, cause: str) -> None:
+    def end_settlement(self, sid: int, cause: str, host: int = -1) -> None:
         """Dissolve a settlement; its remaining people are counted as lost unless the
-        caller moved them elsewhere first."""
+        caller moved them elsewhere first (``host``: the band it joined)."""
         t = self.settlements
         if cause == "dissolved":
             self.stats["dissolved"] += 1
+        if cause in ("dissolved", "drowned"):
+            self.log_event("died", [("settlement", sid)], int(t.cell[sid]), float(t.population[sid]))
+        self.teachers_state.settlement_ended(sid, host)
         self.occupant[t.cell[sid]] = -1
         t.ended[sid] = self.year
         t.population[sid] = 0.0
@@ -187,13 +211,48 @@ class DelugeModel(mesa.Model):
         out[t.cell[ids]] = t.population[ids]
         return out
 
+    # --- events and knowledge bookkeeping ---------------------------------------------------
+
+    def log_event(self, action: str, actors, place: int, magnitude: float) -> bool:
+        """Log a raw event; ``actors`` are (kind, local id) pairs."""
+        return self.events.log(self.year, action, [entity(kind, i) for kind, i in actors], place, magnitude)
+
+    def note_technique_gained(self, technique: int, year: int, invented: bool) -> None:
+        self.stats["techniques_learned"] += 1
+        if self.first_known_year[technique] < 0:
+            self.first_known_year[technique] = year
+        if invented and self.first_invented_year[technique] < 0:
+            self.first_invented_year[technique] = year
+
+    def note_technique_lost(self, technique: int, after_crash: bool) -> None:
+        self.stats["techniques_lost"] += 1
+        self.stats["losses_after_crash"] += after_crash
+
     def _update_people_summary(self) -> None:
         t = self.settlements
         ids = t.alive_ids()
-        self.population = float(t.population[ids].sum())
+        pop = t.population[ids]
+        shares = t.shares[ids]
+        self.population = float(pop.sum())
         self.n_settlements = len(ids)
         self.lineage_population = self.lineages.population(t)
+        self.mode_population = pop @ shares  # people working each mode
+        farming = shares[:, MODES.index("farm")] >= self.config.knowledge.use_share
+        self.farming_settlements = int(farming.sum())
+        for lineage in np.unique(t.lineage[ids[farming]]).tolist():
+            if self.first_farming_year[lineage] < 0:
+                self.first_farming_year[lineage] = self.year
+        self.techniques_known = float(t.knows[ids].sum(axis=1).mean()) if len(ids) else 0.0
         self.population_layer.data[...] = as_field(self.geom, self.cell_population())
+        # Techniques per cell: usable where the settlement is, and latent (held, unusable).
+        known = np.zeros(self.geom.n_cells)
+        latent = np.zeros(self.geom.n_cells)
+        if len(ids) and self.capacity:
+            usable = usable_mask(self, ids)
+            known[t.cell[ids]] = (t.knows[ids] & usable).sum(axis=1)
+            latent[t.cell[ids]] = (t.knows[ids] & ~usable).sum(axis=1)
+        self.knowledge_layer.data[...] = as_field(self.geom, known)
+        self.latent_layer.data[...] = as_field(self.geom, latent)
 
     # --- stepping --------------------------------------------------------------------------
 

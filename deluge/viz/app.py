@@ -1,35 +1,41 @@
-"""Browser UI entry point (spec section 12, Round 2 skeleton).
+"""Browser UI entry point (spec section 12).
 
     solara run deluge/viz/app.py
 
-Shows the hex map (terrain, with the year's sea drawn over it), Mesa's play / pause /
-step / reset controls, buttons that step 1, 10 or 100 years, a year counter, the sea
-level curve and population per founding group so far. The world seed (the map) and the
-history seed sliders take effect on Reset. People per cell are drawn over the map.
+Shows the hex map (terrain, with the year's sea drawn over it, and a chosen overlay:
+people or techniques known per cell), Mesa's play / pause / step / reset controls,
+buttons that step 1, 10 or 100 years, a year counter, plots of sea level, population per
+founding group and per subsistence mode, and a chronicle of the event log (newest first,
+filtered by group and by event type). The world seed (the map) and the history seed are
+integer fields that take effect on Reset.
 
 Built from Mesa's own visualization pieces (SpaceRenderer and its component,
-ModelController, ModelCreator, the plot component) in a plain Solara layout rather than
-``SolaraViz``: with the installed ipyvue 3 / Vue 3 frontend, the draggable grid that
-``SolaraViz`` puts its components in (``solara.GridDraggable``, a Vue 2 plugin) fails to
-load and the main area stays blank (see docs/MESA_API_NOTES.md).
+ModelController, the plot component) in a plain Solara layout rather than ``SolaraViz``:
+with the installed ipyvue 3 / Vue 3 frontend, the draggable grid that ``SolaraViz`` puts
+its components in (``solara.GridDraggable``, a Vue 2 plugin) fails to load and the main
+area stays blank (see docs/MESA_API_NOTES.md).
 
 The UI only reads model state and steps the model through ``DelugeModel.step``, the same
-call a headless run makes, so a UI run and a headless run with the same seed agree.
+call a headless run makes, so a UI run and a headless run with the same seeds agree.
 """
 
 from __future__ import annotations
 
 import solara
 from mesa.visualization import SpaceRenderer, make_plot_component
-from mesa.visualization.solara_viz import ModelController, ModelCreator, SpaceRendererComponent
+from mesa.visualization.solara_viz import ModelController, SpaceRendererComponent
 from mesa.visualization.utils import force_update, update_counter
 
+from deluge.agents.settlement import MODES
 from deluge.config import load_config
+from deluge.data import chronicle
+from deluge.data.events import ACTIONS
 from deluge.model import DelugeModel
 from deluge.viz import portrayal
 
 CONFIG = load_config()
 VIZ = CONFIG.viz
+SEEDS = ("world_seed", "history_seed")
 
 
 def advance(model: DelugeModel, years: int) -> None:
@@ -40,32 +46,20 @@ def advance(model: DelugeModel, years: int) -> None:
         model.step()
 
 
-def make_renderer(model: DelugeModel) -> SpaceRenderer:
-    """Mesa's SpaceRenderer with the terrain and sea layers drawn (no grid lines: at
-    15,000 cells they would hide the map). The axes styling only depends on the grid
-    size, which is the same for every seed, so Mesa can reuse it after a Reset."""
+def make_renderer(model: DelugeModel, overlay: str = "population") -> SpaceRenderer:
+    """Mesa's SpaceRenderer with the terrain, sea and overlay layers drawn (no grid
+    lines: at 15,000 cells they would hide the map). The axes styling only depends on the
+    grid size, which is the same for every seed, so Mesa can reuse it after a Reset."""
     renderer = SpaceRenderer(model, backend="matplotlib")
-    renderer.setup_propertylayer(portrayal.make_layer_style(VIZ))
+    renderer.setup_propertylayer(portrayal.make_layer_style(VIZ, overlay))
     renderer.post_process = portrayal.make_axes_styler(model, VIZ)
     renderer.draw_propertylayer()
     return renderer
 
 
-MODEL_PARAMS = {
-    name: {
-        "type": "SliderInt",
-        "label": label,
-        "value": getattr(CONFIG.run, name),
-        "min": VIZ.seed_min,
-        "max": VIZ.seed_max,
-        "step": 1,
-    }
-    for name, label in (("world_seed", "World seed: the map (applies on Reset)"),
-                        ("history_seed", "History seed (applies on Reset)"))
-}
-
 _sea_level_plot, _ = make_plot_component("sea_level")
-_population_plot, _ = make_plot_component([f"pop_{name}" for name in CONFIG.founders.names])
+_group_plot, _ = make_plot_component([f"pop_{name}" for name in CONFIG.founders.names])
+_mode_plot, _ = make_plot_component([f"pop_{mode}" for mode in MODES])
 
 
 @solara.component
@@ -92,18 +86,62 @@ def StepButtons(model: DelugeModel):
 
 
 @solara.component
+def SeedInputs(model_parameters):
+    """Integer fields for the two seeds; Mesa's Reset builds the model from them."""
+
+    def setter(name: str):
+        def on_value(value):
+            if value is not None:
+                model_parameters.value = {**model_parameters.value, name: int(value)}
+
+        return on_value
+
+    solara.InputInt("World seed: the map (applies on Reset)", value=model_parameters.value["world_seed"],
+                    on_value=setter("world_seed"))
+    solara.InputInt("History seed (applies on Reset)", value=model_parameters.value["history_seed"],
+                    on_value=setter("history_seed"))
+
+
+@solara.component
+def OverlaySelect(renderer, overlay):
+    def on_value(value: str):
+        overlay.set(value)
+        renderer.value.propertylayer_portrayal = portrayal.make_layer_style(VIZ, value)
+        force_update()
+
+    solara.Select("Map overlay", values=list(portrayal.OVERLAYS), value=overlay.value, on_value=on_value)
+
+
+@solara.component
+def Chronicle(model: DelugeModel):
+    update_counter.get()
+    names = list(model.lineages.names)
+    groups, set_groups = solara.use_state(names)
+    actions, set_actions = solara.use_state(list(ACTIONS))
+    solara.SelectMultiple("Groups", values=groups, all_values=names, on_value=set_groups)
+    solara.SelectMultiple("Event types", values=actions, all_values=list(ACTIONS), on_value=set_actions)
+    chosen = {names.index(g) for g in groups}
+    shown = chronicle.lines(model, VIZ.chronicle_lines, groups=chosen, actions=set(actions))
+    text = "  \n".join(shown) if shown else "No events yet."
+    with solara.Div(style={"max-height": "420px", "overflow-y": "auto"}):
+        solara.Markdown(text)
+
+
+@solara.component
 def Plots(model: DelugeModel):
     update_counter.get()
     with solara.Row():
         _sea_level_plot(model)
-        _population_plot(model)
+        _group_plot(model)
+        _mode_plot(model)
 
 
 @solara.component
 def Page():
     model = solara.use_reactive(initial_model)
     renderer = solara.use_reactive(initial_renderer)
-    model_parameters = solara.use_reactive({})
+    model_parameters = solara.use_reactive({name: getattr(CONFIG.run, name) for name in SEEDS})
+    overlay = solara.use_reactive("population")
     play_interval = solara.use_reactive(VIZ.play_interval_ms)
     render_interval = solara.use_reactive(VIZ.render_interval)
     use_threads = solara.use_reactive(False)
@@ -112,28 +150,27 @@ def Page():
     # Plain columns: with the Vue 3 frontend, solara.Sidebar overlays the main area
     # instead of pushing it aside, which hides the left part of the map.
     with solara.Columns([1, 3]):
-        Controls(model, renderer, model_parameters, play_interval, render_interval, use_threads)
+        with solara.Column():
+            with solara.Card("Controls"):
+                solara.SliderInt("Pause between frames (ms)", value=play_interval, min=1,
+                                 max=VIZ.play_interval_max_ms)
+                solara.SliderInt("Years per frame / Step", value=render_interval, min=1,
+                                 max=VIZ.render_interval_max)
+                ModelController(model, renderer=renderer, model_parameters=model_parameters,
+                                play_interval=play_interval, render_interval=render_interval,
+                                use_threads=use_threads)
+                StepButtons(model.value)
+            with solara.Card("Model parameters"):
+                SeedInputs(model_parameters)
+            with solara.Card("Map"):
+                OverlaySelect(renderer, overlay)
+            with solara.Card("Year"):
+                Status(model.value)
         with solara.Column():
             SpaceRendererComponent(model.value, renderer.value)
             Plots(model.value)
-
-
-@solara.component
-def Controls(model, renderer, model_parameters, play_interval, render_interval, use_threads):
-    with solara.Column():
-        with solara.Card("Controls"):
-            solara.SliderInt("Pause between frames (ms)", value=play_interval, min=1,
-                             max=VIZ.play_interval_max_ms)
-            solara.SliderInt("Years per frame / Step", value=render_interval, min=1,
-                             max=VIZ.render_interval_max)
-            ModelController(model, renderer=renderer, model_parameters=model_parameters,
-                            play_interval=play_interval, render_interval=render_interval,
-                            use_threads=use_threads)
-            StepButtons(model.value)
-        with solara.Card("Model parameters"):
-            ModelCreator(model, MODEL_PARAMS, model_parameters=model_parameters)
-        with solara.Card("Year"):
-            Status(model.value)
+            with solara.Card("Chronicle"):
+                Chronicle(model.value)
 
 
 initial_model = DelugeModel(world_seed=CONFIG.run.world_seed, history_seed=CONFIG.run.history_seed)

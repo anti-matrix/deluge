@@ -38,4 +38,5 @@ include = ["deluge*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m 'not slow'"
+markers = ["slow: full-length acceptance runs (minutes); run with pytest -m slow"]

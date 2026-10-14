@@ -2,7 +2,8 @@
 
     python scripts/run.py --config configs/default.yaml --world-seed 1 --history-seed 42
 
-Writes runs/<run_id>/model.parquet and runs/<run_id>/meta.json.
+Writes runs/<run_id>/model.parquet, events.parquet (the raw event log), entities.parquet
+(kind and label of every entity id in the log) and meta.json.
 """
 
 from __future__ import annotations
@@ -19,8 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import mesa
+import pandas as pd
 
 from deluge.config import DEFAULT_CONFIG_PATH, load_config
+from deluge.data.chronicle import Namer
+from deluge.data.events import decode
 from deluge.model import DelugeModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +46,14 @@ def git_commit() -> str | None:
 def rng_fingerprint(model: DelugeModel) -> str:
     blob = json.dumps(model.streams.state(), sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def entity_table(model: DelugeModel) -> pd.DataFrame:
+    """Kind and label of every entity id that appears in the event log."""
+    ids = sorted({a for actors in model.events.actors for a in actors})
+    name = Namer(model)
+    rows = [(eid, *decode(eid), name(eid)) for eid in ids]
+    return pd.DataFrame(rows, columns=["entity", "kind", "local_id", "label"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -77,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     runtime = time.perf_counter() - t0
 
     model.datacollector.get_model_vars_dataframe().to_parquet(out_dir / "model.parquet", index=True)
+    model.events.write(out_dir / "events.parquet")
+    entity_table(model).to_parquet(out_dir / "entities.parquet", index=False)
     meta = {
         "run_id": run_id,
         "world_seed": cfg.run.world_seed,

@@ -1,0 +1,124 @@
+# Knowledge graph (spec section 7). Data, not code: techniques, prerequisites, how often
+# each is invented relative to the others, when it counts as used (unused techniques
+# decay and can be forgotten), and its numeric effects.
+#
+# used_with: forage | herd | farm (the settlement gives that mode at least
+#   knowledge.use_share of its people), size (population >= knowledge.size_use_population),
+#   coast (the settlement's cell is on the coast), always.
+# A held technique is latent where it cannot be used at all: coast techniques away from
+#   the coast, herd and farm techniques on cells with no capacity for that mode. Latent
+#   techniques decay at knowledge.decay_latent (none while a neighbour practises them).
+#   Size-tied techniques are usable anywhere; small groups simply do not use them.
+# unlocks: the subsistence mode a technique makes available ("" for none).
+# effects (multipliers unless noted; techniques without a mechanic yet keep their numbers
+#   for later rounds):
+#   farm_yield, herd_yield         capacity multiplier for that mode
+#   river_farm_yield               farm capacity multiplier on river cells
+#   production                     multiplier on all food production
+#   production_min_population      production bonus applies only at this size and up
+#   store_cap_years                store cap (years of food), replaces the forager value
+#   spoilage                       multiplier on spoilage
+#   drought_loss                   multiplier on the share of rain a drought takes from farming
+#   migration_radius               hex steps added to the migration search radius
+#   sea_steps                      sea cells a migration may cross
+#   town_cap, defense, military, monuments, memory_capacity, admin_cap, raid_range: later rounds
+
+techniques:
+  animal_domestication:
+    category: subsistence
+    prerequisites: []
+    invention_rate: 1.0
+    used_with: herd
+    unlocks: herd
+    effects: {}
+  agriculture:
+    category: subsistence
+    prerequisites: []
+    invention_rate: 1.0
+    used_with: farm
+    unlocks: farm
+    effects: {}
+  storage:
+    category: building
+    prerequisites: [agriculture]
+    invention_rate: 1.0
+    used_with: farm
+    unlocks: ""
+    effects: {store_cap_years: 1.0, spoilage: 0.4}
+  sedentary_building:
+    category: building
+    prerequisites: [agriculture]
+    invention_rate: 1.0
+    used_with: farm
+    unlocks: ""
+    effects: {town_cap: 3.0, defense: 1.3}
+  division_of_labor:
+    category: building
+    prerequisites: [sedentary_building]
+    invention_rate: 0.7
+    used_with: size
+    unlocks: ""
+    effects: {production: 1.1, production_min_population: 5000}
+  sky_calendar:
+    category: subsistence
+    prerequisites: []
+    invention_rate: 0.7
+    used_with: farm
+    unlocks: ""
+    effects: {farm_yield: 1.1, drought_loss: 0.6}
+  megalithic_construction:
+    category: building
+    prerequisites: [division_of_labor]
+    invention_rate: 0.5
+    used_with: size
+    unlocks: ""
+    effects: {monuments: 1.0}
+  irrigation:
+    category: subsistence
+    prerequisites: [agriculture, division_of_labor]
+    invention_rate: 0.5
+    used_with: farm
+    unlocks: ""
+    effects: {river_farm_yield: 1.8}
+  sailing:
+    category: other
+    prerequisites: []
+    invention_rate: 0.5
+    used_with: coast
+    unlocks: ""
+    effects: {sea_steps: 3}
+  copper_bronze:
+    category: military
+    prerequisites: [division_of_labor]
+    invention_rate: 0.4
+    used_with: size
+    unlocks: ""
+    effects: {production: 1.05, production_min_population: 0, military: 1.3}
+  writing:
+    category: building
+    prerequisites: [division_of_labor, sky_calendar]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {memory_capacity: 2.0, admin_cap: 2.0}
+  plough:
+    category: subsistence
+    prerequisites: [agriculture, animal_domestication]
+    invention_rate: 0.6
+    used_with: farm
+    unlocks: ""
+    effects: {farm_yield: 1.4}
+  horse_riding:
+    category: military
+    prerequisites: [animal_domestication]
+    invention_rate: 0.5
+    used_with: herd
+    unlocks: ""
+    effects: {migration_radius: 1, raid_range: 2.0, military: 1.2}
+  iron:
+    category: military
+    prerequisites: [copper_bronze]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {production: 1.05, production_min_population: 0, military: 1.5}

@@ -69,10 +69,12 @@ def test_map_draws_terrain_sea_and_population(model):
     assert (alpha[people == 0] == 0).all()
 
 
-def test_only_map_layers_are_drawn(model):
-    drawn = {name for name, layer in model.grid._mesa_property_layers.items()
-             if name != "empty" and portrayal.make_layer_style(app.VIZ)(layer) is not None}
-    assert drawn == set(portrayal.MAP_LAYERS)
+def test_only_map_layers_and_the_chosen_overlay_are_drawn(model):
+    for overlay in portrayal.OVERLAYS:
+        style = portrayal.make_layer_style(app.VIZ, overlay)
+        drawn = {name for name, layer in model.grid._mesa_property_layers.items()
+                 if name != "empty" and style(layer) is not None}
+        assert drawn == set(portrayal.MAP_LAYERS) | {overlay}
 
 
 def test_sea_layer_follows_sea_level():
@@ -124,4 +126,4 @@ def test_app_page_builds():
     assert app.Page is not None
     run = app.initial_model.config.run
     assert (run.world_seed, run.history_seed) == (app.CONFIG.run.world_seed, app.CONFIG.run.history_seed)
-    assert list(app.MODEL_PARAMS) == ["world_seed", "history_seed"]
+    assert app.SEEDS == ("world_seed", "history_seed")

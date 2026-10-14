@@ -91,6 +91,15 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 - **Migration danger (Round 3):** the spec's cell utility includes danger; there is no war until Round 6, so the utility uses food, distance and crowding only.
 - **Forager density (Round 3):** foraging capacity is scaled by `capacity.forage.density_scale` (0.11), below the spec's 0.1-1 person/km2; see docs/ROUND12_NOTES.md.
 
+- **Event verbs (Round 4):** the spec's verb list has no word for gaining or losing a technique; the event log adds `learned` and `forgot`. Actors are typed entity ids (teachers, lineage, settlement, technique, technology, artifact), so a teaching event names the techniques passed on.
+- **Event log pulled forward (Round 4):** `deluge/data/events.py` and `events.parquet` exist from Round 4 (spec: Round 8); the memory system itself stays in Round 8. Run directories also hold `entities.parquet` (kind and label of every entity id in the log).
+- **Culture vectors (Round 4):** the spec gives each founding group a random culture vector at year 0. It is drawn now, per group (history seed), and only openness is used (teaching and diffusion); polities, drift and the other traits come in Round 5.
+- **Subsistence mode choice (Round 4):** rule-based placeholder until the brains of Round 7: each year a settlement moves `mode_shift_rate` of its people toward the mode whose shift promises the fastest growth; leaving farming is sticky. Production is per mode: each mode's workers are capped by that mode's capacity on the cell.
+- **Latent techniques (Round 4, user design):** a technique held where it cannot be used (no coast for sailing, no capacity for its mode on the cell) is latent: much slower decay, none while a neighbour practises it, and no `learned`/`forgot` events. Size-tied techniques are usable everywhere and decay normally in small groups. `forgot` is logged only for a practised technique.
+- **Sedentary farmers (Round 4):** bands farming at least `sedentary_farm_share` move whole only after `farmer_famine_years` famine years in a row (spec section 6). Sailing lets migration paths cross a few sea cells.
+- **Settlement size caps (Round 4):** the spec caps settlement size per cell with towns for larger populations. With 176 km cells one settlement stands for a cell's population, and the cap is not implemented; carrying capacity limits size.
+- **Teachers' weapons (Round 4):** the hook `teachers_state.attacked(model, settlement)` logs a failed attack and the weapons display; nothing calls it until war exists (Round 6).
+
 ## Mesa grid performance at 160 x 96 (Round 1 rework)
 
 - `HexGrid((160, 96))` with seven static property layers is built once per model; most model setup time is world generation, not Mesa.

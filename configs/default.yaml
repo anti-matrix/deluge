@@ -326,6 +326,7 @@ capacity:                     # densities are people per km2; cell area comes fr
   herd:
     min_density: 0.5
     max_density: 3.0
+    density_scale: 0.3        # calibration (Round 4): see docs/ROUND12_NOTES.md
     temp_zero_c: -12.0
     temp_full_c: 2.0
     rain_zero_mm: 100.0
@@ -344,6 +345,7 @@ capacity:                     # densities are people per km2; cell area comes fr
   farm:
     min_density: 10.0
     max_density: 50.0
+    density_scale: 0.21       # calibration (Round 4; 0.3 -> 0.25 -> 0.21 in tuning): see docs/ROUND12_NOTES.md
     temp_zero_c: 2.0
     temp_full_c: 12.0
     rain_zero_mm: 250.0
@@ -370,10 +372,19 @@ founders:                     # the five founding forager groups, placed at year
   min_landmasses: 2           # groups spread over at least this many landmasses
   max_attempts: 2000          # placement draws before giving up
   pinned_cells: []            # [[col, row], ...] one per group to pin placement; empty = draw
+  culture_traits: [hierarchy, militarism, openness, kin_vs_civic, ritual_investment, mobility_preference]
+  culture_min: 0.0            # each group's traits are drawn uniformly in [min, max] (history_seed)
+  culture_max: 1.0
 
-demography:                   # foraging only until Round 4; food in rations (one person-year of food)
-  forage_abundance: 2.0       # rations a forager can gather per year where food is not limiting
-  forage_max_growth: 0.003    # net growth per year when food per head is at forage_abundance
+demography:                   # food in rations (one person-year of food)
+  forage_abundance: 2.0       # rations a worker gathers per year where food is not limiting, per mode
+  herd_abundance: 1.8
+  farm_abundance: 1.6         # farming is more work per ration than foraging, but supports far more people per cell
+  forage_max_growth: 0.003    # net growth per year at full food, per mode (spec: ~0.3% foragers, ~1% farmers)
+  herd_max_growth: 0.006
+  farm_max_growth: 0.01
+  mode_shift_rate: 0.05       # share of people moved per year toward the mode that promises faster growth
+  farm_stickiness: 0.2        # shifting away from farming runs at this fraction of mode_shift_rate
   famine_mortality: 1.0       # share of people dying per unit of ration shortfall
   famine_max_mortality: 0.5   # cap on the yearly famine death share
   demographic_turnover: 0.07  # births + deaths per person-year: random fluctuation, larger in small groups
@@ -392,7 +403,66 @@ migration:
   distance_cost: 0.1          # utility lost per hex step
   crowding_cost: 0.05         # utility lost per occupied neighbouring cell
   min_found_food_ratio: 1.0   # a cell is only settled if expected food per head there is at least this
-  famine_move_ratio: 0.9      # a forager band moves whole when its food per head falls below this
+  famine_move_ratio: 0.9      # a band moves whole when its food per head falls below this
+  sedentary_farm_share: 0.5   # bands farming at least this share are sedentary:
+  farmer_famine_years: 3      # they move only after this many famine years in a row (spec section 6)
+
+knowledge:                    # spec section 7; the graph itself is a data file
+  graph_file: knowledge.yaml  # relative to this config file
+  invention_scale: 2.0e-6     # inventions per settlement-year at the reference population, times the technique's invention_rate
+  invention_reference_population: 1000
+  invention_population_exponent: 1.0
+  invention_prerequisite_exponent: 3.0  # invention odds x (share of prerequisites known) ** exponent
+  division_of_labor_invention_bonus: 1.0  # with division of labor known, invention odds x (1 + bonus)
+  diffusion_rate: 0.02        # chance per year per adjacent settlement that knows it, times the receiver's openness
+  use_share: 0.1              # a mode technique counts as used when at least this share of people work that mode
+  size_use_population: 5000   # techniques used_with "size" count as used at this population and up
+  decay_unused: 0.003         # strength lost per year while usable but unused (~330 years; Round 4 tuning: 0.01 -> 0.003)
+  decay_latent: 0.0002        # strength lost per year while latent (held where it cannot be used); none while a neighbour practises it
+  decay_small: 0.002          # extra loss per year per unit of (small_reference_population / population - 1), used or not
+  small_reference_population: 500
+  small_factor_cap: 50.0
+  practice_gain: 0.1          # strength regained per year while in use (capped at 1)
+  crash_share: 0.5            # reporting: a loss counts as after a crash when population < this share of the settlement's peak
+
+teachers:                     # spec section 7: contact phase only, then removed
+  enabled: true
+  arrival_year: 0
+  first_group: -1             # index into founders.names; -1 draws it from history_seed
+  years_per_group: 10         # 5 groups x 10 years = the default 50-year stay
+  knowledge: [agriculture, storage, sedentary_building, division_of_labor, megalithic_construction, sky_calendar]
+  teach_rate: 0.5             # chance per technique per contact year, times the group's openness (Round 4 tuning: 0.15 -> 0.5)
+  technologies: [flight, weapons, tools, medicine]  # what the groups can witness; flight on every arrival and departure
+  artifact_chance: 0.3        # per group, when the teachers leave it
+  artifacts_min: 1
+  artifacts_max: 4
+  artifact_types: [tools, medicine, weapons]
+  artifact_lifespan_min: 30
+  artifact_lifespan_max: 300
+  tools_production: 1.1       # production multiplier while a tools artifact lasts
+  medicine_famine_mortality: 0.5  # famine deaths multiplied by this while a medicine artifact lasts
+  weapons_military: 2.0       # military multiplier (war from Round 6)
+
+events:                       # raw event log (spec sections 11 and 12); logged at or above min_magnitude
+  min_magnitude:
+    arrived: 0.0
+    taught: 0.0
+    displayed: 0.0
+    departed: 0.0
+    gave: 0.0
+    used: 0.0
+    broke: 0.0
+    fought: 0.0
+    won: 0.0
+    lost: 0.0
+    moved: 0.0                # people moving
+    founded: 0.0              # people founding a daughter settlement
+    built: 0.0
+    starved: 1000.0           # famine deaths in a settlement in one year (Round 4: small dips at capacity are not logged)
+    died: 0.0                 # a settlement dissolving
+    joined: 0.0               # people joining a band of their own lineage
+    learned: 0.0              # people in a settlement that gained a technique (by invention or from a neighbour)
+    forgot: 0.0               # people in a settlement that lost a technique
 
 output:
   runs_dir: runs
@@ -403,8 +473,11 @@ viz:                          # browser UI only; no effect on the simulation
   render_interval: 10         # years stepped per frame while playing, and per click of Step
   render_interval_max: 100    # slider range
   step_buttons: [1, 10, 100]  # years per click of the step buttons
-  seed_min: 0                 # world and history seed slider range
-  seed_max: 999
+  chronicle_lines: 200        # newest event lines shown in the chronicle
+  knowledge_color: "#1a9850"  # knowledge overlay: techniques known per cell
+  knowledge_vmax: 14.0        # techniques usable where the settlement is
+  latent_color: "#762a83"     # latent overlay: techniques held where they cannot be used
+  latent_vmax: 5.0
   population_color: "#b2182b" # population overlay
   population_vmax: 2000.0     # people per cell at full opacity
   population_alpha_curve: 30.0  # opacity = log(1 + c x) / log(1 + c), x = people / vmax: small bands stay visible
@@ -426,3 +499,4 @@ render:                       # static PNG maps only; no effect on the simulatio
   population_years: [0, 500, 1000, 2000, 3000]   # population-density maps (scripts/render_population.py)
   population_density_min: 0.001  # people / km2, colour scale
   population_density_max: 0.2
+  knowledge_years: [50, 500, 2000, 5000]   # technique maps (scripts/render_knowledge.py)

@@ -37,9 +37,9 @@ class CarryingCapacity:
         self.forage_suit = terrain_table(f.terrain)[terrain]
         self.wild = world.wild_food.ravel()[sel]
         fert = world.fertility.ravel()[sel]
-        self.static_herd = cell_area_km2 * terrain_table(h.terrain)[terrain] * (
+        self.static_herd = cell_area_km2 * h.density_scale * terrain_table(h.terrain)[terrain] * (
             h.min_density + (h.max_density - h.min_density) * fert)
-        self.static_farm = cell_area_km2 * terrain_table(m.terrain)[terrain] * (
+        self.static_farm = cell_area_km2 * m.density_scale * terrain_table(m.terrain)[terrain] * (
             m.min_density + (m.max_density - m.min_density) * fert)
         self.farm_extra_water = m.river_water_mm_per_flow * world.river.ravel()[sel]
         self.not_ice = terrain != Terrain.ICE

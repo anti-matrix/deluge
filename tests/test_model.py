@@ -7,11 +7,11 @@ import pandas as pd
 
 from deluge.model import DelugeModel
 
-# Round 0 required 11,000 *empty* steps in under 5 s. Since Round 3 the steps run climate,
-# capacity, subsistence, demography and migration (about 46 s at 160 x 96 on the dev
-# machine, world seed 1); this guard catches regressions while leaving room on slower CPUs.
-# The spec's overall budget is 10 minutes per run.
-FULL_RUN_BUDGET_S = 120.0
+# Round 0 required 11,000 *empty* steps in under 5 s. Since Round 4 the steps run every
+# system through knowledge and the teachers, with farming populations in the hundreds of
+# millions (a few minutes at 160 x 96 on the dev machine). The guard is the spec's budget
+# of 10 minutes per run (section 14; Round 11 profiles and speeds up).
+FULL_RUN_BUDGET_S = 600.0
 
 
 def test_model_is_mesa_model():

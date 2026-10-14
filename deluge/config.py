@@ -345,6 +345,7 @@ class ForageConfig:
 class HerdConfig:
     min_density: float
     max_density: float
+    density_scale: float
     temp_zero_c: float
     temp_full_c: float
     rain_zero_mm: float
@@ -356,6 +357,7 @@ class HerdConfig:
 class FarmConfig:
     min_density: float
     max_density: float
+    density_scale: float
     temp_zero_c: float
     temp_full_c: float
     rain_zero_mm: float
@@ -384,12 +386,21 @@ class FoundersConfig:
     min_landmasses: int
     max_attempts: int
     pinned_cells: tuple[tuple[int, int], ...]
+    culture_traits: tuple[str, ...]
+    culture_min: float
+    culture_max: float
 
 
 @dataclass(frozen=True)
 class DemographyConfig:
     forage_abundance: float
+    herd_abundance: float
+    farm_abundance: float
     forage_max_growth: float
+    herd_max_growth: float
+    farm_max_growth: float
+    mode_shift_rate: float
+    farm_stickiness: float
     famine_mortality: float
     famine_max_mortality: float
     demographic_turnover: float
@@ -411,6 +422,67 @@ class MigrationConfig:
     crowding_cost: float
     min_found_food_ratio: float
     famine_move_ratio: float
+    sedentary_farm_share: float
+    farmer_famine_years: int
+
+
+# --- knowledge, teachers, events --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TechniqueConfig:
+    category: str
+    prerequisites: tuple[str, ...]
+    invention_rate: float
+    used_with: str
+    unlocks: str
+    effects: Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class KnowledgeConfig:
+    graph_file: str
+    techniques: Mapping[str, TechniqueConfig]
+    invention_scale: float
+    invention_reference_population: float
+    invention_population_exponent: float
+    invention_prerequisite_exponent: float
+    division_of_labor_invention_bonus: float
+    diffusion_rate: float
+    use_share: float
+    size_use_population: float
+    decay_unused: float
+    decay_latent: float
+    decay_small: float
+    small_reference_population: float
+    small_factor_cap: float
+    practice_gain: float
+    crash_share: float
+
+
+@dataclass(frozen=True)
+class TeachersConfig:
+    enabled: bool
+    arrival_year: int
+    first_group: int
+    years_per_group: int
+    knowledge: tuple[str, ...]
+    teach_rate: float
+    technologies: tuple[str, ...]
+    artifact_chance: float
+    artifacts_min: int
+    artifacts_max: int
+    artifact_types: tuple[str, ...]
+    artifact_lifespan_min: int
+    artifact_lifespan_max: int
+    tools_production: float
+    medicine_famine_mortality: float
+    weapons_military: float
+
+
+@dataclass(frozen=True)
+class EventsConfig:
+    min_magnitude: Mapping[str, float]
 
 
 # --- output and rendering ----------------------------------------------------------------------
@@ -428,8 +500,11 @@ class VizConfig:
     render_interval: int
     render_interval_max: int
     step_buttons: tuple[int, ...]
-    seed_min: int
-    seed_max: int
+    chronicle_lines: int
+    knowledge_color: str
+    knowledge_vmax: float
+    latent_color: str
+    latent_vmax: float
     population_color: str
     population_vmax: float
     population_alpha_curve: float
@@ -453,6 +528,7 @@ class RenderConfig:
     population_years: tuple[int, ...]
     population_density_min: float
     population_density_max: float
+    knowledge_years: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -466,6 +542,9 @@ class Config:
     founders: FoundersConfig
     demography: DemographyConfig
     migration: MigrationConfig
+    knowledge: KnowledgeConfig
+    teachers: TeachersConfig
+    events: EventsConfig
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig
@@ -486,6 +565,12 @@ class Config:
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH, overrides: dict[str, Any] | None = None) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
+    knowledge = raw.get("knowledge")
+    if isinstance(knowledge, dict) and "techniques" not in knowledge and "graph_file" in knowledge:
+        # The knowledge graph is a separate data file, embedded so the config (and its
+        # hash) is complete on its own.
+        with open(Path(path).parent / knowledge["graph_file"], encoding="utf-8") as f:
+            knowledge["techniques"] = (yaml.safe_load(f) or {}).get("techniques", {})
     if overrides:
         raw = _deep_merge(raw, overrides)
     return _convert(Config, raw, "config")

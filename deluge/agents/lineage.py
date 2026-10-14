@@ -2,8 +2,9 @@
 
 Every settlement carries a lineage id (its founding group) and a parent id (the
 settlement it split from, -1 for a founding band), so descent is a tree that can be
-rebuilt at any year from the settlement table. The registry holds the founders; the
-teachers are added as a lineage in Round 4.
+rebuilt at any year from the settlement table. The registry holds the five founding
+groups with their culture vectors; the teachers, the sixth founder, leave no settlements
+(their visits are kept in ``model.teachers_state``).
 """
 
 from __future__ import annotations
@@ -23,15 +24,17 @@ class Founder:
     cell: int
     population: int
     year: int
+    culture: dict  # trait -> value in [0, 1], drawn at year 0 (spec section 2)
 
 
 class LineageRegistry:
     def __init__(self) -> None:
         self.founders: list[Founder] = []
 
-    def add_founder(self, name: str, settlement: int, cell: int, population: int, year: int) -> int:
+    def add_founder(self, name: str, settlement: int, cell: int, population: int, year: int,
+                    culture: dict) -> int:
         lineage = len(self.founders)
-        self.founders.append(Founder(lineage, name, settlement, cell, population, year))
+        self.founders.append(Founder(lineage, name, settlement, cell, population, year, culture))
         return lineage
 
     @property
