@@ -97,6 +97,7 @@ class ShapeConfig:
     plate_bias_weight: float
     plate_bias_smoothing_passes: int
     edge_falloff_width: float
+    pole_falloff_deg: float
     edge_falloff_weight: float
     edge_sea_cells: int
 
@@ -164,10 +165,22 @@ class BaseTemperatureConfig:
 
 
 @dataclass(frozen=True)
+class WesterliesConfig:
+    lat_min: float
+    lat_max: float
+    u: float
+    v_poleward: float
+    rain_mm: float
+    edge_deg: float
+    land_loss_factor: float
+
+
+@dataclass(frozen=True)
 class RainfallConfig:
     base_mm: float
     bands: tuple[tuple[float, float, float], ...]
     winds: tuple[tuple[float, float, float, float], ...]
+    westerlies: WesterliesConfig
     wind_sharpness: float
     noise_octaves: int
     noise_persistence: float
@@ -182,6 +195,7 @@ class RainfallConfig:
     land_loss_per_1000km: float
     orographic_gain_per_km: float
     shadow_loss_per_km: float
+    shadow_min_uplift_m: float
     orographic_smoothing_passes: int
     min_moisture: float
     continentality_weight: float

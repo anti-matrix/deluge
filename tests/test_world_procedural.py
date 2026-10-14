@@ -16,6 +16,7 @@ from deluge.world.grid import HexGeometry
 from deluge.world.worlddata import Terrain
 
 SEA0 = -60.0
+LAT_SPAN = 130.0
 
 
 def flat(world, name):
@@ -113,7 +114,7 @@ def test_coastal_plains_drown_in_broad_areas(worlds, geom, cfg):
 
 
 def test_erosion_carves_and_keeps_coasts(cfg, geom):
-    z = P.normalized_relief(P.continent_relief(geom, np.random.default_rng(2), cfg.world.shape, None), 0.35)
+    z = P.normalized_relief(P.continent_relief(geom, np.random.default_rng(2), cfg.world.shape, None, LAT_SPAN), 0.35)
     elev = P.hypsometric_elevation(z, 0.35, SEA0, cfg.world.elevation)
     a, dep = P.erode(geom, elev, SEA0, np.random.default_rng(3), cfg.world.erosion)
     b, _ = P.erode(geom, elev, SEA0, np.random.default_rng(3), cfg.world.erosion)
@@ -238,7 +239,7 @@ def test_bridge_detection_on_a_synthetic_isthmus():
 
 
 def test_filled_surface_drains_everywhere(cfg, geom):
-    z = P.normalized_relief(P.continent_relief(geom, np.random.default_rng(4), cfg.world.shape, None), 0.35)
+    z = P.normalized_relief(P.continent_relief(geom, np.random.default_rng(4), cfg.world.shape, None, LAT_SPAN), 0.35)
     elev = P.hypsometric_elevation(z, 0.35, SEA0, cfg.world.elevation)
     filled = P.fill_depressions(geom, elev, SEA0, cfg.world.fill_epsilon_m, np.random.default_rng(1),
                                 cfg.world.fill_random_factor)
@@ -361,6 +362,80 @@ def test_rain_falls_inland(cfg):
     assert rain[x == 6].mean() > rain[x == 30].mean()
 
 
+def test_westerlies_blow_east_and_poleward(cfg):
+    rcfg = cfg.world.rainfall
+    lat = np.array([45.0, -45.0, 20.0, -20.0])
+    wind = P.wind_vectors(lat, np.zeros(4), rcfg)
+    assert wind[0, 0] > 0 and wind[0, 1] > 0  # north: east and north
+    assert wind[1, 0] > 0 and wind[1, 1] < 0  # south: east and south
+    assert (wind[2:, 0] < 0).all()  # trade winds blow west
+    assert P.westerly_weight(np.array([47.5]), rcfg)[0] == 1.0
+    assert (P.westerly_weight(np.array([20.0, 70.0, -20.0]), rcfg) == 0.0).all()
+
+
+def test_wind_gaps_are_rejected(cfg):
+    gap = dataclasses.replace(cfg.world.rainfall, winds=cfg.world.rainfall.winds[1:])
+    with pytest.raises(ValueError):
+        P.wind_vectors(np.array([-80.0]), np.zeros(1), gap)
+
+
+def test_westerlies_wet_west_coast_and_carry_rain_inland(cfg):
+    """A long flat continent in the westerlies stays wetter inland than the same continent
+    with the trade-wind land loss."""
+    rcfg = _plain_rain_cfg(cfg)
+    geom = HexGeometry(60, 8)
+    x, _ = geom.coords
+    elev = np.where((x < 5) | (x > 55), -1000.0, 50.0)
+    dist = np.zeros(geom.n_cells)
+    rng = np.random.default_rng(0)
+    west = P.base_rainfall(geom, elev, np.full(geom.n_cells, 47.5), SEA0, dist, 100.0, rng, rcfg)
+    assert west[x == 6].mean() > west[x == 50].mean()  # west coast wettest
+    no_storms = dataclasses.replace(rcfg, westerlies=dataclasses.replace(rcfg.westerlies, land_loss_factor=1.0))
+    plain = P.base_rainfall(geom, elev, np.full(geom.n_cells, 47.5), SEA0, dist, 100.0, rng, no_storms)
+    assert west[x == 50].mean() / west[x == 6].mean() > plain[x == 50].mean() / plain[x == 6].mean()
+
+
+def test_low_rises_cast_no_rain_shadow(cfg):
+    """A steady climb in steps below shadow_min_uplift_m dries the air no more than flat
+    land does; without the threshold the same climb dries it clearly more."""
+    rcfg = _plain_rain_cfg(cfg)
+    # Pure westerly, measured away from the top and bottom rows: off-map neighbours count
+    # as moist air at sea level, which would add a large uplift on the edge rows.
+    rcfg = dataclasses.replace(rcfg, westerlies=dataclasses.replace(rcfg.westerlies, v_poleward=0.0))
+    geom = HexGeometry(40, 30)
+    x, y = geom.coords
+    mid = (y >= 13) & (y <= 16)
+    step = 0.5 * rcfg.shadow_min_uplift_m
+    climb = np.where(x < 5, -1000.0, 100.0 + step * np.maximum(x - 5, 0))  # steady gentle climb
+    flat_land = np.where(x < 5, -1000.0, 100.0)
+    lat = np.full(geom.n_cells, 47.5)
+    dist = np.zeros(geom.n_cells)
+
+    def ratio(c, elev):
+        rain = P.base_rainfall(geom, elev, lat, SEA0, dist, 100.0, np.random.default_rng(0), c)
+        return rain[mid & (x == 26)].mean() / rain[mid & (x == 6)].mean()  # same lift at both
+
+    assert ratio(rcfg, climb) == pytest.approx(ratio(rcfg, flat_land), rel=0.01)
+    assert ratio(dataclasses.replace(rcfg, shadow_min_uplift_m=0.0), climb) < 0.95 * ratio(rcfg, climb)
+
+
+def test_desert_share_and_poleward_land(worlds, geom, cfg):
+    """Desert well below 30% of land; land reaches past 55 degrees in most worlds, with tundra."""
+    lat = geom.latitude(cfg.world.lat_south, cfg.world.lat_north)
+    desert, poleward, tundra = [], 0, 0
+    for w in worlds.values():
+        t = flat(w, "terrain")
+        land = t != Terrain.SEA
+        desert.append((t[land] == Terrain.DESERT).mean())
+        # Measured on seeds 1-20 with pole_falloff_deg 7: 20-772 cells beyond 55, tundra in all.
+        poleward += (land & (np.abs(lat) > 55)).sum() >= 20
+        tundra += (t == Terrain.TUNDRA).any()
+    # Measured on seeds 1-20: mean 12%, max 25% (before the westerlies: mean 24%, max 39%).
+    assert np.mean(desert) < 0.2 and max(desert) < 0.3, desert
+    assert poleward >= len(worlds) - 1
+    assert tundra >= len(worlds) - 1
+
+
 def test_rain_is_not_striped(worlds, geom, cfg):
     """Latitude alone explains well under all of the rain pattern on land."""
     lat_row = geom.coords[1]
@@ -370,7 +445,9 @@ def test_rain_is_not_striped(worlds, geom, cfg):
         r, rows = rain[land], lat_row[land]
         row_mean = np.bincount(rows, weights=r) / np.maximum(np.bincount(rows), 1)
         explained = 1.0 - ((r - row_mean[rows]) ** 2).sum() / ((r - r.mean()) ** 2).sum()
-        assert explained < 0.6, (seed, explained)
+        # The westerly band (wet 35-60 degrees between the dry subtropics and the cold
+        # poles) adds legitimate latitude structure: seeds 1-5 measure 0.55-0.72 with it.
+        assert explained < 0.75, (seed, explained)
 
 
 def test_biome_bands(worlds, geom, cfg):

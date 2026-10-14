@@ -38,7 +38,7 @@ from deluge.config import (
 from deluge.world import geography, noise, tectonics
 from deluge.world.climate import preset_horizon, sea_level_curve
 from deluge.world.grid import SQRT3, HexGeometry, hex_unit_km
-from deluge.world.tectonics import Plates, map_aspect, normalized_positions
+from deluge.world.tectonics import Plates, _smoothstep, map_aspect, normalized_positions
 from deluge.world.worlddata import GenerationReport, Terrain, WorldData, terrain_table
 
 
@@ -50,10 +50,11 @@ class WorldGenerationError(RuntimeError):
 
 
 def continent_relief(geom: HexGeometry, rng: np.random.Generator, cfg: ShapeConfig,
-                     plates: Plates | None) -> np.ndarray:
+                     plates: Plates | None, lat_span_deg: float) -> np.ndarray:
     """Unitless relief before tectonics: domain-warped fractal noise (its high octaves
     give peninsulas, bays and island chains), a smoothed continental bias per plate, and a
-    drop toward the map edge."""
+    drop toward the map edge. The drop toward the north and south edges is set in degrees
+    (``pole_falloff_deg``), so it controls how far land reaches poleward."""
     uv = normalized_positions(geom)
     warped = noise.warp(uv, rng, cfg.warp_frequency, cfg.warp_octaves, cfg.warp_persistence,
                         cfg.warp_lacunarity, cfg.warp_strength)
@@ -67,10 +68,12 @@ def continent_relief(geom: HexGeometry, rng: np.random.Generator, cfg: ShapeConf
     # instead of running along it.
     # A second falloff on the true coordinates keeps land from reaching the border band.
     aspect = map_aspect(geom)
+    pole_width = cfg.pole_falloff_deg * aspect / lat_span_deg
 
     def falloff(p):
-        dist = np.minimum.reduce([p[:, 0], 1.0 - p[:, 0], p[:, 1], aspect - p[:, 1]])
-        return np.clip(1.0 - dist / cfg.edge_falloff_width, 0.0, 1.0)
+        east_west = np.minimum(p[:, 0], 1.0 - p[:, 0]) / cfg.edge_falloff_width
+        north_south = np.minimum(p[:, 1], aspect - p[:, 1]) / pole_width
+        return np.clip(1.0 - np.minimum(east_west, north_south), 0.0, 1.0)
 
     relief = relief - cfg.edge_falloff_weight * np.maximum(falloff(warped), falloff(uv))
     # A band of open sea along the border: cells there have missing neighbours, which
@@ -325,19 +328,34 @@ def _octaves(cfg: RainfallConfig) -> tuple[int, float, float]:
     return cfg.noise_octaves, cfg.noise_persistence, cfg.noise_lacunarity
 
 
+def westerly_weight(lat: np.ndarray, cfg: RainfallConfig) -> np.ndarray:
+    """0..1 strength of the westerly storm tracks: 1 inside the band, ramping to 0 at its
+    edges over ``edge_deg``, in both hemispheres."""
+    w = cfg.westerlies
+    a = np.abs(lat)
+    return _smoothstep((a - w.lat_min) / w.edge_deg) * _smoothstep((w.lat_max - a) / w.edge_deg)
+
+
 def latitude_rain(lat: np.ndarray, cfg: RainfallConfig) -> np.ndarray:
     r = np.full(lat.shape, cfg.base_mm, dtype=float)
     for center, amp, width in cfg.bands:
         r += amp * np.exp(-(((lat - center) / width) ** 2))
-    return r
+    return r + cfg.westerlies.rain_mm * westerly_weight(lat, cfg)
 
 
 def wind_vectors(lat: np.ndarray, angle_noise_deg: np.ndarray, cfg: RainfallConfig) -> np.ndarray:
-    """Unit vector the air moves along, per cell: the band's direction rotated by noise."""
+    """Unit vector the air moves along, per cell: the band's direction rotated by noise.
+    The westerlies blow east with a drift toward the pole in both hemispheres."""
     uv = np.zeros((len(lat), 2))
     for lo, hi, u, v in cfg.winds:
         sel = (lat >= lo) & (lat < hi) if hi < 90.0 else (lat >= lo)
         uv[sel] = (u, v)
+    w = cfg.westerlies
+    sel = (np.abs(lat) >= w.lat_min) & (np.abs(lat) < w.lat_max)
+    uv[sel, 0] = w.u
+    uv[sel, 1] = np.sign(lat[sel]) * w.v_poleward
+    if not np.any(uv, axis=1).all():
+        raise ValueError("rainfall.winds and rainfall.westerlies leave some latitudes without wind")
     a = np.deg2rad(angle_noise_deg)
     rot = np.stack([uv[:, 0] * np.cos(a) - uv[:, 1] * np.sin(a),
                     uv[:, 0] * np.sin(a) + uv[:, 1] * np.cos(a)], axis=1)
@@ -371,9 +389,11 @@ def base_rainfall(geom: HexGeometry, elev: np.ndarray, lat: np.ndarray, sea_leve
     with low-frequency noise. Air is fully moist over the sea and beyond the map edge;
     over land each cell takes moisture from its upwind neighbours (weighted by how well
     each lines up with the wind), loses a share per kilometre, rains more where it is
-    forced uphill and is drained by that uplift, leaving a rain shadow downwind. The
-    transport is solved by repeated sweeps until it settles. Rain then falls further with
-    distance from any sea and gets a mild multiplicative noise.
+    forced uphill and is drained by uplift beyond ``shadow_min_uplift_m`` per step,
+    leaving a rain shadow behind real barriers but not behind every low rise. In the
+    westerlies the air loses less moisture per kilometre over land. The transport is
+    solved by repeated sweeps until it settles. Rain then falls further with distance
+    from any sea and gets a mild multiplicative noise.
     """
     uv = normalized_positions(geom)
     lat_w = lat + cfg.band_wobble_deg * noise.fbm(uv, rng, cfg.band_wobble_frequency, *_octaves(cfg))
@@ -395,8 +415,12 @@ def base_rainfall(geom: HexGeometry, elev: np.ndarray, lat: np.ndarray, sea_leve
         h = np.where(sea, sea_level_m, geom.neighbor_mean(h))
     h_nb = np.where(valid, h[np.where(valid, nb, 0)], sea_level_m)
     uplift_km = np.maximum(0.0, h[:, None] - h_nb) / 1000.0
+    barrier_km = np.maximum(0.0, uplift_km - cfg.shadow_min_uplift_m / 1000.0)
     step_km = SQRT3 * unit_km
-    keep = (1.0 - cfg.land_loss_per_1000km * step_km / 1000.0) * np.exp(-cfg.shadow_loss_per_km * uplift_km)
+    # Storm tracks in the westerlies carry moisture further inland.
+    loss_factor = 1.0 - westerly_weight(lat_w, cfg) * (1.0 - cfg.westerlies.land_loss_factor)
+    land_keep = 1.0 - cfg.land_loss_per_1000km * loss_factor * step_km / 1000.0
+    keep = land_keep[:, None] * np.exp(-cfg.shadow_loss_per_km * barrier_km)
 
     m = np.full(geom.n_cells, cfg.upwind_moisture)
     for _ in range(cfg.iterations):
@@ -495,7 +519,8 @@ def generate_terrain(geom: HexGeometry, cfg: Config, rng: np.random.Generator
     rejected = {"seas": 0, "landmass_count": 0, "land_bridge": 0, "landmass_rules": 0}
     for attempt in range(1, w.max_attempts + 1):
         plates = tectonics.make_plates(geom, rng, w.tectonics) if w.tectonics.enabled else None
-        z = normalized_relief(continent_relief(geom, rng, w.shape, plates), w.land_share)
+        z = normalized_relief(continent_relief(geom, rng, w.shape, plates, w.lat_north - w.lat_south),
+                              w.land_share)
         if plates is not None:
             # Tectonic relief is in normalized units, so ranges reach similar heights in
             # every world regardless of how rugged the base relief is.

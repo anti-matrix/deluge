@@ -74,7 +74,8 @@ world:
     warp_strength: 0.18       # fraction of map width
     plate_bias_weight: 0.22   # how strongly continental plates favour land
     plate_bias_smoothing_passes: 40
-    edge_falloff_width: 0.07  # fraction of width over which relief drops toward the map edge
+    edge_falloff_width: 0.07  # fraction of width over which relief drops toward the east and west edges
+    pole_falloff_deg: 7.0   # how far land spreads poleward: relief drops over this many degrees before the north and south edges
     edge_falloff_weight: 1.2
     edge_sea_cells: 3         # cells this close to the map border are always open sea
 
@@ -157,15 +158,19 @@ world:
     base_mm: 380.0
     bands:                    # [latitude, amplitude mm, width degrees], gaussian bumps
       - [0.0, 1800.0, 16.0]
-      - [50.0, 900.0, 15.0]
-      - [-50.0, 900.0, 15.0]
-    winds:                    # [lat_min, lat_max, u (east+), v (north+)]: direction air moves
+    winds:                    # [lat_min, lat_max, u (east+), v (north+)]: direction air moves; westerlies below fill the gap
       - [-90.0, -60.0, -1.0, 0.3]
-      - [-60.0, -30.0, 1.0, -0.3]
-      - [-30.0, 0.0, -1.0, 0.35]
-      - [0.0, 30.0, -1.0, -0.35]
-      - [30.0, 60.0, 1.0, 0.3]
+      - [-35.0, 0.0, -1.0, 0.35]
+      - [0.0, 35.0, -1.0, -0.35]
       - [60.0, 90.0, -1.0, -0.3]
+    westerlies:               # mid-latitude storm tracks, both hemispheres
+      lat_min: 35.0           # |latitude| band
+      lat_max: 60.0
+      u: 1.0                  # eastward
+      v_poleward: 0.3         # drift toward the pole
+      rain_mm: 900.0          # added rain inside the band
+      edge_deg: 8.0           # rain and moisture carriage ramp in over this many degrees inside each band edge
+      land_loss_factor: 0.4   # storms carry moisture further inland: land loss scaled by this in the band
     wind_sharpness: 2.0       # weight of upwind neighbours ~ cos(angle) ** sharpness
     noise_octaves: 3          # for band wobble, wind turning and rain noise
     noise_persistence: 0.5
@@ -180,6 +185,7 @@ world:
     land_loss_per_1000km: 0.08 # share of moisture rained out per 1000 km over land
     orographic_gain_per_km: 1.2   # windward rain boost per km of uplift
     shadow_loss_per_km: 0.9       # moisture lost per km of uplift (rain shadow behind)
+    shadow_min_uplift_m: 100.0    # rises smaller than this per step cast no shadow: only real barriers dry the air
     orographic_smoothing_passes: 3  # lift and shadow use relief smoothed this many times
     min_moisture: 0.05
     continentality_weight: 0.15   # extra drying with distance from any sea
