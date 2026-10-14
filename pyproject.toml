@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deluge"
+version = "0.0.1"
+description = "Deluge: civilization neuroevolution sim over 11,000 years after a global catastrophe"
+requires-python = ">=3.12"
+dependencies = [
+    "mesa[rec]>=3.0,<4",
+    "numpy",
+    "opensimplex",
+    "scipy",
+    "pyarrow",
+    "pandas",
+    "pyyaml",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "hypothesis",
+]
+# Installed in round 11, only if profiling shows the need.
+jit = [
+    "numba",
+]
+# Installed in round 12 for the real-topography importer.
+earth = [
+    "rasterio",
+    "xarray",
+]
+
+[tool.setuptools.packages.find]
+include = ["deluge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

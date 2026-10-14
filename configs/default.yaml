@@ -1,0 +1,29 @@
+# Deluge default configuration. Every tunable number lives here (spec rule 5).
+# Sections are added round by round as systems start using them; the loader
+# rejects unknown and missing keys.
+
+run:
+  seed: 42
+  years: 11000              # one step = one year
+
+rng:
+  # Named child streams of the run's single root seed, one per system.
+  # Each stream is keyed by its name, so adding or reordering streams never
+  # shifts the numbers another stream produces. "mesa" feeds Mesa's own
+  # model.rng / model.random (agent shuffling, grid random selection).
+  streams:
+    - mesa
+    - world
+    - climate
+    - capacity
+    - demography
+    - migration
+    - knowledge
+    - teachers
+    - brains
+    - war
+    - politics
+    - memory
+
+output:
+  runs_dir: runs
