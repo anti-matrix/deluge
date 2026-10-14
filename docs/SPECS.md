@@ -4,7 +4,7 @@ Oct 14, 2026 · @Japeth
 
 ## Purpose and how to use this doc
 
-This spec builds a Python simulation of 11,000 years of history after a global catastrophe, where civilizations rise, split, conquer and form their own founding myths through neuroevolution and selection, with no scripted outcomes. It is written to be executed round by round in Claude Code.
+This spec builds a Python simulation of 12,900 years of history after a global catastrophe, from the Younger Dryas to the present day, where civilizations rise, split, conquer and form their own founding myths through neuroevolution and selection, with no scripted outcomes. It is written to be executed round by round in Claude Code.
 
 **Design principles**
 
@@ -24,7 +24,7 @@ This spec builds a Python simulation of 11,000 years of history after a global c
 
 ## Scenario
 
-The run starts 1,000 years after a nuclear catastrophe melted the ice caps, with five forager groups on a flooded world, and a sixth group carrying the knowledge of civilization appearing among them. It then runs for 11,000 years.
+The run starts 1,000 years after a nuclear catastrophe melted the ice caps, with five forager groups on a flooded world, and a sixth group carrying the knowledge of civilization appearing among them. It then runs for 12,900 years, to the present day. Industry and modern technology are possible but never guaranteed.
 
 **Backstory (fixed initial conditions, not simulated)**
 
@@ -40,7 +40,7 @@ The run starts 1,000 years after a nuclear catastrophe melted the ice caps, with
 
 The teachers appear at a configurable year (default: year 0) and location. They are humans carrying knowledge and technology from before the catastrophe, not a competing group: they appear, teach, interact with the five groups for a contact period, then depart by air and leave the sim permanently (section 7).
 
-**What the run measures at year 11,000**
+**What the run measures at year 12,900 (the present)**
 
 - Where each of the five founding lineages stands: territory, population, number of successor polities, extinct or surviving.
 - What the five groups did with the teachers' knowledge: which techniques each received, kept, lost or passed on, and how far it spread.
@@ -124,7 +124,7 @@ One step is one year, the world is a hex grid of about 6,000 cells, and the agen
 
 **Time and space**
 
-- 11,000 steps, one per year. Some systems run less often (configurable): memory transmission every 25 years, one generation; climate shocks drawn yearly.
+- 12,900 steps, one per year (year 0 is the start of the Younger Dryas, about 12,900 years before present). Some systems run less often (configurable): memory transmission every 25 years, one generation; climate shocks drawn yearly.
 - Default grid 100 × 60 hex cells using `mesa.discrete_space.HexGrid`, non-torus. A cell represents a region of roughly 50 to 100 km across.
 - Cell fields (elevation, terrain, fertility, rainfall, river flag, wild food, sea flag) live in Mesa `PropertyLayer`s or parallel NumPy arrays indexed by cell, never as per-cell Python objects in hot loops.
 
@@ -202,7 +202,7 @@ Each stage is a pure function of the previous arrays and an RNG stream, testable
 **Sea level and climate over time** (`world/climate.py`)
 
 - `sea_level(year)`: a piecewise curve from config. Default: starts 60 m below present and rises to 0 m over the first 3,000 years with two faster pulses, so coasts keep drowning early in the run. A "modern melt" preset starts at +70 m instead.
-- `temp_anomaly(year)`: a cold snap of −3 to −5 °C in years 0 to 1,200 (the Younger Dryas analogue), a warm optimum around years 3,000 to 6,000, then mild cooling, plus red noise (AR(1)) for decades-long swings.
+- `temp_anomaly(year)`: a cold snap of −3 to −5 °C in years 0 to 1,200 (the Younger Dryas analogue), a warm optimum around years 3,000 to 7,500 (the Holocene optimum analogue), slow cooling after it, a short warm spell around years 11,900 to 12,200 and a cold spell around years 12,200 to 12,800 (medieval warm period and Little Ice Age analogues), ending at year 12,900 (the present). Industrial warming is not modeled yet. On top of the curve, red noise (AR(1)) for decades-long swings.
 - Shocks: yearly draws for regional droughts (2 to 30 years long, spatially correlated) and rare large events such as volcanic winters. Probabilities in config.
 
 **Carrying capacity** (`world/capacity.py`)
@@ -214,6 +214,14 @@ K_{mode} = A_{cell} \cdot Y_{mode}(fertility, wild\_food, temp, rain) \cdot T_{m
 ```
 
 where `Y` is the yield for foraging, herding or farming and `T` is a multiplier from known techniques (irrigation, plough, storage). Foraging supports roughly 0.1 to 1 person per km², early farming 10 to 50 on good land. Exact values are calibration parameters (section 14).
+
+**Mineral resources**
+
+- Land cells can hold deposits of copper, tin, iron ore, coal and oil, generated from world\_seed with the rest of the world: metals near mountain belts and plate boundaries, coal in old lowland sedimentary basins, oil in sedimentary basins and on continental shelves. Abundance per deposit is in config.
+- A settlement has access to a deposit if it sits on the cell, its polity controls the cell, or it trades with a settlement that has access.
+- Techniques that need materials require access: copper and bronze need copper (and tin for bronze), iron needs iron ore, coal mining needs coal, oil and combustion engines need oil (section 7).
+- Deposits do not deplete in the default config. A depletion switch is available but off.
+- The browser map gets a resources layer.
 
 ## Population and subsistence
 
@@ -266,6 +274,29 @@ Techniques form a graph with prerequisites; settlements gain them by rare invent
 | Plough | agriculture, domestication | farming yield bonus |
 | Horse riding | domestication | movement and raid range up, steppe military bonus |
 | Iron | bronze | military bonus, cheap tools |
+
+**Late techniques: the road to industry and modern technology**
+
+The graph continues past iron. These techniques use the same invention, diffusion and loss rules as the rest; no lineage is guaranteed to reach any of them, and whether anyone industrializes by year 12,900 is an outcome of the run.
+
+| Technique | Prerequisites | Effect |
+| --- | --- | --- |
+| Ocean navigation | sailing, writing, calendar | open-sea crossings, long-range trade |
+| Printing | writing | memory capacity up, faster diffusion |
+| Mechanical power (water and wind mills) | division of labor, copper and bronze | production bonus |
+| Chemistry | writing, copper and bronze | unlocks gunpowder and fertilizers |
+| Gunpowder | chemistry | military multiplier |
+| Steel | iron, mechanical power | military and tool bonus |
+| Coal mining | iron, mechanical power, access to coal | fuel for industry |
+| Steam power (industrial revolution) | coal mining, steel, printing | large production multiplier, unlocks railways and steamships |
+| Railways and steamships | steam power | movement, trade and campaign range up |
+| Synthetic fertilizers | chemistry, steam power | farming capacity multiplier |
+| Modern medicine | printing, chemistry | mortality falls sharply |
+| Electricity | steam power, copper and bronze | production bonus, unlocks telecommunication |
+| Telecommunication | electricity | polity size cap up, faster diffusion |
+| Oil and combustion engines | steam power, access to oil | movement and military bonus |
+
+Invention of these techniques scales with population, settlement size, known prerequisites, trade contacts and resource access, like any other. All effects are config multipliers, left uncalibrated until the later calibration pass.
 
 The list is a starting set and can grow. Effects are numeric multipliers in config.
 
@@ -443,7 +474,7 @@ Priorities squashed to 0..1: expand (found settlements), aggression, raid vs cam
 
 **Why no fitness function**
 
-Selection is the sim itself. A brain spreads when its polity grows, splits and leaves descendants, and disappears when its polity is conquered or collapses. This is slow compared with game-playing neuroevolution: in 11,000 years there may be only a few thousand polity births. Two settings help it work:
+Selection is the sim itself. A brain spreads when its polity grows, splits and leaves descendants, and disappears when its polity is conquered or collapses. This is slow compared with game-playing neuroevolution: in 12,900 years there may be only a few thousand polity births. Two settings help it work:
 
 - Splits must happen often enough to give selection material. Calibration target: hundreds to low thousands of polity births per run.
 - Multi-run evolution (optional, round 12): seed a new run's founding brains from the most successful lineages of previous runs, to study what strategies evolve over many histories.
@@ -520,6 +551,8 @@ The browser UI is for watching one history unfold; headless runs write Parquet f
 - **Map view:** the hex grid drawn as polygons, colored by a selectable layer: polity (color per polity, shades per lineage), terrain, population density, subsistence mode, cohesion, or a knowledge technique's spread. Sea updates with the sea-level curve.
 - **Overlays:** capitals, monuments, the teachers' position and path during the contact phase, active wars as arrows between capitals.
 - **Controls:** play, pause, step 1, 10 or 100 years, seed, world source, key parameters as sliders.
+- **Hover tooltips:** hovering a cell shows its terrain, elevation, who lives there (settlement, polity, lineage) and its population.
+- **Zoom and pan:** the map can be zoomed and dragged, so individual cells stay readable on the 160 × 96 grid.
 - **Side panels:** population per lineage over time, number of polities over time, a lineage tree snapshot, and an inspector for a clicked polity: culture vector, brain outputs, top symbols and their provenance.
 - The SolaraViz default renderer may not draw hex polygons well. If so, build a custom Solara component with matplotlib or a lightweight SVG renderer. Verify what the installed Mesa offers before writing custom code.
 - The UI only reads model state. It never changes model logic, and headless results must match UI results for the same seed.
@@ -579,6 +612,11 @@ The build runs in 13 rounds (0 to 12), each ending with a runnable sim, passing 
 - Deliverables: knowledge graph from config, invention, diffusion, loss; the teachers' contact phase (arrival, visits, teaching, departure); farming and herding modes.
 - Accept: farming spreads outward from contact points; independent invention happens occasionally without the teachers; with the teachers disabled (config), the run still produces farming eventually but later; knowledge loss observed after a population crash; the teachers depart on schedule, never enter war, demography or politics, and leave no agent behind.
 
+**Round 4b. Deep time and industry**
+
+- Deliverables: run length 12,900 years (config); climate curve extended to year 12,900 (section 5); mineral deposits in the world layer with a resources map layer (section 5); the late knowledge graph with resource requirements (section 7); chronicle templates for the new techniques and resource events; every test and script that hard-codes the old run length updated.
+- Accept: functional only. A 12,900-year run completes; deposits are generated and render; in a test scenario seeded with the prerequisites, late techniques can be invented, diffuse and be lost; the chronicle shows them. No calibration or tuning of population, invention rates or effect sizes in this round.
+
 **Round 5. Polities and cohesion**
 
 - Deliverables: polity agent, culture vector, appearance and dialect traits with drift and mixing (perception wired in round 7), tribute, cohesion and pressure equations, secession, fragmentation, mergers, the lineage tree.
@@ -602,7 +640,7 @@ The build runs in 13 rounds (0 to 12), each ending with a runnable sim, passing 
 **Round 9. Full UI**
 
 - Deliverables: all map layers, overlays, side panels and the polity inspector from section 12.
-- Accept: a full 11,000-year run can be watched and inspected in the browser at usable speed.
+- Accept: a full 12,900-year run can be watched and inspected in the browser at usable speed.
 
 **Round 10. Data and batch runs**
 
@@ -612,7 +650,7 @@ The build runs in 13 rounds (0 to 12), each ending with a runnable sim, passing 
 **Round 11. Performance**
 
 - Deliverables: profile a full run, vectorize or JIT the hottest paths.
-- Accept: one full run of 11,000 years in under 10 minutes on a typical laptop CPU (target; revise after round 10 measurements).
+- Accept: one full run of 12,900 years in under 10 minutes on a typical laptop CPU (target; revise after round 10 measurements).
 
 **Round 12. Calibration and experiments**
 
@@ -621,7 +659,7 @@ The build runs in 13 rounds (0 to 12), each ending with a runnable sim, passing 
 
 ## Calibration, performance and open questions
 
-Calibration targets are broad patterns from the real Holocene record, used to tune parameters so the sim produces plausible dynamics, without forcing any specific outcome.
+Calibration targets are broad patterns from the real Holocene record, used to tune parameters so the sim produces plausible dynamics, without forcing any specific outcome. The targets below predate the 12,900-year run and the industrial techniques; they will be revised in a later calibration pass, and no round should tune toward them before then.
 
 **Calibration targets** (approximate, from general knowledge of the archaeological record; tune ranges, not points)
 
@@ -637,7 +675,7 @@ Calibration targets are broad patterns from the real Holocene record, used to tu
 
 **Performance budget**
 
-- Target: one 11,000-year run in under 10 minutes on a laptop CPU, a few hundred MB of RAM.
+- Target: one 12,900-year run in under 10 minutes on a laptop CPU, a few hundred MB of RAM.
 - Keep cell fields in NumPy arrays and brains batched. Avoid per-cell Python loops in yearly systems; loop over settlements (thousands at most), not cells.
 - The UI may run slower than headless; it can render every N years.
 
