@@ -576,6 +576,10 @@ def generate_world_with_report(cfg: Config, rng: np.random.Generator) -> tuple[W
     receivers = flow_directions(geom, elev, sea0, rng, w.rivers.direction_exponent)
     acc = flow_accumulation(elev, receivers, runoff_m(rain, temp, w.rivers), sea0)
     river = np.where(~sea & (acc >= w.rivers.min_flow), acc, 0.0)
+    # Strahler order over the whole drainage tree (every land cell a headwater), kept on
+    # the cells marked as river: on the thresholded network alone, trunks rarely meet
+    # another marked channel and orders stay at 1-2.
+    river_order = np.where(river > 0, geography.strahler_order(elev, (~sea).astype(float), receivers), 0)
 
     terrain = classify_terrain(elev, temp, rain, acc, sea0, w.terrain)
     fertility = fertility_field(terrain, river, deposit, temp, w.fertility)
@@ -588,6 +592,7 @@ def generate_world_with_report(cfg: Config, rng: np.random.Generator) -> tuple[W
         elevation=elev.reshape(shape),
         terrain=terrain.reshape(shape),
         river=river.reshape(shape),
+        river_order=river_order.reshape(shape),
         flow_to=receivers.reshape(shape),
         base_temp=temp.reshape(shape),
         base_rain=rain.reshape(shape),

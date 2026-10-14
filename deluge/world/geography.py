@@ -115,6 +115,42 @@ def river_lengths(elev: np.ndarray, river: np.ndarray, receivers: np.ndarray) ->
     return {c: n for c, n in longest.items() if receivers[c] < 0 or not is_river[receivers[c]]}
 
 
+def strahler_order(elev: np.ndarray, river: np.ndarray, receivers: np.ndarray) -> np.ndarray:
+    """Strahler stream order of every river cell (0 elsewhere): a river cell with no river
+    upstream is order 1; where two or more tributaries of the highest order k meet, the
+    order becomes k + 1, otherwise it stays k. Cells are visited from high to low, so all
+    tributaries are done before their receiver (receivers are strictly lower)."""
+    is_river = river > 0
+    cells = np.flatnonzero(is_river)
+    order = np.zeros(len(river), dtype=np.int64)
+    top = np.zeros(len(river), dtype=np.int64)  # highest tributary order seen so far
+    count = np.zeros(len(river), dtype=np.int64)  # tributaries with that order
+    for c in cells[np.argsort(-elev[cells], kind="stable")].tolist():
+        k = top[c]
+        order[c] = 1 if k == 0 else (k + 1 if count[c] >= 2 else k)
+        r = int(receivers[c])
+        if r >= 0 and is_river[r]:
+            if order[c] > top[r]:
+                top[r], count[r] = order[c], 1
+            elif order[c] == top[r]:
+                count[r] += 1
+    return order
+
+
+def streams_by_order(order: np.ndarray, receivers: np.ndarray) -> dict[int, int]:
+    """Number of Strahler streams of each order: runs of same-order river cells, counted
+    at the cell where the order first appears (no tributary of the same order)."""
+    cells = np.flatnonzero(order > 0)
+    r = receivers[cells]
+    ok = r >= 0
+    continues = np.zeros(len(order), dtype=bool)  # a same-order tributary flows in
+    same = order[r[ok]] == order[cells[ok]]
+    continues[r[ok][same]] = True
+    heads = cells[~continues[cells]]
+    counts = np.bincount(order[heads])
+    return {int(k): int(n) for k, n in enumerate(counts) if k > 0 and n > 0}
+
+
 def row_aligned_runs(geom: HexGeometry, river: np.ndarray, receivers: np.ndarray,
                      segment: int = 4) -> tuple[int, float]:
     """(longest run of consecutive river steps going the same way along a hex row, share
@@ -163,7 +199,7 @@ class LandBridge:
 def land_bridges(geom: HexGeometry, elev: np.ndarray, sea_level: np.ndarray, floor_cells: float,
                  pulses: tuple[Pulse, ...]) -> tuple[LandBridge, ...]:
     """Every point where rising sea splits one land area into two that both have at least
-    ``floor_cells`` cells.
+    ``floor_cells`` cells, with the crest above the year-0 sea level.
 
     Land is added cell by cell from the highest down (union-find). When a cell joins two
     separate land areas, that cell is the bridge's crest: for any sea level above it the
@@ -190,7 +226,8 @@ def land_bridges(geom: HexGeometry, elev: np.ndarray, sea_level: np.ndarray, flo
         if len(roots) >= 2:
             ranked = sorted(roots, key=lambda r: -size[r])
             h = float(elev[c])
-            if sea0 <= h < top and size[ranked[1]] >= floor_cells:
+            # A crest at or below the year-0 sea level is never land, so never a bridge.
+            if sea0 < h < top and size[ranked[1]] >= floor_cells:
                 drowned = int(np.argmax(sea_level > h))
                 pulse = next((i for i, p in enumerate(pulses) if p.start_year <= drowned < p.end_year), -1)
                 bridges.append(LandBridge(c, h, drowned, (size[ranked[0]], size[ranked[1]]), pulse))

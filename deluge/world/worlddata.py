@@ -53,6 +53,7 @@ class WorldData:
     elevation: np.ndarray  # metres, relative to present sea level
     terrain: np.ndarray  # Terrain codes
     river: np.ndarray  # flow accumulation, 0 = no river
+    river_order: np.ndarray  # Strahler stream order of river cells, 0 = no river
     flow_to: np.ndarray  # flat id of the downstream cell, -1 for sea cells (year-0 sea)
     base_temp: np.ndarray  # mean annual degC, baseline climate
     base_rain: np.ndarray  # mm/year, baseline climate

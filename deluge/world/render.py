@@ -122,16 +122,18 @@ def _coast_segments(geom: HexGeometry, land: np.ndarray) -> np.ndarray:
 
 
 def _river_lines(geom: HexGeometry, world: WorldData, land: np.ndarray, rcfg: RenderConfig):
-    river = world.river.ravel()
+    """River segments of Strahler order ``river_min_order`` and up, wider with order."""
+    order = world.river_order.ravel()
     recv = world.flow_to.ravel()
-    cells = np.flatnonzero((river > 0) & land & (recv >= 0))
+    cells = np.flatnonzero((order >= rcfg.river_min_order) & land & (recv >= 0))
     pos = geom.positions
     ends = pos[recv[cells]].copy()
     into_sea = ~land[recv[cells]]
     ends[into_sea] = (pos[cells[into_sea]] + pos[recv[cells[into_sea]]]) / 2.0
     segs = np.stack([pos[cells], ends], axis=1)
-    top = np.log1p(river.max()) if river.max() > 0 else 1.0
-    widths = rcfg.river_width_min + (rcfg.river_width_max - rcfg.river_width_min) * np.log1p(river[cells]) / top
+    span = max(int(order.max()) - rcfg.river_min_order, 1)
+    widths = rcfg.river_width_min + (rcfg.river_width_max - rcfg.river_width_min) * (
+        order[cells] - rcfg.river_min_order) / span
     return segs, widths
 
 

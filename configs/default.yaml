@@ -196,7 +196,7 @@ world:
   rivers:
     et_base_mm: 100.0         # evapotranspiration: runoff = max(rain - (base + per_c * max(T, 0)), 0)
     et_per_c_mm: 16.0
-    min_flow: 0.6             # flow accumulation (cells x metres/year of runoff) for a river
+    min_flow: 3.6             # drainage (land cells x metres/year of runoff) for a river; ~88.8th percentile of land on world seed 1, ~600 river cells
     direction_exponent: 1.0   # each cell drains to a lower neighbour drawn with weight drop ** exponent
 
   terrain:
@@ -379,7 +379,8 @@ render:                       # static PNG maps only; no effect on the simulatio
   hillshade_altitude_deg: 40.0
   vertical_exaggeration: 25.0
   hillshade_ambient: 0.45
-  river_width_min: 0.4
-  river_width_max: 3.2
+  river_min_order: 3          # draw rivers of this Strahler order and up
+  river_width_min: 0.6        # line width at river_min_order
+  river_width_max: 3.2        # line width at the world's highest order
   coast_linewidth: 0.7
   flood_years: [0, 1000, 2000, 3000]

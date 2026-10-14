@@ -398,6 +398,7 @@ class RenderConfig:
     hillshade_altitude_deg: float
     vertical_exaggeration: float
     hillshade_ambient: float
+    river_min_order: int
     river_width_min: float
     river_width_max: float
     coast_linewidth: float

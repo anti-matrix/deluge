@@ -39,6 +39,7 @@ class WorldSummary:
     enclosed_seas: list[int]
     bridges: list[BridgeSummary]
     river_cells: int
+    rivers_by_order: dict[int, int]  # Strahler streams per order
     rivers_longer_than_15: int
     longest_river: int
     max_row_aligned_run: int
@@ -98,6 +99,7 @@ def summarize(cfg: Config, world: WorldData, report: GenerationReport, years=(10
         enclosed_seas=list(sb.enclosed_basins),
         bridges=bridges,
         river_cells=int((river > 0).sum()),
+        rivers_by_order=geography.streams_by_order(world.river_order.ravel(), recv),
         rivers_longer_than_15=sum(1 for n in lengths.values() if n > 15),
         longest_river=max(lengths.values(), default=0),
         max_row_aligned_run=runs[0],

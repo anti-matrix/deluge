@@ -302,10 +302,49 @@ def test_rivers_are_long_branched_and_not_row_aligned(worlds, geom):
         tributaries = np.bincount(recv[is_river & (recv >= 0)], minlength=len(e))
         assert (tributaries[is_river] >= 2).sum() > 20, seed  # confluences
         longest, share = geography.row_aligned_runs(geom, river, recv)
-        # Measured on seeds 1-10: share 0.4-2.7%, longest 5-10 (steepest descent: up to 3%, 11).
-        assert share < 0.03, (seed, share)
+        # Measured on seeds 1-10: share 0.9-3.6%, longest 4-9. Raised from 3%: with only
+        # trunks marked (min_flow 3.6) the denominator lost the wandering small streams.
+        assert share < 0.04, (seed, share)
         assert longest <= 12, (seed, longest)
     assert min(long_rivers) >= 1, long_rivers
+
+
+def test_strahler_order_on_a_synthetic_tree():
+    """Two order-1 headwaters make an order-2 stream; a third order-1 joining it keeps
+    order 2; another order-2 joining makes order 3."""
+    #   0 -> 2, 1 -> 2, 2 -> 4, 3 -> 4, 4 -> 7, 5 -> 6, 8 -> 6, 6 -> 7, 7 -> sea
+    recv = np.array([2, 2, 4, 4, 7, 6, 7, -1, 6])
+    elev = np.array([10, 10, 8, 9, 6, 9, 7, 1, 9], dtype=float)
+    order = geography.strahler_order(elev, np.ones(9), recv)
+    assert list(order) == [1, 1, 2, 1, 2, 1, 2, 3, 1]
+    assert geography.streams_by_order(order, recv) == {1: 5, 2: 2, 3: 1}
+
+
+def test_river_network_on_seed_1(worlds):
+    """Acceptance of the rivers fix: 400-900 river cells, at least 5 rivers of order 4+."""
+    w = worlds[1]
+    order = flat(w, "river_order")
+    assert 400 <= (flat(w, "river") > 0).sum() <= 900
+    assert ((order > 0) == (flat(w, "river") > 0)).all()
+    streams = geography.streams_by_order(order, flat(w, "flow_to"))
+    assert sum(n for k, n in streams.items() if k >= 4) >= 5, streams
+
+
+def test_rivers_never_lose_order_downstream(worlds):
+    for seed, w in worlds.items():
+        order, recv = flat(w, "river_order"), flat(w, "flow_to")
+        cells = np.flatnonzero((order > 0) & (recv >= 0))
+        down = recv[cells]
+        on_river = order[down] > 0
+        assert (order[down[on_river]] >= order[cells[on_river]]).all(), seed
+
+
+def test_no_bridge_at_or_below_year0_sea(worlds, geom, cfg):
+    curve = sea_level_curve(cfg.climate.sea_level, cfg.run.years)
+    for seed, w in worlds.items():
+        e = flat(w, "elevation")
+        for b in geography.land_bridges(geom, e, curve, 1, ()):
+            assert b.crest_m > curve[0], (seed, b)
 
 
 # --- climate fields ----------------------------------------------------------------------
