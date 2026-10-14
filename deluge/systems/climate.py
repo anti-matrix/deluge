@@ -11,6 +11,7 @@ def run(model) -> None:
     if level != model.sea_level:  # sea and coast only change while the sea moves
         model.sea_level = level
         model.is_sea = model.elevation_flat < level
+        model.sea_layer.data[...] = model.is_sea.reshape(model.sea_layer.data.shape)
         # Coast: land next to sea, evaluated only where land can exist.
         cells = model.ever_land
         padded = np.append(model.is_sea, False)

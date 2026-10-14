@@ -378,6 +378,20 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class VizConfig:
+    play_interval_ms: int
+    play_interval_max_ms: int
+    render_interval: int
+    render_interval_max: int
+    step_buttons: tuple[int, ...]
+    seed_min: int
+    seed_max: int
+    figure_width_in: float
+    figure_height_in: float
+    figure_dpi: int
+
+
+@dataclass(frozen=True)
 class RenderConfig:
     dpi: int
     hillshade_azimuth_deg: float
@@ -399,6 +413,7 @@ class Config:
     climate: ClimateConfig
     capacity: CapacityConfig
     output: OutputConfig
+    viz: VizConfig
     render: RenderConfig
 
     def to_dict(self) -> dict[str, Any]:

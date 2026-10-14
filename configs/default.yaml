@@ -361,6 +361,18 @@ capacity:                     # densities are people per km2; cell area comes fr
 output:
   runs_dir: runs
 
+viz:                          # browser UI only; no effect on the simulation
+  play_interval_ms: 50        # pause between frames while playing
+  play_interval_max_ms: 500   # slider range
+  render_interval: 10         # years stepped per frame while playing, and per click of Step
+  render_interval_max: 100    # slider range
+  step_buttons: [1, 10, 100]  # years per click of the step buttons
+  seed_min: 0                 # seed slider range
+  seed_max: 999
+  figure_width_in: 12.0
+  figure_height_in: 7.0
+  figure_dpi: 80
+
 render:                       # static PNG maps only; no effect on the simulation
   dpi: 110
   hillshade_azimuth_deg: 315.0

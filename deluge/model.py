@@ -18,6 +18,7 @@ from pathlib import Path
 
 import mesa
 import numpy as np
+from mesa.discrete_space import PropertyLayer
 
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
@@ -26,7 +27,7 @@ from deluge.systems import capacity, climate
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
 from deluge.world.climate import ClimateShocks, sea_level_curve, temp_anomaly_series
-from deluge.world.grid import HexGeometry, build_mesa_grid, hex_area_km2, hex_unit_km
+from deluge.world.grid import HexGeometry, as_field, build_mesa_grid, hex_area_km2, hex_unit_km
 
 PHASES: tuple[Callable[[DelugeModel], None], ...] = (climate.run, capacity.run)
 
@@ -90,6 +91,10 @@ class DelugeModel(mesa.Model):
         self.sea_level = float("nan")  # set by the climate phase
         self.is_sea = self.elevation_flat < float(self.sea_level_series[0])
         self.is_coast = ~self.is_sea & self.geom.neighbor_any(self.is_sea)
+        # The sea flag as a grid PropertyLayer (the browser map draws it); the climate
+        # phase updates its data in place, never replaces it.
+        self.sea_layer = PropertyLayer.from_data("sea", as_field(self.geom, self.is_sea))
+        self.grid.add_property_layer(self.sea_layer)
         self.temp_anomaly = 0.0
         self.temperature = self.base_temp_flat.copy()
         self.rainfall = self.base_rain_flat.copy()

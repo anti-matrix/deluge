@@ -63,8 +63,13 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 - Mesa's own hex drawer (`space_drawers.HexSpaceDrawer._get_hexmesh`) shifts **even** rows right, which matches the connectivity.
 - Deluge follows the connectivity: `deluge/world/grid.py` copies Mesa's neighbor offsets, places centers at `(sqrt(3) * (x + 0.5 * (y even)), 1.5 * y)` like the drawer, and never uses `cell.position` or `find_nearest_cell`. `tests/test_world_grid.py` checks that our neighbor table equals Mesa's `cell.neighborhood` and that every neighbor pair is exactly sqrt(3) apart in our positions.
 
-**Visualization**
-- `SpaceRenderer` and the matplotlib and altair backends have explicit HexGrid support: hexagons are drawn as a `PolyCollection`, and property layers can be drawn as colored hexes. Round 2 should try this before writing a custom renderer.
+**Visualization (verified in Round 2)**
+- `SpaceRenderer(model, backend="matplotlib")` draws a HexGrid correctly for Deluge. `HexSpaceDrawer._get_hexmesh` builds the mesh row by row with centers `(col * sqrt(3) + (row even) * sqrt(3) / 2, 1.5 * row)`, which is exactly `HexGeometry.positions`. Property layer colours are taken as `layer.data.T.ravel()` (row-major, the mesh order). Agent markers use the same even-row shift. None of it uses `cell.position`, so the position mismatch above does not affect drawing. `tests/test_viz.py` checks the mesh centers against our geometry and that every connected neighbour pair is drawn as touching hexes.
+- `renderer.setup_propertylayer(fn)` with `fn(layer) -> PropertyLayerStyle | None` draws every layer in `grid._mesa_property_layers` whose style is not None, each as its own `PolyCollection` (zorder -1, in insertion order). `PropertyLayerStyle(colormap=..., color=..., alpha, colorbar, vmin, vmax)`: with `color`, the value maps to opacity; `colormap` may be a `Colormap` object.
+- `SpaceRendererComponent` redraws only the meshes that were drawn once before (`renderer.draw_propertylayer()` etc.). `renderer.post_process(ax)` runs once per renderer; the axis limits persist because each frame only removes artists. `draw_structure()` draws every hex edge as a dotted line (unused: at 15,360 cells it hides the map).
+- Frame cost at 160 x 96 with two layers: about 1 s to draw and encode the PNG; about 1.5 s per frame in the browser.
+- `ModelController` Reset calls `type(model)(**params)`. `mesa.Model` sets a default `scenario`, but since `DelugeModel.__init__` takes no `scenario` argument, the params (e.g. `seed`) are passed straight through.
+- **SolaraViz layout does not render with the installed frontend.** solara 1.64 with ipyvue 3.1.1 / ipyvuetify 3.1.0 serves the Vue 3 app. `SolaraViz` puts all components, including the map, in `solara.GridDraggable`, whose `vue-grid-layout` plugin is Vue 2 only. It fails in the browser (`TypeError: GlobalVue.use is not a function`) and the main area stays blank. `solara.Sidebar` also overlays the main area instead of pushing it aside. Deluge's `viz/app.py` therefore builds its own Solara `Page` from Mesa's pieces (`SpaceRendererComponent`, `ModelController`, `ModelCreator`, `make_plot_component`) in plain `Columns`.
 
 ## Deviations from SPECS.md
 
@@ -75,6 +80,9 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 - **WorldData (Round 1 rework):** adds a `flow_to` field (downstream cell per land cell). Flow directions are drawn at random among lower neighbours, so they cannot be re-derived from elevation and must be stored.
 - **Terrain (Round 1 rework):** `coast` is no longer a class; it is a per-year flag (land next to that year's sea). `tundra` and `ice` are added.
 - **Cell size (Round 1 rework):** the cell size comes from the grid and the latitude span: 160 x 96 over 130 degrees gives hexes about 176 km across (26,700 km2), larger than the spec's 50 to 100 km. Capacity uses this geometric area.
+
+- **Browser UI (Round 2):** the spec names `SolaraViz` as the UI. Its layout grid does not render with the installed solara / ipyvue 3 (see Visualization above), so `deluge/viz/app.py` is a Solara `Page` built from Mesa's visualization components; the map itself is Mesa's `SpaceRenderer`, not a custom renderer.
+- **Sea flag layer (Round 2):** the model keeps the year's sea flag as a `sea` PropertyLayer on the grid (spec section 4 lists the sea flag as a cell field), updated in place by the climate phase. The UI draws it over the terrain layer.
 
 ## Mesa grid performance at 160 x 96 (Round 1 rework)
 
