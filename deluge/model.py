@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import mesa
+import numpy as np
 
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
@@ -25,7 +26,7 @@ from deluge.systems import capacity, climate
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
 from deluge.world.climate import ClimateShocks, sea_level_curve, temp_anomaly_series
-from deluge.world.grid import HexGeometry, build_mesa_grid
+from deluge.world.grid import HexGeometry, build_mesa_grid, hex_area_km2, hex_unit_km
 
 PHASES: tuple[Callable[[DelugeModel], None], ...] = (climate.run, capacity.run)
 
@@ -64,6 +65,9 @@ class DelugeModel(mesa.Model):
 
         # World (static).
         self.geom = HexGeometry(cfg.grid.width, cfg.grid.height, cfg.grid.torus)
+        self.unit_km = hex_unit_km(cfg.grid.height, cfg.world.lat_south, cfg.world.lat_north,
+                                   cfg.world.km_per_degree)
+        self.cell_area_km2 = hex_area_km2(self.unit_km)
         self.world = generate_world(cfg, streams["world"])
         self.grid = build_mesa_grid(self.geom, self.world.fields(), random=self.random)
         self.elevation_flat = self.world.elevation.ravel()
@@ -75,12 +79,17 @@ class DelugeModel(mesa.Model):
         self.temp_anomaly_series = temp_anomaly_series(
             cfg.climate.temperature, cfg.run.years, streams["climate"]
         )
-        self.shocks = ClimateShocks(cfg.climate.shocks, self.geom.positions, streams["shocks"])
-        self.carrying_capacity = CarryingCapacity(cfg.capacity, self.world)
+        self.shocks = ClimateShocks(cfg.climate.shocks, self.geom.positions * self.unit_km, streams["shocks"])
+        # Cells that are land at some point of the run; all others stay sea throughout.
+        self.ever_land = np.flatnonzero(self.elevation_flat >= self.sea_level_series.min())
+        self.ever_land_neighbors = self.geom.neighbors[self.ever_land]
+        self.carrying_capacity = CarryingCapacity(cfg.capacity, self.world, self.cell_area_km2,
+                                                  self.ever_land)
 
         # Per-year state, filled by the phases.
-        self.sea_level = float(self.sea_level_series[0])
-        self.is_sea = self.elevation_flat < self.sea_level
+        self.sea_level = float("nan")  # set by the climate phase
+        self.is_sea = self.elevation_flat < float(self.sea_level_series[0])
+        self.is_coast = ~self.is_sea & self.geom.neighbor_any(self.is_sea)
         self.temp_anomaly = 0.0
         self.temperature = self.base_temp_flat.copy()
         self.rainfall = self.base_rain_flat.copy()

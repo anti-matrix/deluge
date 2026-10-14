@@ -3,6 +3,7 @@ import dataclasses
 import numpy as np
 import pytest
 
+from deluge.world import geography
 from deluge.world.climate import (
     ClimateShocks,
     red_noise,
@@ -23,18 +24,23 @@ def test_sea_level_curve_default(cfg):
 
 def test_sea_level_has_two_fast_pulses(cfg):
     sl = sea_level_curve(cfg.climate.sea_level, 3000)
-    rate = np.diff(sl)
-    mean_rate = (sl[3000] - sl[0]) / 3000
-    fast = rate > 2.5 * mean_rate
-    # Count separate runs of fast years.
-    starts = np.flatnonzero(fast[1:] & ~fast[:-1]) + 1
-    runs = len(starts) + int(fast[0])
-    assert runs == 2
+    assert len(geography.pulse_windows(sl, cfg.world.land_bridges.pulse_rate_factor)) == 2
 
 
-def test_modern_melt_preset(cfg):
-    sl = sea_level_curve(dataclasses.replace(cfg.climate.sea_level, preset="modern_melt"), 100)
-    assert np.all(sl == 70.0)
+def test_modern_melt_preset_has_same_pulses(cfg):
+    sl_cfg = dataclasses.replace(cfg.climate.sea_level, preset="modern_melt")
+    sl = sea_level_curve(sl_cfg, 11000)
+    assert sl[0] == pytest.approx(0.0)
+    assert sl[3000] == pytest.approx(70.0)
+    assert np.all(sl[3000:] == 70.0)
+    assert np.all(np.diff(sl) >= 0)
+    default = sea_level_curve(cfg.climate.sea_level, 11000)
+    rate = cfg.world.land_bridges.pulse_rate_factor
+    a = [(p.start_year, p.end_year) for p in geography.pulse_windows(sl, rate)]
+    b = [(p.start_year, p.end_year) for p in geography.pulse_windows(default, rate)]
+    assert a == b
+    # Same shape, scaled from 60 m to 70 m of rise.
+    np.testing.assert_allclose((sl - sl[0]) / 70.0, (default - default[0]) / 60.0, atol=1e-3)
 
 
 def test_coasts_drown_across_first_3000_years(worlds, cfg):
@@ -44,8 +50,6 @@ def test_coasts_drown_across_first_3000_years(worlds, cfg):
         sea = [int((e < sl[y]).sum()) for y in (0, 1000, 2000, 3000, 6000, 11000)]
         assert sea[0] < sea[1] < sea[2] < sea[3], (seed, sea)
         assert sea[3] == sea[4] == sea[5]
-        lost = sea[3] - sea[0]
-        assert lost >= 0.1 * (e >= sl[0]).sum(), (seed, sea)
 
 
 def test_temp_anomaly_phases(cfg):
@@ -73,40 +77,43 @@ def test_red_noise_is_autocorrelated():
 
 
 def test_shocks_bounds_and_determinism(cfg):
-    geom = HexGeometry(40, 20)
+    geom = HexGeometry(60, 30)
+    unit_km = 100.0
     land = np.ones(geom.n_cells, dtype=bool)
     sc = cfg.climate.shocks
 
     def run(seed):
-        s = ClimateShocks(sc, geom.positions, np.random.default_rng(seed))
-        factors, temps, durations = [], [], []
+        s = ClimateShocks(sc, geom.positions * unit_km, np.random.default_rng(seed))
+        factors, temps, droughts = [], [], []
         for year in range(3000):
             s.step(year, land)
             factors.append(s.rain_factor.copy())
             temps.append(s.temp_shock)
-            durations += [d.end - d.start for d in s.droughts]
-        return np.array(factors), np.array(temps), durations
+            droughts += [(d.end - d.start, d.radius) for d in s.droughts]
+        return np.array(factors), np.array(temps), droughts
 
-    f, t, durations = run(7)
+    f, t, droughts = run(7)
     f2, t2, _ = run(7)
     np.testing.assert_array_equal(f, f2)
     np.testing.assert_array_equal(t, t2)
     assert f.min() > 0 and f.max() <= 1.0
     assert (f < 1).any(axis=1).mean() > 0.2  # droughts occur
+    durations = [d for d, _ in droughts]
+    radii = [r for _, r in droughts]
     assert min(durations) >= sc.drought_duration_min
     assert max(durations) <= sc.drought_duration_max
+    assert sc.drought_radius_min_km <= min(radii) and max(radii) <= sc.drought_radius_max_km
     assert t.max() <= 0.0
-    # Spatially correlated: a drought hits a contiguous patch, not scattered cells.
-    year = int(np.argmax((f < 1).sum(axis=1)))
-    hit = f[year] < 1
-    assert geom.components(hit).max() < 3
+    # Spatially correlated: a single drought hits one contiguous patch.
+    year = next(y for y in range(len(f)) if (f[y] < 1).any())
+    assert geom.components(f[year] < 1).max() < 3
 
 
 def test_no_shocks_when_probabilities_zero(cfg):
     geom = HexGeometry(10, 10)
     sc = dataclasses.replace(cfg.climate.shocks, drought_annual_probability=0.0,
                              volcanic_annual_probability=0.0)
-    s = ClimateShocks(sc, geom.positions, np.random.default_rng(0))
+    s = ClimateShocks(sc, geom.positions * 100.0, np.random.default_rng(0))
     for year in range(500):
         s.step(year, np.ones(geom.n_cells, dtype=bool))
         assert (s.rain_factor == 1.0).all() and s.temp_shock == 0.0

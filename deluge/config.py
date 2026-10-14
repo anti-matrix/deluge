@@ -52,67 +52,100 @@ class GridConfig:
     torus: bool
 
 
+# --- world -----------------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class LandmassConfig:
     min_count: int
     max_count: int
     min_share_of_land: float
     min_size_ratio: float
+    min_islands: int
 
 
 @dataclass(frozen=True)
-class ContinentConfig:
-    count_min: int
-    count_max: int
-    radius_min: float
-    radius_max: float
-    edge_margin: float
-    min_separation: float
-    placement_tries: int
+class SeaBasinConfig:
+    required: bool
+    open_water_min_steps: int
+    min_basin_cells: int
+
+
+@dataclass(frozen=True)
+class LandBridgeConfig:
+    min_count: int
+    min_share_of_land: float
+    pulse_rate_factor: float
+    construct_if_missing: bool
+    max_length_steps: int
+    crest_margin_m: float
+    end_rise_m_per_step: float
+    flank_floor_m: float
+
+
+@dataclass(frozen=True)
+class ShapeConfig:
+    base_frequency: float
+    octaves: int
+    persistence: float
+    lacunarity: float
     warp_frequency: float
     warp_octaves: int
     warp_persistence: float
     warp_lacunarity: float
     warp_strength: float
-    elongation_max: float
-    rim_width: float
-
-
-@dataclass(frozen=True)
-class NoiseConfig:
-    octaves: int
-    base_frequency: float
-    ridge_frequency: float
-    ridge_octaves: int
-    ridge_sharpness: float
-    persistence: float
-    lacunarity: float
-    mask_weight: float
-    noise_weight: float
-    ridge_weight: float
+    plate_bias_weight: float
+    plate_bias_smoothing_passes: int
     edge_falloff_width: float
     edge_falloff_weight: float
-
-
-@dataclass(frozen=True)
-class ElevationConfig:
-    land_max_m: float
-    ocean_min_m: float
-    land_exponent: float
-    ocean_exponent: float
-    shelf_share_of_land: float
-    shelf_step_m: float
+    edge_sea_cells: int
 
 
 @dataclass(frozen=True)
 class TectonicsConfig:
     enabled: bool
+    plates_min: int
+    plates_max: int
+    noise_persistence: float
+    noise_lacunarity: float
+    boundary_warp_frequency: float
+    boundary_warp_octaves: int
+    boundary_warp_strength: float
+    speed_min: float
+    speed_max: float
+    convergence_threshold: float
+    mountain_height: float
+    mountain_width_km: float
+    peak_noise_frequency: float
+    peak_noise_octaves: int
+    peak_noise_sharpness: float
+    peak_noise_weight: float
+    plateau_height: float
+    plateau_width_km: float
+    plateau_falloff_km: float
+    rift_depth: float
+    rift_width_km: float
+    basin_depth: float
+    basin_width_km: float
+
+
+@dataclass(frozen=True)
+class ElevationConfig:
+    land_knots: tuple[tuple[float, float], ...]
+    sea_knots: tuple[tuple[float, float], ...]
+    detail_m: float
+    detail_fraction: float
+    detail_frequency: float
+    detail_octaves: int
+    detail_persistence: float
+    detail_lacunarity: float
 
 
 @dataclass(frozen=True)
 class ErosionConfig:
     droplets: int
     max_steps: int
+    direction_exponent: float
     capacity_factor: float
     erode_rate: float
     deposit_rate: float
@@ -125,19 +158,35 @@ class BaseTemperatureConfig:
     pole_c: float
     lat_exponent: float
     lapse_rate_c_per_km: float
+    continentality_neutral_c: float
+    continentality_amplitude: float
+    continentality_scale_km: float
 
 
 @dataclass(frozen=True)
 class RainfallConfig:
     base_mm: float
     bands: tuple[tuple[float, float, float], ...]
-    winds: tuple[tuple[float, float, int], ...]
+    winds: tuple[tuple[float, float, float, float], ...]
+    wind_sharpness: float
+    noise_octaves: int
+    noise_persistence: float
+    noise_lacunarity: float
+    band_wobble_deg: float
+    band_wobble_frequency: float
+    wind_angle_noise_deg: float
+    wind_noise_frequency: float
+    rain_noise_amplitude: float
+    rain_noise_frequency: float
     upwind_moisture: float
-    ocean_recharge: float
-    land_loss: float
+    land_loss_per_1000km: float
     orographic_gain_per_km: float
     shadow_loss_per_km: float
+    orographic_smoothing_passes: int
     min_moisture: float
+    continentality_weight: float
+    continentality_scale_km: float
+    iterations: int
     smoothing_passes: int
 
 
@@ -146,12 +195,14 @@ class RiverConfig:
     et_base_mm: float
     et_per_c_mm: float
     min_flow: float
+    direction_exponent: float
 
 
 @dataclass(frozen=True)
 class TerrainConfig:
     mountain_m: float
     hills_m: float
+    ice_c: float
     tundra_c: float
     desert_rain_mm: float
     desert_rain_per_c: float
@@ -190,22 +241,28 @@ class WorldConfig:
     source: str
     lat_south: float
     lat_north: float
+    km_per_degree: float
     land_share: float
     reference_sea_level_m: float
     max_attempts: int
     landmasses: LandmassConfig
-    continents: ContinentConfig
-    noise: NoiseConfig
-    elevation: ElevationConfig
+    seas: SeaBasinConfig
+    land_bridges: LandBridgeConfig
+    shape: ShapeConfig
     tectonics: TectonicsConfig
+    elevation: ElevationConfig
     erosion: ErosionConfig
     fill_epsilon_m: float
+    fill_random_factor: float
     temperature: BaseTemperatureConfig
     rainfall: RainfallConfig
     rivers: RiverConfig
     terrain: TerrainConfig
     fertility: FertilityConfig
     wild_food: WildFoodConfig
+
+
+# --- climate over time ------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -235,8 +292,8 @@ class ShockConfig:
     drought_annual_probability: float
     drought_duration_min: int
     drought_duration_max: int
-    drought_radius_min: float
-    drought_radius_max: float
+    drought_radius_min_km: float
+    drought_radius_max_km: float
     drought_rain_factor_min: float
     drought_rain_factor_max: float
     volcanic_annual_probability: float
@@ -253,14 +310,19 @@ class ClimateConfig:
     shocks: ShockConfig
 
 
+# --- carrying capacity ------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class ForageConfig:
     min_density: float
     max_density: float
+    coast_bonus: float
     temp_zero_c: float
     temp_full_c: float
     rain_zero_mm: float
     rain_full_mm: float
+    terrain: Mapping[str, float]
 
 
 @dataclass(frozen=True)
@@ -288,15 +350,30 @@ class FarmConfig:
 
 @dataclass(frozen=True)
 class CapacityConfig:
-    cell_area_km2: float
     forage: ForageConfig
     herd: HerdConfig
     farm: FarmConfig
 
 
+# --- output and rendering ----------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class OutputConfig:
     runs_dir: str
+
+
+@dataclass(frozen=True)
+class RenderConfig:
+    dpi: int
+    hillshade_azimuth_deg: float
+    hillshade_altitude_deg: float
+    vertical_exaggeration: float
+    hillshade_ambient: float
+    river_width_min: float
+    river_width_max: float
+    coast_linewidth: float
+    flood_years: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -308,6 +385,7 @@ class Config:
     climate: ClimateConfig
     capacity: CapacityConfig
     output: OutputConfig
+    render: RenderConfig
 
     def to_dict(self) -> dict[str, Any]:
         return _to_plain(self)

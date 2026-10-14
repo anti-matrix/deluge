@@ -27,124 +27,190 @@ rng:
     - memory
 
 grid:
-  width: 100
-  height: 60
+  width: 160
+  height: 96
   torus: false
 
 world:
   source: procedural          # procedural | earth (earth: round 12)
   lat_south: -60.0            # latitude of row 0, degrees
   lat_north: 70.0             # latitude of the last row
+  km_per_degree: 111.2        # sets the cell size: (lat span * km_per_degree) / rows
   land_share: 0.35            # share of cells above the reference sea level
   reference_sea_level_m: -60.0  # land share is calibrated at this level (year-0 level of the default curve)
-  max_attempts: 60            # world draws tried until the landmass rules hold
+  max_attempts: 80            # world draws tried until the geography rules below hold
 
-  landmasses:
-    min_count: 2
-    max_count: 4
-    min_share_of_land: 0.04   # smaller connected land areas count as islands
+  landmasses:                 # counted at the year-0 sea level
+    min_count: 3
+    max_count: 5
+    min_share_of_land: 0.03   # smaller connected land areas count as islands
     min_size_ratio: 1.5       # largest / smallest landmass, so sizes are uneven
+    min_islands: 3
 
-  continents:                 # low-frequency elliptical blobs that form the continent mask
-    count_min: 2
-    count_max: 4
-    radius_min: 0.09          # fraction of map width
-    radius_max: 0.22
-    edge_margin: 0.07         # blob centers kept this far (fraction of width) from the edges
-    min_separation: 0.03      # gap between blob rims, fraction of map width
-    placement_tries: 200      # random placements tried per blob before it is dropped
-    warp_frequency: 2.0       # domain warp: cycles per map width (first octave)
-    warp_octaves: 3
-    warp_persistence: 0.5     # amplitude factor per octave
-    warp_lacunarity: 2.0      # frequency factor per octave
-    warp_strength: 0.14       # fraction of map width
-    elongation_max: 2.5       # axis ratio of each blob drawn in [1, this], random orientation
-    rim_width: 0.6            # mask rises from 0 at the rim to 1 this far in (fraction of radius)
+  seas:                       # at least one inland sea or semi-enclosed sea
+    required: true
+    open_water_min_steps: 2   # open water: sea cells at least this many steps from land
+    min_basin_cells: 15       # a separate open-water basin, or an inland sea, at least this big (15 cells ~ Black Sea)
 
-  noise:
-    octaves: 4
-    base_frequency: 3.0       # cycles per map width
-    ridge_frequency: 3.5      # ridged noise for mountain ranges
-    ridge_octaves: 2
-    ridge_sharpness: 2.0      # ridge profile (1 - |noise|) ** sharpness
-    persistence: 0.5
+  land_bridges:               # a land connection that drowns during a sea-level pulse
+    min_count: 1
+    min_share_of_land: 0.03   # both sides of the bridge must be at least this share of year-0 land
+    pulse_rate_factor: 2.0    # pulse years: sea rises faster than this times the mean rise rate
+    construct_if_missing: true  # if no natural bridge drowns in a pulse, raise one between two nearby landmasses
+    max_length_steps: 8       # longest constructed bridge, in hex steps
+    crest_margin_m: 2.0       # crest kept this far inside the pulse's sea-level span
+    end_rise_m_per_step: 4.0  # bridge rises from its crest toward both shores
+    flank_floor_m: -110.0     # sea cells beside a constructed bridge are raised to at least this depth
+
+  shape:                      # continent mask: warped multi-octave noise plus plate bias
+    base_frequency: 1.4       # cycles per map width
+    octaves: 7
+    persistence: 0.55         # high-frequency energy for ragged coasts
     lacunarity: 2.0
-    mask_weight: 1.0
-    noise_weight: 0.5
-    ridge_weight: 1.1         # applied inside continents only
-    edge_falloff_width: 0.035 # fraction of width over which elevation drops toward the map edge
-    edge_falloff_weight: 0.6
+    warp_frequency: 1.2
+    warp_octaves: 4
+    warp_persistence: 0.5
+    warp_lacunarity: 2.0
+    warp_strength: 0.18       # fraction of map width
+    plate_bias_weight: 0.22   # how strongly continental plates favour land
+    plate_bias_smoothing_passes: 40
+    edge_falloff_width: 0.07  # fraction of width over which relief drops toward the map edge
+    edge_falloff_weight: 1.2
+    edge_sea_cells: 3         # cells this close to the map border are always open sea
+
+  tectonics:                  # heights are in normalized relief units: 1 = the median land cell above the coast
+    enabled: true
+    plates_min: 6
+    plates_max: 12
+    noise_persistence: 0.5         # for the boundary warp and peak noise
+    noise_lacunarity: 2.0
+    boundary_warp_frequency: 3.0
+    boundary_warp_octaves: 4
+    boundary_warp_strength: 0.2    # fraction of map width; makes plate boundaries curve
+    speed_min: 0.3
+    speed_max: 1.0
+    convergence_threshold: 0.25    # boundary is convergent above this, divergent below minus this
+    mountain_height: 6.0           # at a fully convergent boundary
+    mountain_width_km: 380
+    peak_noise_frequency: 7.0      # breaks ranges into peaks and passes
+    peak_noise_octaves: 3
+    peak_noise_sharpness: 2.0      # ridged profile (1 - |noise|) ** sharpness
+    peak_noise_weight: 0.8
+    plateau_height: 1.6            # on the overriding side, behind the range
+    plateau_width_km: 700
+    plateau_falloff_km: 350
+    rift_depth: 2.0                # narrow rift valley at divergent boundaries
+    rift_width_km: 220
+    basin_depth: 0.7               # broad lowland basin around the rift
+    basin_width_km: 700
 
   elevation:
-    land_max_m: 4500.0
-    ocean_min_m: -5000.0
-    land_exponent: 5.0        # elevation = max * rank ** exponent above the shelf; >1: most land is low-lying
-    ocean_exponent: 0.6
-    shelf_share_of_land: 0.14 # share of year-0 land between the reference level and present sea level
-    shelf_step_m: 1.0         # shallowest sea cell lies this far below the reference level
-
-  tectonics:
-    enabled: false            # switch only; not implemented yet
+    # Continuous hypsometric curve. Relief z is normalized so z = 0 is the year-0
+    # coast and z = 1 (land) / -1 (sea) is the median land / sea cell; metres are
+    # interpolated between knots [z, metres].
+    land_knots:
+      - [0.0, -60.0]
+      - [0.45, 0.0]
+      - [1.0, 140.0]
+      - [1.8, 380.0]
+      - [2.6, 800.0]
+      - [3.6, 1600.0]
+      - [5.0, 2800.0]
+      - [7.0, 4300.0]
+      - [10.0, 5800.0]
+    sea_knots:
+      - [0.0, -60.0]
+      - [-0.35, -120.0]
+      - [-0.5, -600.0]
+      - [-0.8, -3000.0]
+      - [-1.5, -4600.0]
+      - [-4.0, -6000.0]
+    detail_m: 30.0            # small-scale relief on land: amplitude = detail_m + detail_fraction * height
+    detail_fraction: 0.25
+    detail_frequency: 32.0    # cycles per map width
+    detail_octaves: 3
+    detail_persistence: 0.5
+    detail_lacunarity: 2.0
 
   erosion:                    # light particle (droplet) pass, units are metres
-    droplets: 4000
-    max_steps: 40
-    capacity_factor: 0.3      # sediment capacity per metre of drop
-    erode_rate: 0.08
+    droplets: 30000
+    max_steps: 60
+    direction_exponent: 2.0   # next cell drawn among lower neighbours with weight drop ** exponent
+    capacity_factor: 0.5      # sediment capacity per metre of drop
+    erode_rate: 0.1
     deposit_rate: 0.3
     max_erode_fraction: 0.5   # never cut more than this share of the drop to the next cell
 
-  fill_epsilon_m: 0.01        # depression filling: minimum drop along a flow path
+  fill_epsilon_m: 0.05        # depression filling: minimum drop along a flow path across flats
+  fill_random_factor: 30.0    # raised cells get epsilon * (1 + factor * U): drainage wanders across flats
 
   temperature:
     equator_c: 27.0
     pole_c: -25.0
     lat_exponent: 1.3         # T = equator + (pole - equator) * (|lat| / 90) ** exponent
     lapse_rate_c_per_km: 6.5
+    continentality_neutral_c: 10.0   # interiors move away from this: warm places warmer, cold colder
+    continentality_amplitude: 0.3    # at full continentality, deviation from neutral grows by this share
+    continentality_scale_km: 1200.0  # distance from the sea for continentality to reach 63%
 
   rainfall:
-    base_mm: 180.0
+    base_mm: 380.0
     bands:                    # [latitude, amplitude mm, width degrees], gaussian bumps
-      - [0.0, 1900.0, 13.0]
+      - [0.0, 1800.0, 16.0]
       - [50.0, 900.0, 15.0]
       - [-50.0, 900.0, 15.0]
-    winds:                    # [lat_min, lat_max, direction]; +1 blows toward +x (east), -1 toward -x
-      - [-90.0, -60.0, -1]
-      - [-60.0, -30.0, 1]
-      - [-30.0, 30.0, -1]
-      - [30.0, 60.0, 1]
-      - [60.0, 90.0, -1]
-    upwind_moisture: 1.0      # moisture of air entering at the map edge
-    ocean_recharge: 0.35      # share of the moisture deficit restored per sea cell
-    land_loss: 0.025          # share of moisture lost per land cell crossed
+    winds:                    # [lat_min, lat_max, u (east+), v (north+)]: direction air moves
+      - [-90.0, -60.0, -1.0, 0.3]
+      - [-60.0, -30.0, 1.0, -0.3]
+      - [-30.0, 0.0, -1.0, 0.35]
+      - [0.0, 30.0, -1.0, -0.35]
+      - [30.0, 60.0, 1.0, 0.3]
+      - [60.0, 90.0, -1.0, -0.3]
+    wind_sharpness: 2.0       # weight of upwind neighbours ~ cos(angle) ** sharpness
+    noise_octaves: 3          # for band wobble, wind turning and rain noise
+    noise_persistence: 0.5
+    noise_lacunarity: 2.0
+    band_wobble_deg: 7.0      # low-frequency noise shifts the latitude bands by up to this
+    band_wobble_frequency: 1.5
+    wind_angle_noise_deg: 25.0
+    wind_noise_frequency: 2.0
+    rain_noise_amplitude: 0.25    # multiplicative low-frequency noise, exp(amp * noise)
+    rain_noise_frequency: 2.5
+    upwind_moisture: 1.0      # air entering from the map edge or over sea
+    land_loss_per_1000km: 0.08 # share of moisture rained out per 1000 km over land
     orographic_gain_per_km: 1.2   # windward rain boost per km of uplift
     shadow_loss_per_km: 0.9       # moisture lost per km of uplift (rain shadow behind)
+    orographic_smoothing_passes: 3  # lift and shadow use relief smoothed this many times
     min_moisture: 0.05
-    smoothing_passes: 2
+    continentality_weight: 0.15   # extra drying with distance from any sea
+    continentality_scale_km: 1500.0
+    iterations: 220           # moisture transport sweeps (longer than any land crossing)
+    smoothing_passes: 1
 
   rivers:
     et_base_mm: 100.0         # evapotranspiration: runoff = max(rain - (base + per_c * max(T, 0)), 0)
     et_per_c_mm: 16.0
-    min_flow: 2.5             # flow accumulation (cells x metres/year of runoff) for a river
+    min_flow: 0.6             # flow accumulation (cells x metres/year of runoff) for a river
+    direction_exponent: 1.0   # each cell drains to a lower neighbour drawn with weight drop ** exponent
 
   terrain:
     mountain_m: 2000.0
     hills_m: 800.0
-    tundra_c: -6.0            # colder than this: open treeless ground, classed as steppe
-    desert_rain_mm: 100.0     # dryness thresholds grow with temperature (Whittaker-style)
-    desert_rain_per_c: 8.0
-    steppe_rain_mm: 220.0
-    steppe_rain_per_c: 14.0
+    ice_c: -12.0              # base temperature below this: ice
+    tundra_c: -4.0            # below this (and not ice): tundra
+    desert_rain_mm: 80.0      # dryness thresholds grow with temperature (Whittaker-style)
+    desert_rain_per_c: 7.0
+    steppe_rain_mm: 200.0
+    steppe_rain_per_c: 12.0
     forest_rain_mm: 400.0
     forest_rain_per_c: 24.0
-    wetland_max_m_above_sea: 40.0
-    wetland_min_flow: 25.0
-    wetland_min_rain_mm: 1600.0
+    wetland_max_m_above_sea: 30.0
+    wetland_min_flow: 20.0
+    wetland_min_rain_mm: 1800.0
 
   fertility:
     base:                     # per terrain
       sea: 0.0
-      coast: 0.45
       plain: 0.65
       forest: 0.5
       hills: 0.35
@@ -152,6 +218,8 @@ world:
       desert: 0.05
       steppe: 0.4
       wetland: 0.6
+      tundra: 0.05
+      ice: 0.0
     river_bonus: 0.35         # scaled by log flow up to river_flow_ref
     river_flow_ref: 100.0
     sediment_bonus: 0.15      # on cells where erosion deposited sediment
@@ -162,7 +230,6 @@ world:
   wild_food:
     base:
       sea: 0.0
-      coast: 0.7
       plain: 0.5
       forest: 0.55
       hills: 0.4
@@ -170,11 +237,13 @@ world:
       desert: 0.05
       steppe: 0.35
       wetland: 0.8
+      tundra: 0.15
+      ice: 0.0
     forest_edge_bonus: 0.2    # forest next to open land, and open land next to forest
     river_bonus: 0.1
     cold_zero_c: -18.0
     cold_full_c: 4.0
-    cold_floor: 0.15          # cold factor never drops below this (cold coasts and tundra still feed foragers)
+    cold_floor: 0.15          # cold factor never drops below this
 
 climate:
   sea_level:
@@ -188,8 +257,13 @@ climate:
         - [1750, -13.0]       # second fast pulse
         - [3000, 0.0]
         - [11000, 0.0]
-      modern_melt:
-        - [0, 70.0]
+      modern_melt:            # same pulse structure, 0 m to +70 m
+        - [0, 0.0]
+        - [500, 5.83]
+        - [700, 23.33]
+        - [1500, 33.83]
+        - [1750, 54.83]
+        - [3000, 70.0]
         - [11000, 70.0]
 
   temperature:                # global anomaly, degC, added to world base_temp
@@ -210,8 +284,8 @@ climate:
     drought_annual_probability: 0.06
     drought_duration_min: 2
     drought_duration_max: 30
-    drought_radius_min: 3.0     # hex units
-    drought_radius_max: 12.0
+    drought_radius_min_km: 400.0
+    drought_radius_max_km: 1600.0
     drought_rain_factor_min: 0.35
     drought_rain_factor_max: 0.8
     volcanic_annual_probability: 0.002
@@ -220,15 +294,26 @@ climate:
     volcanic_temp_drop_min: -2.5
     volcanic_temp_drop_max: -0.5
 
-capacity:
-  cell_area_km2: 5000.0       # roughly a 75 km wide hex
-  forage:                     # people per km2
+capacity:                     # densities are people per km2; cell area comes from the grid geometry
+  forage:
     min_density: 0.1
     max_density: 1.0
+    coast_bonus: 0.2          # added to wild food on cells next to the year's sea
     temp_zero_c: -20.0
     temp_full_c: 0.0
     rain_zero_mm: 50.0
     rain_full_mm: 400.0
+    terrain:
+      sea: 0.0
+      plain: 1.0
+      forest: 1.0
+      hills: 1.0
+      mountain: 0.6
+      desert: 1.0
+      steppe: 1.0
+      wetland: 1.0
+      tundra: 0.3
+      ice: 0.0
   herd:
     min_density: 0.5
     max_density: 3.0
@@ -238,7 +323,6 @@ capacity:
     rain_full_mm: 350.0
     terrain:
       sea: 0.0
-      coast: 0.5
       plain: 0.8
       forest: 0.2
       hills: 0.8
@@ -246,6 +330,8 @@ capacity:
       desert: 0.15
       steppe: 1.0
       wetland: 0.3
+      tundra: 0.3
+      ice: 0.0
   farm:
     min_density: 10.0
     max_density: 50.0
@@ -256,7 +342,6 @@ capacity:
     river_water_mm_per_flow: 40.0   # river cells count flow as extra water
     terrain:
       sea: 0.0
-      coast: 0.6
       plain: 1.0
       forest: 0.4
       hills: 0.4
@@ -264,6 +349,19 @@ capacity:
       desert: 0.3
       steppe: 0.5
       wetland: 0.5
+      tundra: 0.0
+      ice: 0.0
 
 output:
   runs_dir: runs
+
+render:                       # static PNG maps only; no effect on the simulation
+  dpi: 110
+  hillshade_azimuth_deg: 315.0
+  hillshade_altitude_deg: 40.0
+  vertical_exaggeration: 25.0
+  hillshade_ambient: 0.45
+  river_width_min: 0.4
+  river_width_max: 3.2
+  coast_linewidth: 0.7
+  flood_years: [0, 1000, 2000, 3000]

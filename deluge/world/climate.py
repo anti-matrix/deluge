@@ -19,6 +19,11 @@ def sea_level_curve(cfg: SeaLevelConfig, years: int) -> np.ndarray:
     return np.interp(np.arange(years + 1, dtype=float), xs, ys)
 
 
+def preset_horizon(cfg: SeaLevelConfig) -> int:
+    """Last year given in the active sea-level preset."""
+    return int(max(p[0] for p in cfg.presets[cfg.preset]))
+
+
 def temp_anomaly_curve(cfg: TempAnomalyConfig, years: int, cold_snap_depth: float) -> np.ndarray:
     """Deterministic part of the anomaly: cold snap, recovery, optimum, late cooling."""
     xs = [
@@ -59,7 +64,7 @@ class Drought:
     start: int
     end: int  # exclusive
     center: int  # cell id
-    radius: float
+    radius: float  # km
     footprint_cells: np.ndarray
     footprint_factor: np.ndarray  # rain multiplier on those cells
 
@@ -78,13 +83,13 @@ class ClimateShocks:
     at the center. Overlapping droughts multiply.
     """
 
-    def __init__(self, cfg: ShockConfig, positions: np.ndarray, rng: np.random.Generator):
+    def __init__(self, cfg: ShockConfig, positions_km: np.ndarray, rng: np.random.Generator):
         self.cfg = cfg
-        self.positions = positions
+        self.positions = positions_km
         self.rng = rng
         self.droughts: list[Drought] = []
         self.volcanic: list[VolcanicWinter] = []
-        self.rain_factor = np.ones(len(positions))
+        self.rain_factor = np.ones(len(positions_km))
         self.temp_shock = 0.0
 
     def step(self, year: int, land: np.ndarray) -> None:
@@ -96,7 +101,7 @@ class ClimateShocks:
             land_ids = np.flatnonzero(land)
             if len(land_ids):
                 center = int(rng.choice(land_ids))
-                radius = float(rng.uniform(cfg.drought_radius_min, cfg.drought_radius_max))
+                radius = float(rng.uniform(cfg.drought_radius_min_km, cfg.drought_radius_max_km))
                 severity = float(rng.uniform(cfg.drought_rain_factor_min, cfg.drought_rain_factor_max))
                 duration = int(rng.integers(cfg.drought_duration_min, cfg.drought_duration_max + 1))
                 d = np.linalg.norm(self.positions - self.positions[center], axis=1) / radius

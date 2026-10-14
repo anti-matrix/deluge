@@ -330,7 +330,7 @@ C_{t+1} = C_t + r_0 \cdot f \cdot C_t (1 - C_t) - \delta \cdot C_t
 
 **Splitting and collapse**
 
-- Each year, each settlement can secede with probability rising with distance from capital, low cohesion, high pressure and cultural distance from the core.
+- Each year, each settlement can secede with probability rising with distance from capital, low cohesion, high pressure, plus whatever weight the polity's evolved culture parameters give to cultural, dialect and appearance distance from the core (starting at zero; see Ancestry, appearance and identity).
 - Seceding settlements adjacent to each other form one new polity, inheriting a mutated copy of the parent brain and culture and a copy of the parent's memory.
 - If cohesion falls below a threshold and pressure is high, the polity can fragment entirely into its regions.
 - Every split records parent and child ids, so the lineage tree stays complete.
@@ -338,6 +338,45 @@ C_{t+1} = C_t + r_0 \cdot f \cdot C_t (1 - C_t) - \delta \cdot C_t
 **Monuments**
 
 With megalithic construction known, a polity can spend surplus on monuments (a brain output). Monuments cost labor, raise cohesion and prestige while maintained, and are logged as events. Whether they pay off is left to selection.
+
+## Ancestry, appearance and identity
+
+Settlements carry heritable appearance traits and a drifting dialect, which polities can perceive but which have no built-in effect on anything; whether ethnic identity, in-group preference or appearance-based status emerges is left entirely to selection and memory.
+
+**Hard rule for the build:** no trait in this section may change productivity, fertility, health, intelligence, military strength or any other capability. They are markers only. Every effect they have must pass through an evolved brain weight or an evolved culture parameter whose sign starts at zero and is free to go either way. Tests enforce this by checking that no system other than perception and mixing reads these fields.
+
+**Appearance** (per settlement, population-level)
+
+- A small vector of visible traits, for example skin tone, hair color, eye color and stature, each stored as a population mean and variance on a 0..1 scale.
+- At year 0, each of the five founding peoples gets its own random mean per trait, drawn far enough apart that the peoples are visibly distinct, with small variance inside each. The teachers get their own random draw (config can fix it).
+- **Drift:** each generation the means wander randomly, faster in small populations.
+- **Mixing:** migration, conquest, assimilation and unions move the means of the settlements involved toward each other, weighted by the numbers of people exchanged. The rate of intermarriage between groups inside a polity is an evolvable culture parameter, not a fixed number.
+- **Environmental selection** (optional, off by default): a slow pull of skin tone toward a latitude-dependent optimum, as in real human populations. Kept off by default so drift and mixing alone can be studied first.
+
+**Dialect**
+
+- A short vector that drifts each generation and converges between settlements in frequent contact. It stands for language and accent: distance in dialect space is how mutually strange two groups sound.
+- Splits inherit the parent's dialect, so successor polities slowly diverge into distinct speech communities.
+
+**Perception and response**
+
+- The appearance and dialect distance between a polity and each neighbor, and between its core and its own peripheral settlements, are inputs to the polity brain.
+- War target choice, alliance seeking, trade openness and acceptance of migrants use a per-neighbor scoring head in the brain, so a polity can evolve to treat neighbors differently by any feature, including appearance and dialect, or ignore them.
+- Inside a polity, how much appearance and dialect distance from the core affects cohesion, grievance, tribute rates and secession is set by evolvable culture parameters that start at zero. Ethnic tension, tolerance or a ranked hierarchy by appearance can each evolve, or none of them.
+- **Control condition:** a config switch blanks these inputs to the brains, so runs with and without perceivable differences can be compared.
+
+**In memory**
+
+- Every memory record stores the appearance and dialect signature of each actor at the time of the event.
+- Symbols can therefore become attached to how a group looked or sounded, including the teachers. Whether memories of outsiders cluster by appearance, and whether those memories are mostly of war or of trade, is read from the output.
+
+**Questions this section lets the analysis ask**
+
+- Does in-group preference by appearance or dialect evolve, and under what conditions (frontier wars, scarcity, conquest)?
+- Do ruling cores end up differing in appearance from the peripheries they rule, and does that gap persist or blend away?
+- Do the peoples who mixed most do better or worse than those who stayed apart?
+- Does the teachers' appearance become linked to prestige in memory?
+- Do polities whose identity tracks appearance last longer than those whose identity tracks dialect or shared memory?
 
 ## War and conquest
 
@@ -387,13 +426,13 @@ Each polity is driven by a small fixed-topology network whose weights are inheri
 
 - Own state: log population, food per head, store level, cohesion, pressure, elite ratio, number of settlements, territory growth over 25 years.
 - Knowledge: counts of known techniques by category (subsistence, building, military).
-- Neighbors: strength ratio to the strongest and weakest neighbor, number of hostile neighbors, cultural distance to neighbors, recent war wins and losses.
+- Neighbors: strength ratio to the strongest and weakest neighbor, number of hostile neighbors, cultural, dialect and appearance distance to neighbors and to the polity's own periphery, recent war wins and losses.
 - Environment: climate anomaly this year, drought flag, capacity headroom.
 - Memory: a fixed-length summary vector of the polity's memory store (section 11), so myths can feed decisions without the code knowing what they mean.
 
 **Outputs**
 
-Priorities squashed to 0..1: expand (found settlements), aggression, raid vs campaign, target preference (weak vs rich), trade openness, alliance seeking, tribute rate, monument spending, subsistence shift toward farming, toward herding, openness to newcomers, migration of the core.
+Priorities squashed to 0..1: expand (found settlements), aggression, raid vs campaign, target preference (a per-neighbor scoring head over each neighbor's features, including appearance and dialect distance), trade openness, alliance seeking, tribute rate, monument spending, subsistence shift toward farming, toward herding, openness to newcomers, migration of the core.
 
 **Inheritance and mutation** (`brains/evolution.py`)
 
@@ -542,7 +581,7 @@ The build runs in 13 rounds (0 to 12), each ending with a runnable sim, passing 
 
 **Round 5. Polities and cohesion**
 
-- Deliverables: polity agent, culture vector, tribute, cohesion and pressure equations, secession, fragmentation, mergers, the lineage tree.
+- Deliverables: polity agent, culture vector, appearance and dialect traits with drift and mixing (perception wired in round 7), tribute, cohesion and pressure equations, secession, fragmentation, mergers, the lineage tree.
 - Accept: polities grow and split; polity count rises and falls over time rather than growing monotonically; every polity traces to one of the six founders; lineage tree export works.
 
 **Round 6. War and conquest**
@@ -617,6 +656,7 @@ Calibration targets are broad patterns from the real Holocene record, used to tu
 - Peter Turchin, *War and Peace and War* (2006): asabiya and the metaethnic frontier, in book form.
 - Joshua Epstein and Robert Axtell, *Growing Artificial Societies* (1996): Sugarscape, the founding text of artificial societies. Mesa ships a Sugarscape example.
 - Robert Axelrod, *The Evolution of Cooperation* (1984).
+  - Ross Hammond and Robert Axelrod, "The Evolution of Ethnocentrism," *Journal of Conflict Resolution* (2006): an agent-based model in which in-group favoritism by arbitrary tags evolves without being programmed.
 - Robert Boyd and Peter Richerson, *Culture and the Evolutionary Process* (1985): the theory behind cultural group selection and transmission biases.
 - Mesa documentation, for the 3.x API used throughout. [docs](https://mesa.readthedocs.io/latest/overview.html)
 

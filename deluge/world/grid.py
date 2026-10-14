@@ -136,11 +136,48 @@ class HexGeometry:
         out[labels >= 0] = remap[labels[labels >= 0]]
         return out
 
+    def distance_from(self, sources: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Multi-source BFS over the hex graph.
+
+        Returns (steps, nearest): hex steps to the nearest source cell and that source's id,
+        both -1 where no source is reachable.
+        """
+        steps = np.full(self.n_cells, -1, dtype=np.int64)
+        nearest = np.full(self.n_cells, -1, dtype=np.int64)
+        src = np.flatnonzero(sources)
+        steps[src] = 0
+        nearest[src] = src
+        st = steps.tolist()
+        ne = nearest.tolist()
+        nbrs = self.neighbor_lists
+        queue = deque(src.tolist())
+        while queue:
+            c = queue.popleft()
+            d = st[c] + 1
+            s = ne[c]
+            for n in nbrs[c]:
+                if st[n] < 0:
+                    st[n] = d
+                    ne[n] = s
+                    queue.append(n)
+        return np.asarray(st, dtype=np.int64), np.asarray(ne, dtype=np.int64)
+
     def hex_vertices(self) -> np.ndarray:
         """(n_cells, 6, 2) polygon vertices for drawing, pointy-top hexes of size 1."""
         angles = np.deg2rad(np.array([90, 30, -30, -90, -150, 150], dtype=float))
         ring = np.stack([np.cos(angles), np.sin(angles)], axis=1)
         return self.positions[:, None, :] + ring[None, :, :]
+
+
+def hex_unit_km(height: int, lat_south: float, lat_north: float, km_per_degree: float) -> float:
+    """Kilometres per hex unit (hex circumradius), from the latitude span over the rows.
+    Rows are 1.5 units apart; neighbouring centers are sqrt(3) units apart."""
+    km_per_row = (lat_north - lat_south) * km_per_degree / max(height - 1, 1)
+    return km_per_row / 1.5
+
+
+def hex_area_km2(unit_km: float) -> float:
+    return 1.5 * SQRT3 * unit_km * unit_km
 
 
 def build_mesa_grid(geom: HexGeometry, fields: dict[str, np.ndarray], random=None) -> HexGrid:

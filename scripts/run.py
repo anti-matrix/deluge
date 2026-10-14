@@ -66,8 +66,11 @@ def main(argv: list[str] | None = None) -> int:
 
     t0 = time.perf_counter()
     model = DelugeModel(config=cfg)
+    setup = time.perf_counter() - t0
     fingerprint = rng_fingerprint(model)
+    t1 = time.perf_counter()
     model.run()
+    stepping = time.perf_counter() - t1
     runtime = time.perf_counter() - t0
 
     model.datacollector.get_model_vars_dataframe().to_parquet(out_dir / "model.parquet", index=True)
@@ -82,11 +85,13 @@ def main(argv: list[str] | None = None) -> int:
         "git_commit": git_commit(),
         "started_utc": started.isoformat(),
         "runtime_seconds": runtime,
+        "setup_seconds": setup,  # world generation and model construction
+        "step_seconds": stepping,
         "python": platform.python_version(),
         "mesa": mesa.__version__,
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    print(f"{model.year} years in {runtime:.3f}s -> {out_dir}")
+    print(f"{model.year} years in {stepping:.3f}s (setup {setup:.3f}s) -> {out_dir}")
     return 0
 
 

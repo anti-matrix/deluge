@@ -9,15 +9,19 @@ import numpy as np
 
 
 class Terrain(IntEnum):
+    """Terrain classes. Coast is not a class: it is a per-year flag (land next to the
+    year's sea), so it moves with the sea level."""
+
     SEA = 0
-    COAST = 1
-    PLAIN = 2
-    FOREST = 3
-    HILLS = 4
-    MOUNTAIN = 5
-    DESERT = 6
-    STEPPE = 7
-    WETLAND = 8
+    PLAIN = 1
+    FOREST = 2
+    HILLS = 3
+    MOUNTAIN = 4
+    DESERT = 5
+    STEPPE = 6
+    WETLAND = 7
+    TUNDRA = 8
+    ICE = 9
 
     @property
     def key(self) -> str:
@@ -40,7 +44,8 @@ class WorldData:
     ``base_temp`` and ``base_rain`` are the baseline climate; the year's temperature is
     ``base_temp + temp_anomaly(year)`` and rainfall is ``base_rain`` times the year's
     drought factor (``world/climate.py``). ``terrain`` is classified at the year-0 sea
-    level; the sea itself is re-derived every year from ``elevation < sea_level(year)``.
+    level; the sea itself is re-derived every year from ``elevation < sea_level(year)``,
+    and so is the coast flag.
     """
 
     width: int
@@ -48,6 +53,7 @@ class WorldData:
     elevation: np.ndarray  # metres, relative to present sea level
     terrain: np.ndarray  # Terrain codes
     river: np.ndarray  # flow accumulation, 0 = no river
+    flow_to: np.ndarray  # flat id of the downstream cell, -1 for sea cells (year-0 sea)
     base_temp: np.ndarray  # mean annual degC, baseline climate
     base_rain: np.ndarray  # mm/year, baseline climate
     fertility: np.ndarray  # 0..1 soil quality
@@ -66,3 +72,17 @@ class WorldData:
 
     def fields(self) -> dict[str, np.ndarray]:
         return {name: getattr(self, name) for name in self.field_names()}
+
+
+@dataclass(frozen=True)
+class GenerationReport:
+    """How a procedural world was made: diagnostics for reports and tests, not sim state."""
+
+    attempts: int
+    rejected: dict  # attempts rejected, by geography rule
+    plate_id: np.ndarray  # flat, plate of each cell (-1 when tectonics is off)
+    convergent: np.ndarray  # flat bool, convergent boundary cells
+    divergent: np.ndarray  # flat bool, divergent boundary cells
+    deposit: np.ndarray  # flat, metres of sediment deposited by erosion
+    constructed_bridge: tuple[int, ...]  # cell ids of a constructed bridge, () if natural
+

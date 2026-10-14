@@ -72,6 +72,13 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 - **Child streams:** spec says `rng.spawn`. Deluge builds each child `SeedSequence` with a spawn key derived from the stream's name (crc32) instead of its spawn order. This is the same mechanism `spawn` uses, but adding or reordering streams can never shift the others.
 - **Repo root:** the spec's top-level `deluge/` directory is this repository's root (`civsim/`), because `docs/` and `CLAUDE.md` already live there. The package is `civsim/deluge/`.
 - **Hex positions (Round 1):** see the geometry mismatch above; Deluge uses Mesa's connectivity with drawer-consistent positions rather than `cell.position`.
+- **WorldData (Round 1 rework):** adds a `flow_to` field (downstream cell per land cell). Flow directions are drawn at random among lower neighbours, so they cannot be re-derived from elevation and must be stored.
+- **Terrain (Round 1 rework):** `coast` is no longer a class; it is a per-year flag (land next to that year's sea). `tundra` and `ice` are added.
+- **Cell size (Round 1 rework):** the cell size comes from the grid and the latitude span: 160 x 96 over 130 degrees gives hexes about 176 km across (26,700 km2), larger than the spec's 50 to 100 km. Capacity uses this geometric area.
+
+## Mesa grid performance at 160 x 96 (Round 1 rework)
+
+- `HexGrid((160, 96))` with seven static property layers is built once per model; most model setup time is world generation, not Mesa.
 
 ## opensimplex notes (Round 1)
 

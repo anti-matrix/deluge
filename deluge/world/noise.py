@@ -92,3 +92,39 @@ def noise2(perm: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     value += _contribution(perm, xsb0, ysb0, dx0, dy0)
     value += _contribution(perm, xsv, ysv, dxe, dye)
     return value / NORM_CONSTANT2
+
+
+# --- point-cloud helpers (uv: (n, 2) coordinates) -------------------------------------------
+
+
+def simplex(uv: np.ndarray, rng: np.random.Generator, frequency: float) -> np.ndarray:
+    """One octave at a fresh seed and offset drawn from ``rng``."""
+    seed = int(rng.integers(0, 2**31 - 1))
+    offset = rng.uniform(0.0, 1000.0, size=2)
+    return noise2(permutation(seed), uv[:, 0] * frequency + offset[0], uv[:, 1] * frequency + offset[1])
+
+
+def fbm(uv: np.ndarray, rng: np.random.Generator, frequency: float, octaves: int,
+        persistence: float, lacunarity: float, ridged: bool = False,
+        sharpness: float = 2.0) -> np.ndarray:
+    """Fractal noise normalized by total amplitude: roughly [-1, 1], or [0, 1] when
+    ``ridged`` ((1 - |n|) ** sharpness per octave, crests read as ridges)."""
+    perm = permutation(int(rng.integers(0, 2**31 - 1)))
+    offsets = rng.uniform(0.0, 1000.0, size=(octaves, 2))
+    total = np.zeros(len(uv))
+    amp, freq, norm = 1.0, frequency, 0.0
+    for o in range(octaves):
+        n = noise2(perm, uv[:, 0] * freq + offsets[o, 0], uv[:, 1] * freq + offsets[o, 1])
+        total += amp * ((1.0 - np.abs(n)) ** sharpness if ridged else n)
+        norm += amp
+        amp *= persistence
+        freq *= lacunarity
+    return total / norm
+
+
+def warp(uv: np.ndarray, rng: np.random.Generator, frequency: float, octaves: int,
+         persistence: float, lacunarity: float, strength: float) -> np.ndarray:
+    """Domain-warped coordinates: uv displaced by a fractal noise vector field."""
+    dx = fbm(uv, rng, frequency, octaves, persistence, lacunarity)
+    dy = fbm(uv, rng, frequency, octaves, persistence, lacunarity)
+    return uv + strength * np.stack([dx, dy], axis=1)

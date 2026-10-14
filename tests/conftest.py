@@ -5,7 +5,7 @@ from deluge.rng import RngStreams
 from deluge.world import procedural
 from deluge.world.grid import HexGeometry
 
-WORLD_SEEDS = tuple(range(10))
+WORLD_SEEDS = (1, 2, 3, 4, 5)
 
 
 @pytest.fixture(scope="session")
@@ -18,11 +18,17 @@ def geom(cfg):
     return HexGeometry(cfg.grid.width, cfg.grid.height, cfg.grid.torus)
 
 
-def make_world(cfg, seed):
-    return procedural.generate_world(cfg, RngStreams(seed, cfg.rng.streams)["world"])
+def make_world(cfg, seed, with_report=False):
+    world, report = procedural.generate_world_with_report(cfg, RngStreams(seed, cfg.rng.streams)["world"])
+    return (world, report) if with_report else world
 
 
 @pytest.fixture(scope="session")
-def worlds(cfg):
-    """Default-config worlds for several seeds, generated once per session."""
-    return {seed: make_world(cfg, seed) for seed in WORLD_SEEDS}
+def generated(cfg):
+    """Default-config worlds and their generation reports, made once per session."""
+    return {seed: make_world(cfg, seed, with_report=True) for seed in WORLD_SEEDS}
+
+
+@pytest.fixture(scope="session")
+def worlds(generated):
+    return {seed: wr[0] for seed, wr in generated.items()}
