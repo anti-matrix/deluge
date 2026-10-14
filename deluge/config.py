@@ -562,6 +562,13 @@ class Config:
         return _convert(Config, _deep_merge(self.to_dict(), overrides), "config")
 
 
+def read_overrides(path: str | Path) -> dict[str, Any]:
+    """A YAML file of nested overrides (only the keys it changes), e.g.
+    ``configs/worlds/small_test.yaml``."""
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH, overrides: dict[str, Any] | None = None) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}

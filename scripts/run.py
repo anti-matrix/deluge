@@ -22,7 +22,7 @@ from pathlib import Path
 import mesa
 import pandas as pd
 
-from deluge.config import DEFAULT_CONFIG_PATH, load_config
+from deluge.config import DEFAULT_CONFIG_PATH, load_config, read_overrides
 from deluge.data.chronicle import Namer
 from deluge.data.events import decode
 from deluge.model import DelugeModel
@@ -59,6 +59,9 @@ def entity_table(model: DelugeModel) -> pd.DataFrame:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
+    parser.add_argument("--overrides", default=None,
+                        help="YAML file of nested overrides applied on top of --config "
+                             "(e.g. configs/worlds/small_test.yaml)")
     parser.add_argument("--world-seed", type=int, default=None, help="overrides run.world_seed (the map)")
     parser.add_argument("--history-seed", type=int, default=None, help="overrides run.history_seed")
     parser.add_argument("--years", type=int, default=None, help="overrides run.years")
@@ -72,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
         overrides["history_seed"] = args.history_seed
     if args.years is not None:
         overrides["years"] = args.years
-    cfg = load_config(args.config, {"run": overrides} if overrides else None)
+    cfg = load_config(args.config, read_overrides(args.overrides) if args.overrides else None)
+    if overrides:
+        cfg = cfg.with_overrides({"run": overrides})
 
     started = datetime.now(timezone.utc)
     run_id = f"{started:%Y%m%dT%H%M%S}_w{cfg.run.world_seed}_h{cfg.run.history_seed}"
@@ -98,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         "years": cfg.run.years,
         "final_year": model.year,
         "config_path": str(Path(args.config).resolve()),
+        "overrides_path": str(Path(args.overrides).resolve()) if args.overrides else None,
         "config_hash": cfg.hash(),
         "rng_fingerprint": fingerprint,
         "git_commit": git_commit(),

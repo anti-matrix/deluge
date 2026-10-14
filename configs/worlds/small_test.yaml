@@ -1,0 +1,33 @@
+# Small test world: overrides on top of default.yaml for the fast test suite
+# (tests/conftest.py). A 64 x 40 grid with a fixed world seed and geography rules
+# relaxed to fit it. Full-size worlds are only used by tests marked slow.
+
+run:
+  world_seed: 3
+  history_seed: 4
+  years: 500
+
+grid:
+  width: 64
+  height: 40
+
+world:
+  max_attempts: 200
+  landmasses:
+    min_count: 2
+    max_count: 5
+    min_islands: 1
+  seas:
+    min_basin_cells: 6
+  land_bridges:
+    max_length_steps: 5
+  shape:
+    edge_sea_cells: 2
+  erosion:
+    droplets: 5000
+  rainfall:
+    iterations: 100
+
+founders:
+  min_distance_cells: 8
+  min_landmasses: 1

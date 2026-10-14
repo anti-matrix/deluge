@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-xdist",
     "hypothesis",
 ]
 # Installed in round 11, only if profiling shows the need.
@@ -38,5 +39,6 @@ include = ["deluge*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra -m 'not slow'"
-markers = ["slow: full-length acceptance runs (minutes); run with pytest -m slow"]
+# Fast suite by default, in parallel: -n auto means cores - 1 workers (tests/conftest.py).
+addopts = "-ra -m 'not slow' -n auto"
+markers = ["slow: more than 500 simulated years, more than one seed, or a full-size world; run with pytest -m slow"]

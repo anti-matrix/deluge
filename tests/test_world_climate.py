@@ -43,9 +43,9 @@ def test_modern_melt_preset_has_same_pulses(cfg):
     np.testing.assert_allclose((sl - sl[0]) / 70.0, (default - default[0]) / 60.0, atol=1e-3)
 
 
-def test_coasts_drown_across_first_3000_years(worlds, cfg):
+def test_coasts_drown_across_first_3000_years(small_world, cfg):
     sl = sea_level_curve(cfg.climate.sea_level, 11000)
-    for seed, w in worlds.items():
+    for seed, w in ((0, small_world),):
         e = w.elevation.ravel()
         sea = [int((e < sl[y]).sum()) for y in (0, 1000, 2000, 3000, 6000, 11000)]
         assert sea[0] < sea[1] < sea[2] < sea[3], (seed, sea)

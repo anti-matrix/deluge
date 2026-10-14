@@ -16,6 +16,7 @@ import pytest  # noqa: E402
 from matplotlib.colors import to_rgba  # noqa: E402
 from mesa.visualization.solara_viz import _build_model_init_kwargs  # noqa: E402
 
+from conftest import small_config, small_model  # noqa: E402
 from deluge.model import DelugeModel  # noqa: E402
 from deluge.viz import app, portrayal  # noqa: E402
 from deluge.world.render import SEA_COLOR, TERRAIN_COLORS  # noqa: E402
@@ -26,7 +27,7 @@ SEED = 3
 
 @pytest.fixture(scope="module")
 def model():
-    return DelugeModel(world_seed=SEED, history_seed=SEED)
+    return small_model()
 
 
 def mesh_order_to_cid(geom):
@@ -77,8 +78,9 @@ def test_only_map_layers_and_the_chosen_overlay_are_drawn(model):
         assert drawn == set(portrayal.MAP_LAYERS) | {overlay}
 
 
+@pytest.mark.slow
 def test_sea_layer_follows_sea_level():
-    m = DelugeModel(world_seed=SEED, history_seed=SEED)
+    m = small_model(years=3100)
     layer = m.grid._mesa_property_layers["sea"]
     data = layer.data
     sea0 = int(layer.data.sum())
@@ -92,18 +94,19 @@ def test_sea_layer_follows_sea_level():
 
 
 def test_ui_and_headless_runs_agree():
-    """A model made the way the UI's Reset makes it, stepped through the UI's step
-    buttons, matches a headless run with the same seed."""
-    ui_model_template = DelugeModel(world_seed=SEED, history_seed=0, years=2)
+    """A model made the way the UI's Reset makes it (seeds as keyword arguments), stepped
+    through the UI's step buttons, matches a headless run with the same seeds. Small test
+    world; the UI itself builds the default config the same way."""
+    ui_model_template = small_model(history_seed=0, years=2)
     params = {"world_seed": SEED, "history_seed": SEED}
     kwargs = _build_model_init_kwargs(ui_model_template, params, add_scenario_when_empty=True,
                                       require_model_accepts_scenario=True)
     assert kwargs == params
-    ui = type(ui_model_template)(**kwargs)
-    years = 1800
-    for n in (1, 10, 100, 1689):
+    ui = type(ui_model_template)(config=small_config(), **kwargs)
+    years = 300
+    for n in (1, 10, 100, 189):
         app.advance(ui, n)
-    headless = DelugeModel(world_seed=SEED, history_seed=SEED, years=years)
+    headless = small_model(world_seed=SEED, history_seed=SEED, years=years)
     headless.run()
     pd.testing.assert_frame_equal(ui.datacollector.get_model_vars_dataframe(),
                                   headless.datacollector.get_model_vars_dataframe())
@@ -117,13 +120,17 @@ def test_ui_and_headless_runs_agree():
 
 
 def test_advance_stops_at_end_of_run():
-    m = DelugeModel(world_seed=SEED, history_seed=SEED, years=5)
+    m = small_model(years=5)
     app.advance(m, 100)
     assert m.year == 5 and not m.running
 
 
+@pytest.mark.slow
+def test_initial_model_uses_config_seeds():
+    run = app.initial_state()[0].config.run
+    assert (run.world_seed, run.history_seed) == (app.CONFIG.run.world_seed, app.CONFIG.run.history_seed)
+
+
 def test_app_page_builds():
     assert app.Page is not None
-    run = app.initial_model.config.run
-    assert (run.world_seed, run.history_seed) == (app.CONFIG.run.world_seed, app.CONFIG.run.history_seed)
     assert app.SEEDS == ("world_seed", "history_seed")

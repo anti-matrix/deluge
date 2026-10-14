@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from deluge.world.capacity import MODES, CarryingCapacity
 from deluge.world.grid import HexGeometry, hex_area_km2, hex_unit_km
@@ -28,8 +29,9 @@ def test_cell_area_from_geometry(cfg):
     assert 20_000 < area < 35_000  # 160 x 96 over 130 degrees of latitude
 
 
-def test_zero_on_sea_and_ice(worlds, cfg):
-    for w in worlds.values():
+def test_zero_on_sea_and_ice(small_world, small_cfg):
+    cfg = small_cfg
+    for w in (small_world,):
         _, _, _, sea, _, k = _year0(w, cfg)
         ice = w.terrain.ravel() == Terrain.ICE
         for mode in MODES:
@@ -38,8 +40,9 @@ def test_zero_on_sea_and_ice(worlds, cfg):
             assert (k[mode][ice] == 0).all()
 
 
-def test_tundra_cannot_be_farmed_and_forages_poorly(worlds, cfg):
-    for w in worlds.values():
+def test_tundra_cannot_be_farmed_and_forages_poorly(small_world, small_cfg):
+    cfg = small_cfg
+    for w in (small_world,):
         _, _, _, _, _, k = _year0(w, cfg)
         t = w.terrain.ravel()
         tundra = t == Terrain.TUNDRA
@@ -49,6 +52,7 @@ def test_tundra_cannot_be_farmed_and_forages_poorly(worlds, cfg):
             assert k["forage"][tundra].mean() < k["forage"][plain].mean()
 
 
+@pytest.mark.slow
 def test_densities_in_spec_ranges(worlds, cfg):
     """Where climate is fully suitable: foraging 0.1-1 person/km2 before the calibration
     factor, farming on good land (plains with fertile soil) 10-50 person/km2 before its
@@ -75,24 +79,24 @@ def test_densities_in_spec_ranges(worlds, cfg):
             assert np.median(farm[farm > 0]) >= c.farm.min_density
 
 
-def test_coast_bonus_raises_foraging(worlds, cfg):
-    w = worlds[1]
+def test_coast_bonus_raises_foraging(small_world, small_cfg):
+    w, cfg = small_world, small_cfg
     cap, temp, rain, sea, coast, k = _year0(w, cfg)
     inland = cap.compute(temp, rain, sea, np.zeros_like(coast))
     assert (k["forage"] >= inland["forage"] - 1e-9).all()
     assert k["forage"][coast].sum() > inland["forage"][coast].sum()
 
 
-def test_cold_reduces_farming(worlds, cfg):
-    w = worlds[1]
+def test_cold_reduces_farming(small_world, small_cfg):
+    w, cfg = small_world, small_cfg
     *_, warm = _year0(w, cfg, 0.0)
     *_, cold = _year0(w, cfg, -5.0)
     assert cold["farm"].sum() < warm["farm"].sum()
     assert (cold["farm"] <= warm["farm"] + 1e-9).all()
 
 
-def test_subset_matches_full_computation(worlds, cfg):
-    w = worlds[1]
+def test_subset_matches_full_computation(small_world, small_cfg):
+    w, cfg = small_world, small_cfg
     ever_land = np.flatnonzero(w.elevation.ravel() >= SEA0)
     *_, full = _year0(w, cfg)
     *_, part = _year0(w, cfg, cells=ever_land)
@@ -100,8 +104,8 @@ def test_subset_matches_full_computation(worlds, cfg):
         np.testing.assert_allclose(part[mode], full[mode])
 
 
-def test_tech_multiplier_scales(worlds, cfg):
-    w = worlds[1]
+def test_tech_multiplier_scales(small_world, small_cfg):
+    w, cfg = small_world, small_cfg
     cap, temp, rain, sea, coast, base = _year0(w, cfg)
     boosted = cap.compute(temp, rain, sea, coast, tech={"farm": np.full(len(temp), 2.0)})
     np.testing.assert_allclose(boosted["farm"], 2 * base["farm"])

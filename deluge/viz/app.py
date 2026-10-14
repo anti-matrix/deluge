@@ -136,8 +136,21 @@ def Plots(model: DelugeModel):
         _mode_plot(model)
 
 
+_initial: list = []
+
+
+def initial_state() -> tuple[DelugeModel, SpaceRenderer]:
+    """The model and renderer the page opens with, built on first use (not at import, so
+    importing this module stays cheap)."""
+    if not _initial:
+        model = DelugeModel(world_seed=CONFIG.run.world_seed, history_seed=CONFIG.run.history_seed)
+        _initial.extend((model, make_renderer(model)))
+    return _initial[0], _initial[1]
+
+
 @solara.component
 def Page():
+    initial_model, initial_renderer = initial_state()
     model = solara.use_reactive(initial_model)
     renderer = solara.use_reactive(initial_renderer)
     model_parameters = solara.use_reactive({name: getattr(CONFIG.run, name) for name in SEEDS})
@@ -172,6 +185,3 @@ def Page():
             with solara.Card("Chronicle"):
                 Chronicle(model.value)
 
-
-initial_model = DelugeModel(world_seed=CONFIG.run.world_seed, history_seed=CONFIG.run.history_seed)
-initial_renderer = make_renderer(initial_model)

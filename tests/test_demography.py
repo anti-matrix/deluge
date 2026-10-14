@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 from deluge.agents.founders import PlacementError, candidate_cells, place_founders
 from deluge.agents.settlement import ALIVE
 from deluge.config import load_config
+from conftest import small_model
 from deluge.model import DelugeModel
 from deluge.systems.demography import next_population
 from deluge.world.climate import Drought
@@ -23,10 +24,15 @@ HISTORIES = (1, 2, 3, 4, 5)
 # Round 3 behaviour is that of foragers: these tests switch off the teachers and
 # invention (Round 4), so no settlement learns herding or farming.
 FORAGERS = {"teachers": {"enabled": False}, "knowledge": {"invention_scale": 0.0}}
+DEMOGRAPHY = load_config().demography
 
 
 def foragers(**kw) -> DelugeModel:
     return DelugeModel(config=load_config(overrides=FORAGERS), **kw)
+
+
+def small_foragers(**kw) -> DelugeModel:
+    return small_model(FORAGERS, **kw)
 
 
 def check_invariants(m: DelugeModel) -> None:
@@ -44,6 +50,17 @@ def check_invariants(m: DelugeModel) -> None:
 
 
 @pytest.fixture(scope="module")
+def run500():
+    """Small test world, history 1, foragers to year 500, invariants checked every year."""
+    m = small_foragers(history_seed=1, years=500)
+    check_invariants(m)
+    while m.running:
+        m.step()
+        check_invariants(m)
+    return m
+
+
+@pytest.fixture(scope="module")
 def run3000():
     """World 1, history 1 to year 3,000 (through the sea-level rise), invariants checked
     every year. Built for 3,100 years so later years can be stepped from it."""
@@ -58,14 +75,14 @@ def run3000():
 # --- seeds and placement ---------------------------------------------------------------------
 
 
-def test_history_seed_keeps_the_world(run3000):
-    other = foragers(world_seed=WORLD, history_seed=2, years=1)
-    np.testing.assert_array_equal(other.world.elevation, run3000.world.elevation)
-    assert [f.cell for f in other.lineages.founders] != [f.cell for f in run3000.lineages.founders]
+def test_history_seed_keeps_the_world(run500):
+    other = small_foragers(history_seed=2, years=1)
+    np.testing.assert_array_equal(other.world.elevation, run500.world.elevation)
+    assert [f.cell for f in other.lineages.founders] != [f.cell for f in run500.lineages.founders]
 
 
-def test_founder_placement_rules(run3000):
-    m = run3000
+def test_founder_placement_rules(run500):
+    m = run500
     cfg = m.config.founders
     cand = set(candidate_cells(m.founder_capacity, ~(m.elevation_flat < m.sea_level_series[0]),
                                cfg.capacity_top_share).tolist())
@@ -84,9 +101,9 @@ def test_founder_placement_rules(run3000):
     assert all(m.settlements.parent[x.settlement] == -1 and m.settlements.founded[x.settlement] == 0 for x in f)
 
 
-def test_pinned_placement(run3000):
-    m = run3000
-    cfg = load_config().founders
+def test_pinned_placement(run500):
+    m = run500
+    cfg = m.config.founders
     cells = [m.lineages.founders[i].cell for i in range(5)][::-1]
     pinned = type(cfg)(**{**cfg.__dict__, "pinned_cells": tuple(m.geom.xy(c) for c in cells)})
     land = m.elevation_flat >= m.sea_level_series[0]
@@ -105,13 +122,14 @@ def test_pinned_placement(run3000):
                 min_size=1, max_size=50))
 def test_population_never_negative(rows):
     pop, ratio, noise = (np.array(c) for c in zip(*rows))
-    d = load_config().demography
+    d = DEMOGRAPHY
     new, deaths = next_population(pop, ratio, np.full(len(pop), d.forage_abundance),
                                   np.full(len(pop), d.forage_max_growth), d, noise)
     assert (new >= 0).all() and (deaths >= 0).all()
     assert (deaths <= pop + 1e-9).all()
 
 
+@pytest.mark.slow
 def test_bands_grow_toward_capacity_and_stabilize():
     """With splitting switched off, each founding band grows until it holds its cell's
     capacity, then stays there."""
@@ -133,6 +151,7 @@ def test_bands_grow_toward_capacity_and_stabilize():
     assert (ratios.std(axis=0) / mean < 0.1).all()  # stable, not oscillating
 
 
+@pytest.mark.slow
 def test_bands_spread_over_centuries(run3000):
     df = run3000.datacollector.get_model_vars_dataframe().set_index("year")
     n = df["n_settlements"]
@@ -146,6 +165,7 @@ def test_bands_spread_over_centuries(run3000):
     assert np.median(dist) > 5 and dist.max() > 15
 
 
+@pytest.mark.slow
 def test_population_in_range_and_no_lineage_lost_everywhere():
     """Round 3 acceptance (foragers) on world seed 1, history seeds 1-5: total population
     at year 3,000 between 0.5 and 10 million, and every founding group survives in some run."""
@@ -160,6 +180,7 @@ def test_population_in_range_and_no_lineage_lost_everywhere():
     assert survived.all(), survived
 
 
+@pytest.mark.slow
 def test_drought_causes_famine_and_migration(run3000):
     """A severe drought over a settled region, shaped like the climate shocks (strongest at
     the centre): famine deaths and whole-band moves rise far above the same years
@@ -202,8 +223,8 @@ def test_drought_causes_famine_and_migration(run3000):
 # --- lineage --------------------------------------------------------------------------------
 
 
-def test_every_settlement_traces_to_a_founder(run3000):
-    m = run3000
+def test_every_settlement_traces_to_a_founder(run500):
+    m = run500
     t = m.settlements
     founders = {f.settlement: f.lineage for f in m.lineages.founders}
     for sid in range(t.n):
@@ -211,13 +232,13 @@ def test_every_settlement_traces_to_a_founder(run3000):
         assert chain[-1] in founders
         assert founders[chain[-1]] == t.lineage[sid]
         assert all(t.founded[a] <= t.founded[b] for a, b in zip(chain[1:], chain[:-1]))
-    edges = m.lineages.tree(t, year=1000)
-    assert len(edges) == (t.founded[: t.n] <= 1000).sum()
+    edges = m.lineages.tree(t, year=250)
+    assert len(edges) == (t.founded[: t.n] <= 250).sum()
     alive_then = [e for e in edges if e[4] == ALIVE]
-    assert len(alive_then) == m.datacollector.get_model_vars_dataframe().set_index("year").loc[1000, "n_settlements"]
+    assert len(alive_then) == m.datacollector.get_model_vars_dataframe().set_index("year").loc[250, "n_settlements"]
 
 
-def test_lineage_population_sums_to_total(run3000):
-    df = run3000.datacollector.get_model_vars_dataframe()
-    groups = df[[f"pop_{n}" for n in run3000.lineages.names]].sum(axis=1)
+def test_lineage_population_sums_to_total(run500):
+    df = run500.datacollector.get_model_vars_dataframe()
+    groups = df[[f"pop_{n}" for n in run500.lineages.names]].sum(axis=1)
     np.testing.assert_allclose(groups, df["population"], rtol=1e-9)

@@ -8,24 +8,22 @@ import pandas as pd
 import pytest
 
 from deluge.agents.teachers import ARTIFACT_KINDS, Teachers
-from deluge.config import load_config
+from conftest import small_config
 from deluge.data import chronicle
 from deluge.data.events import ACTIONS, ENTITY_KINDS, decode, entity
 from deluge.model import DelugeModel
 from deluge.systems.knowledge import KnowledgeGraph
 
-WORLD = 1
-
 
 @pytest.fixture(scope="module")
 def cfg():
-    return load_config()
+    return small_config()
 
 
 @pytest.fixture(scope="module")
 def early(cfg):
-    """World 1, history 1, through the teachers' stay and 250 years after."""
-    m = DelugeModel(config=cfg, world_seed=WORLD, history_seed=1, years=300)
+    """Small test world, its history seed, through the teachers' stay and 250 years after."""
+    m = DelugeModel(config=cfg, years=300)
     m.run()
     return m
 
@@ -91,10 +89,11 @@ def test_teachers_never_enter_demography(early):
     assert len(early.lineages.founders) == 5
 
 
+@pytest.mark.slow
 def test_teaching_subsets_differ_between_groups(cfg):
     subsets = set()
     for h in (1, 2, 3):
-        m = DelugeModel(config=cfg, world_seed=WORLD, history_seed=h, years=60)
+        m = DelugeModel(config=cfg, history_seed=h, years=60)
         m.run()
         subsets |= {tuple(sorted(v["taught"])) for v in m.teachers_state.visits}
     assert len(subsets) >= 3
@@ -102,7 +101,7 @@ def test_teaching_subsets_differ_between_groups(cfg):
 
 def test_teachers_disabled(cfg):
     off = cfg.with_overrides({"teachers": {"enabled": False}})
-    m = DelugeModel(config=off, world_seed=WORLD, history_seed=1, years=60)
+    m = DelugeModel(config=off, years=60)
     m.run()
     assert m.teachers_state.visits == []
     used = {ACTIONS[a] for a in m.events.action}
@@ -110,7 +109,7 @@ def test_teachers_disabled(cfg):
 
 
 def test_attack_on_teachers_always_fails(cfg):
-    m = DelugeModel(config=cfg, world_seed=WORLD, history_seed=1, years=60)
+    m = DelugeModel(config=cfg, years=60)
     m.step()
     target = m.teachers_state.target
     n = len(m.events)
@@ -125,7 +124,7 @@ def test_attack_on_teachers_always_fails(cfg):
 def test_artifacts_handover_lifespan_and_breakage(cfg):
     sure = cfg.with_overrides({"teachers": {"artifact_chance": 1.0, "artifact_lifespan_min": 20,
                                             "artifact_lifespan_max": 40}})
-    m = DelugeModel(config=sure, world_seed=WORLD, history_seed=1, years=120)
+    m = DelugeModel(config=sure, years=120)
     m.run()
     ts = m.teachers_state
     assert all(1 <= len(v["artifacts"]) <= 4 for v in ts.visits)
@@ -139,7 +138,7 @@ def test_artifacts_handover_lifespan_and_breakage(cfg):
 
 
 def test_artifacts_pass_with_their_settlement(cfg):
-    m = DelugeModel(config=cfg, world_seed=WORLD, history_seed=1, years=2)
+    m = DelugeModel(config=cfg, years=2)
     ts = m.teachers_state
     ts.kind.append(0)
     ts.holder.append(0)
@@ -156,8 +155,9 @@ def test_artifacts_pass_with_their_settlement(cfg):
 
 
 def test_unused_technique_is_forgotten_and_small_groups_forget_faster(cfg):
-    m = DelugeModel(config=cfg.with_overrides({"teachers": {"enabled": False}}), world_seed=WORLD,
-                    history_seed=1, years=2000)
+    # Never used: no band reaches size_use_population (small-world bands can).
+    off = cfg.with_overrides({"teachers": {"enabled": False}, "knowledge": {"size_use_population": 1e12}})
+    m = DelugeModel(config=off, years=2000)
     g, t, k = m.knowledge, m.settlements, cfg.knowledge
     j = g.index("megalithic_construction")  # used only by large settlements
     t.knows[:5, j] = True
@@ -178,8 +178,7 @@ def test_unused_technique_is_forgotten_and_small_groups_forget_faster(cfg):
 def test_latent_technique_decays_slowly_and_silently(cfg):
     """Sailing held by an inland band is latent: it decays at decay_latent (or not at all
     next to a band that practises it), and neither its gain nor its loss is logged."""
-    m = DelugeModel(config=cfg.with_overrides({"teachers": {"enabled": False}}), world_seed=WORLD,
-                    history_seed=1, years=400)
+    m = DelugeModel(config=cfg.with_overrides({"teachers": {"enabled": False}}), years=400)
     m.step()
     t, g, k = m.settlements, m.knowledge, cfg.knowledge
     j = g.index("sailing")
@@ -215,7 +214,7 @@ def test_practised_flag_follows_use(early):
 
 def test_invention_happens_without_teachers(cfg):
     fast = cfg.with_overrides({"teachers": {"enabled": False}, "knowledge": {"invention_scale": 1e-3}})
-    m = DelugeModel(config=fast, world_seed=WORLD, history_seed=1, years=200)
+    m = DelugeModel(config=fast, years=200)
     m.run()
     assert (m.first_invented_year >= 0).any()
     learned = [r for r in (m.events.record(i) for i in range(len(m.events))) if r["action"] == "learned"]

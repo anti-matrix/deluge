@@ -26,31 +26,49 @@ def flat(world, name):
 # --- determinism ----------------------------------------------------------------------------
 
 
-def test_same_seed_same_world(cfg, worlds):
-    again = make_world(cfg, 1)
-    for name, arr in worlds[1].fields().items():
+def test_same_seed_same_world(small_cfg, small_world):
+    again = make_world(small_cfg, small_cfg.run.world_seed)
+    for name, arr in small_world.fields().items():
         np.testing.assert_array_equal(arr, getattr(again, name), err_msg=name)
 
 
+@pytest.mark.slow
 def test_different_seeds_differ(worlds):
     assert not np.array_equal(worlds[1].elevation, worlds[2].elevation)
 
 
-def test_world_fields_are_read_only(worlds):
+def test_world_fields_are_read_only(small_world):
     with pytest.raises(ValueError):
-        worlds[1].elevation[0, 0] = 1.0
+        small_world.elevation[0, 0] = 1.0
 
 
-def test_world_independent_of_run_length(cfg, worlds):
-    short = cfg.with_overrides({"run": {"years": 3}})
-    np.testing.assert_array_equal(make_world(short, 3).elevation, worlds[3].elevation)
+def test_world_independent_of_run_length(small_cfg, small_world):
+    short = small_cfg.with_overrides({"run": {"years": 3}})
+    np.testing.assert_array_equal(make_world(short, small_cfg.run.world_seed).elevation, small_world.elevation)
 
 
-def test_world_independent_of_other_streams(cfg):
-    more = cfg.with_overrides({"rng": {"streams": list(cfg.rng.streams) + ["extra"]}})
-    a = P.generate_world(cfg, RngStreams(3, cfg.rng.streams)["world"])
-    b = P.generate_world(more, RngStreams(3, more.rng.streams)["world"])
-    np.testing.assert_array_equal(a.elevation, b.elevation)
+def test_world_independent_of_other_streams(small_cfg, small_world):
+    more = small_cfg.with_overrides({"rng": {"streams": list(small_cfg.rng.streams) + ["extra"]}})
+    b = P.generate_world(more, RngStreams(small_cfg.run.world_seed, more.rng.streams)["world"])
+    np.testing.assert_array_equal(small_world.elevation, b.elevation)
+
+
+def test_small_world_invariants(small_cfg, small_world, small_geom):
+    """The pipeline's invariants on the small test world: land share, terrain classes
+    matching elevation and climate, field ranges, rivers draining downhill to the sea."""
+    w, tc = small_world, small_cfg.world.terrain
+    e, t, temp = flat(w, "elevation"), flat(w, "terrain"), flat(w, "base_temp")
+    land = e >= SEA0
+    assert abs(land.mean() - small_cfg.world.land_share) < 0.02
+    np.testing.assert_array_equal(t == Terrain.SEA, ~land)
+    np.testing.assert_array_equal(t[land] == Terrain.ICE, temp[land] < tc.ice_c)
+    for name in ("fertility", "wild_food"):
+        v = flat(w, name)
+        assert v.min() >= 0 and v.max() <= 1 and (v[~land] == 0).all(), name
+    river, recv = flat(w, "river"), flat(w, "flow_to")
+    assert (river > 0).any() and (river[~land] == 0).all()
+    assert (recv[~land] == -1).all() and (recv[land] >= 0).all()
+    assert (e[recv[land]] < e[land]).all()
 
 
 # --- relief and elevation --------------------------------------------------------------------
@@ -81,12 +99,14 @@ def test_knots_must_start_at_reference(cfg):
         P.hypsometric_elevation(np.zeros(10), 0.35, SEA0, bad)
 
 
+@pytest.mark.slow
 def test_land_share_near_target(worlds, cfg):
     for seed, w in worlds.items():
         share = (flat(w, "elevation") >= SEA0).mean()
         assert abs(share - cfg.world.land_share) < 0.01, seed
 
 
+@pytest.mark.slow
 def test_hypsometry(worlds):
     """Most land is low (0-500 m), with a tail of highlands; shelves are wide."""
     tails = 0
@@ -101,6 +121,7 @@ def test_hypsometry(worlds):
     assert tails >= len(worlds) - 1
 
 
+@pytest.mark.slow
 def test_coastal_plains_drown_in_broad_areas(worlds, geom, cfg):
     """Land lost by year 3000 is not a one-cell ring: much of it lies two or more steps
     from the year-3000 coast."""
@@ -142,6 +163,7 @@ def test_plates_and_boundaries(cfg, geom):
     assert relief[plates.divergent].mean() < 0
 
 
+@pytest.mark.slow
 def test_mountains_follow_convergent_boundaries(generated, geom, cfg):
     near = []
     coastal_range_worlds = 0
@@ -189,6 +211,7 @@ def test_too_strict_rules_raise(cfg):
 # --- geography rules --------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_geography_rules_hold(worlds, geom, cfg):
     w_cfg = cfg.world
     curve = sea_level_curve(cfg.climate.sea_level, cfg.run.years)
@@ -272,6 +295,7 @@ def test_flats_drain_without_straight_rows(cfg):
     assert geography.row_aligned_runs(geom, flow, steep)[0] > 20
 
 
+@pytest.mark.slow
 def test_rivers_flow_downhill_to_the_sea(worlds, geom):
     for seed, w in worlds.items():
         e = flat(w, "elevation")
@@ -292,6 +316,7 @@ def test_rivers_flow_downhill_to_the_sea(worlds, geom):
         assert (river[down[on_land]] >= river[river > 0][on_land]).all()
 
 
+@pytest.mark.slow
 def test_rivers_are_long_branched_and_not_row_aligned(worlds, geom):
     long_rivers = []
     for seed, w in worlds.items():
@@ -320,6 +345,7 @@ def test_strahler_order_on_a_synthetic_tree():
     assert geography.streams_by_order(order, recv) == {1: 5, 2: 2, 3: 1}
 
 
+@pytest.mark.slow
 def test_river_network_on_seed_1(worlds):
     """Acceptance of the rivers fix: 400-900 river cells, at least 5 rivers of order 4+."""
     w = worlds[1]
@@ -330,6 +356,7 @@ def test_river_network_on_seed_1(worlds):
     assert sum(n for k, n in streams.items() if k >= 4) >= 5, streams
 
 
+@pytest.mark.slow
 def test_rivers_never_lose_order_downstream(worlds):
     for seed, w in worlds.items():
         order, recv = flat(w, "river_order"), flat(w, "flow_to")
@@ -339,6 +366,7 @@ def test_rivers_never_lose_order_downstream(worlds):
         assert (order[down[on_river]] >= order[cells[on_river]]).all(), seed
 
 
+@pytest.mark.slow
 def test_no_bridge_at_or_below_year0_sea(worlds, geom, cfg):
     curve = sea_level_curve(cfg.climate.sea_level, cfg.run.years)
     for seed, w in worlds.items():
@@ -458,6 +486,7 @@ def test_low_rises_cast_no_rain_shadow(cfg):
     assert ratio(dataclasses.replace(rcfg, shadow_min_uplift_m=0.0), climb) < 0.95 * ratio(rcfg, climb)
 
 
+@pytest.mark.slow
 def test_desert_share_and_poleward_land(worlds, geom, cfg):
     """Desert well below 30% of land; land reaches past 55 degrees in most worlds, with tundra."""
     lat = geom.latitude(cfg.world.lat_south, cfg.world.lat_north)
@@ -475,6 +504,7 @@ def test_desert_share_and_poleward_land(worlds, geom, cfg):
     assert tundra >= len(worlds) - 1
 
 
+@pytest.mark.slow
 def test_rain_is_not_striped(worlds, geom, cfg):
     """Latitude alone explains well under all of the rain pattern on land."""
     lat_row = geom.coords[1]
@@ -489,6 +519,7 @@ def test_rain_is_not_striped(worlds, geom, cfg):
         assert explained < 0.75, (seed, explained)
 
 
+@pytest.mark.slow
 def test_biome_bands(worlds, geom, cfg):
     lat = geom.latitude(cfg.world.lat_south, cfg.world.lat_north)
     desert = {"eq": 0, "sub": 0}
@@ -511,6 +542,7 @@ def test_biome_bands(worlds, geom, cfg):
 # --- terrain and resources ---------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_terrain_classes(worlds, cfg):
     tc = cfg.world.terrain
     for seed, w in worlds.items():
@@ -527,6 +559,7 @@ def test_terrain_classes(worlds, cfg):
         assert (t[cold_low] == Terrain.TUNDRA).all()
 
 
+@pytest.mark.slow
 def test_fertility_and_wild_food_ranges(worlds):
     for seed, w in worlds.items():
         t = flat(w, "terrain")
@@ -537,6 +570,7 @@ def test_fertility_and_wild_food_ranges(worlds):
         assert (flat(w, "fertility")[t == Terrain.TUNDRA] < 0.2).all()
 
 
+@pytest.mark.slow
 def test_floodplains_are_fertile(worlds):
     river_f, dry_f = [], []
     for w in worlds.values():
