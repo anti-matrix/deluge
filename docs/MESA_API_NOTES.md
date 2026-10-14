@@ -53,8 +53,15 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 **HexGrid**
 - `HexGrid((100, 60))` builds 6,000 cells in about 0.12 s; `grid.width == 100`, `grid.height == 60`.
 - Coordinates are `(x, y)` tuples in offset layout. An interior cell has 6 neighbors, e.g. `(5, 5)` → `(4,4) (4,5) (4,6) (5,4) (5,6) (6,5)`. A corner `(0, 0)` has 3 when non-torus.
-- Cells are in `grid._cells[(x, y)]` and `grid.all_cells`; neighbors via `cell.neighborhood`. Each cell has a `position` (2D float array of its hex center).
+- Cells are in `grid._cells[(x, y)]` and `grid.all_cells`; neighbors via `cell.neighborhood`. Each cell has a `position` (2D float array of its hex center), but see the mismatch below.
 - Property layers: `grid.create_property_layer(name, default_value=0.0, dtype=float)` or `grid.add_property_layer(PropertyLayer)`. The layer is then reachable as `grid.<name>` (a `PropertyLayer` whose `.data` is a NumPy array of shape `(width, height)`), and each cell exposes the value as `cell.<name>`. The data shape is (width, height), not (rows, cols).
+- `PropertyLayer.from_data(name, array)` **copies** the array. The per-cell accessors (`cell.<name>`) are bound to `layer.data` when the layer is added, so replacing `layer.data` with a new array breaks them; update in place (`layer.data[...] = ...`) instead.
+
+**HexGrid geometry mismatch (verified in Round 1)**
+- Connectivity (`_connect_cells_2d`): a cell on an **odd** row connects to columns `x-1` and `x` in the rows above and below; an **even** row connects to `x` and `x+1`. That is the layout where even rows are shifted right by half a hex.
+- `cell.position` (`_init_hex_geometry`) shifts **odd** rows right: `x = sqrt(3) * (col + 0.5 * (row % 2))`. With these positions, two of each cell's six connected neighbors are 3.0 apart instead of sqrt(3), and two true geometric neighbors are not connected. `find_nearest_cell` uses the same KD-tree of these positions.
+- Mesa's own hex drawer (`space_drawers.HexSpaceDrawer._get_hexmesh`) shifts **even** rows right, which matches the connectivity.
+- Deluge follows the connectivity: `deluge/world/grid.py` copies Mesa's neighbor offsets, places centers at `(sqrt(3) * (x + 0.5 * (y even)), 1.5 * y)` like the drawer, and never uses `cell.position` or `find_nearest_cell`. `tests/test_world_grid.py` checks that our neighbor table equals Mesa's `cell.neighborhood` and that every neighbor pair is exactly sqrt(3) apart in our positions.
 
 **Visualization**
 - `SpaceRenderer` and the matplotlib and altair backends have explicit HexGrid support: hexagons are drawn as a `PolyCollection`, and property layers can be drawn as colored hexes. Round 2 should try this before writing a custom renderer.
@@ -64,3 +71,9 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 - **Mesa RNG argument:** spec text says "seeded"; Mesa 3.5 deprecates `seed=` in favor of `rng=`. Deluge uses `rng=`.
 - **Child streams:** spec says `rng.spawn`. Deluge builds each child `SeedSequence` with a spawn key derived from the stream's name (crc32) instead of its spawn order. This is the same mechanism `spawn` uses, but adding or reordering streams can never shift the others.
 - **Repo root:** the spec's top-level `deluge/` directory is this repository's root (`civsim/`), because `docs/` and `CLAUDE.md` already live there. The package is `civsim/deluge/`.
+- **Hex positions (Round 1):** see the geometry mismatch above; Deluge uses Mesa's connectivity with drawer-consistent positions rather than `cell.position`.
+
+## opensimplex notes (Round 1)
+
+- opensimplex 0.4.5.1: `OpenSimplex(seed)` with `noise2(x, y)` and `noise2array(xs, ys)`. Without numba each point is evaluated in pure Python (about 25 us), and `noise2array` evaluates the full outer grid of `xs` and `ys`, which on hex centers is twice the needed points.
+- `deluge/world/noise.py` is a NumPy port of `opensimplex.internals._noise2` that uses the library's own permutation table (`OpenSimplex(seed)._perm`, a private attribute) and constants. `tests/test_world_noise.py` checks it matches `OpenSimplex.noise2` to 1e-12. World generation went from about 1.7 s to 0.14 s.

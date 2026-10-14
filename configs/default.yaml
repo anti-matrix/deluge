@@ -15,6 +15,7 @@ rng:
     - mesa
     - world
     - climate
+    - shocks
     - capacity
     - demography
     - migration
@@ -24,6 +25,245 @@ rng:
     - war
     - politics
     - memory
+
+grid:
+  width: 100
+  height: 60
+  torus: false
+
+world:
+  source: procedural          # procedural | earth (earth: round 12)
+  lat_south: -60.0            # latitude of row 0, degrees
+  lat_north: 70.0             # latitude of the last row
+  land_share: 0.35            # share of cells above the reference sea level
+  reference_sea_level_m: -60.0  # land share is calibrated at this level (year-0 level of the default curve)
+  max_attempts: 60            # world draws tried until the landmass rules hold
+
+  landmasses:
+    min_count: 2
+    max_count: 4
+    min_share_of_land: 0.04   # smaller connected land areas count as islands
+    min_size_ratio: 1.5       # largest / smallest landmass, so sizes are uneven
+
+  continents:                 # low-frequency elliptical blobs that form the continent mask
+    count_min: 2
+    count_max: 4
+    radius_min: 0.09          # fraction of map width
+    radius_max: 0.22
+    edge_margin: 0.07         # blob centers kept this far (fraction of width) from the edges
+    min_separation: 0.03      # gap between blob rims, fraction of map width
+    placement_tries: 200      # random placements tried per blob before it is dropped
+    warp_frequency: 2.0       # domain warp: cycles per map width (first octave)
+    warp_octaves: 3
+    warp_persistence: 0.5     # amplitude factor per octave
+    warp_lacunarity: 2.0      # frequency factor per octave
+    warp_strength: 0.14       # fraction of map width
+    elongation_max: 2.5       # axis ratio of each blob drawn in [1, this], random orientation
+    rim_width: 0.6            # mask rises from 0 at the rim to 1 this far in (fraction of radius)
+
+  noise:
+    octaves: 4
+    base_frequency: 3.0       # cycles per map width
+    ridge_frequency: 3.5      # ridged noise for mountain ranges
+    ridge_octaves: 2
+    ridge_sharpness: 2.0      # ridge profile (1 - |noise|) ** sharpness
+    persistence: 0.5
+    lacunarity: 2.0
+    mask_weight: 1.0
+    noise_weight: 0.5
+    ridge_weight: 1.1         # applied inside continents only
+    edge_falloff_width: 0.035 # fraction of width over which elevation drops toward the map edge
+    edge_falloff_weight: 0.6
+
+  elevation:
+    land_max_m: 4500.0
+    ocean_min_m: -5000.0
+    land_exponent: 5.0        # elevation = max * rank ** exponent above the shelf; >1: most land is low-lying
+    ocean_exponent: 0.6
+    shelf_share_of_land: 0.14 # share of year-0 land between the reference level and present sea level
+    shelf_step_m: 1.0         # shallowest sea cell lies this far below the reference level
+
+  tectonics:
+    enabled: false            # switch only; not implemented yet
+
+  erosion:                    # light particle (droplet) pass, units are metres
+    droplets: 4000
+    max_steps: 40
+    capacity_factor: 0.3      # sediment capacity per metre of drop
+    erode_rate: 0.08
+    deposit_rate: 0.3
+    max_erode_fraction: 0.5   # never cut more than this share of the drop to the next cell
+
+  fill_epsilon_m: 0.01        # depression filling: minimum drop along a flow path
+
+  temperature:
+    equator_c: 27.0
+    pole_c: -25.0
+    lat_exponent: 1.3         # T = equator + (pole - equator) * (|lat| / 90) ** exponent
+    lapse_rate_c_per_km: 6.5
+
+  rainfall:
+    base_mm: 180.0
+    bands:                    # [latitude, amplitude mm, width degrees], gaussian bumps
+      - [0.0, 1900.0, 13.0]
+      - [50.0, 900.0, 15.0]
+      - [-50.0, 900.0, 15.0]
+    winds:                    # [lat_min, lat_max, direction]; +1 blows toward +x (east), -1 toward -x
+      - [-90.0, -60.0, -1]
+      - [-60.0, -30.0, 1]
+      - [-30.0, 30.0, -1]
+      - [30.0, 60.0, 1]
+      - [60.0, 90.0, -1]
+    upwind_moisture: 1.0      # moisture of air entering at the map edge
+    ocean_recharge: 0.35      # share of the moisture deficit restored per sea cell
+    land_loss: 0.025          # share of moisture lost per land cell crossed
+    orographic_gain_per_km: 1.2   # windward rain boost per km of uplift
+    shadow_loss_per_km: 0.9       # moisture lost per km of uplift (rain shadow behind)
+    min_moisture: 0.05
+    smoothing_passes: 2
+
+  rivers:
+    et_base_mm: 100.0         # evapotranspiration: runoff = max(rain - (base + per_c * max(T, 0)), 0)
+    et_per_c_mm: 16.0
+    min_flow: 2.5             # flow accumulation (cells x metres/year of runoff) for a river
+
+  terrain:
+    mountain_m: 2000.0
+    hills_m: 800.0
+    tundra_c: -6.0            # colder than this: open treeless ground, classed as steppe
+    desert_rain_mm: 100.0     # dryness thresholds grow with temperature (Whittaker-style)
+    desert_rain_per_c: 8.0
+    steppe_rain_mm: 220.0
+    steppe_rain_per_c: 14.0
+    forest_rain_mm: 400.0
+    forest_rain_per_c: 24.0
+    wetland_max_m_above_sea: 40.0
+    wetland_min_flow: 25.0
+    wetland_min_rain_mm: 1600.0
+
+  fertility:
+    base:                     # per terrain
+      sea: 0.0
+      coast: 0.45
+      plain: 0.65
+      forest: 0.5
+      hills: 0.35
+      mountain: 0.05
+      desert: 0.05
+      steppe: 0.4
+      wetland: 0.6
+    river_bonus: 0.35         # scaled by log flow up to river_flow_ref
+    river_flow_ref: 100.0
+    sediment_bonus: 0.15      # on cells where erosion deposited sediment
+    sediment_ref_m: 20.0
+    cold_zero_c: -6.0         # fertility factor ramps from 0 at this temperature
+    cold_full_c: 8.0          # to 1 at this one
+
+  wild_food:
+    base:
+      sea: 0.0
+      coast: 0.7
+      plain: 0.5
+      forest: 0.55
+      hills: 0.4
+      mountain: 0.12
+      desert: 0.05
+      steppe: 0.35
+      wetland: 0.8
+    forest_edge_bonus: 0.2    # forest next to open land, and open land next to forest
+    river_bonus: 0.1
+    cold_zero_c: -18.0
+    cold_full_c: 4.0
+    cold_floor: 0.15          # cold factor never drops below this (cold coasts and tundra still feed foragers)
+
+climate:
+  sea_level:
+    preset: default
+    presets:                  # piecewise-linear [year, metres relative to present]
+      default:
+        - [0, -60.0]
+        - [500, -55.0]
+        - [700, -40.0]        # first fast pulse
+        - [1500, -31.0]
+        - [1750, -13.0]       # second fast pulse
+        - [3000, 0.0]
+        - [11000, 0.0]
+      modern_melt:
+        - [0, 70.0]
+        - [11000, 70.0]
+
+  temperature:                # global anomaly, degC, added to world base_temp
+    cold_snap_start: 0
+    cold_snap_end: 1200
+    cold_snap_depth_min: -5.0
+    cold_snap_depth_max: -3.0
+    cold_snap_ramp_years: 200   # recovery after the end
+    optimum_start: 3000
+    optimum_end: 6000
+    optimum_peak: 1.0
+    optimum_ramp_years: 500
+    late_cooling_end_value: -0.6  # linear trend from optimum_end to the final year
+    red_noise_phi: 0.97         # AR(1) coefficient, decades-long swings
+    red_noise_sigma: 0.08
+
+  shocks:
+    drought_annual_probability: 0.06
+    drought_duration_min: 2
+    drought_duration_max: 30
+    drought_radius_min: 3.0     # hex units
+    drought_radius_max: 12.0
+    drought_rain_factor_min: 0.35
+    drought_rain_factor_max: 0.8
+    volcanic_annual_probability: 0.002
+    volcanic_duration_min: 1
+    volcanic_duration_max: 5
+    volcanic_temp_drop_min: -2.5
+    volcanic_temp_drop_max: -0.5
+
+capacity:
+  cell_area_km2: 5000.0       # roughly a 75 km wide hex
+  forage:                     # people per km2
+    min_density: 0.1
+    max_density: 1.0
+    temp_zero_c: -20.0
+    temp_full_c: 0.0
+    rain_zero_mm: 50.0
+    rain_full_mm: 400.0
+  herd:
+    min_density: 0.5
+    max_density: 3.0
+    temp_zero_c: -12.0
+    temp_full_c: 2.0
+    rain_zero_mm: 100.0
+    rain_full_mm: 350.0
+    terrain:
+      sea: 0.0
+      coast: 0.5
+      plain: 0.8
+      forest: 0.2
+      hills: 0.8
+      mountain: 0.2
+      desert: 0.15
+      steppe: 1.0
+      wetland: 0.3
+  farm:
+    min_density: 10.0
+    max_density: 50.0
+    temp_zero_c: 2.0
+    temp_full_c: 12.0
+    rain_zero_mm: 250.0
+    rain_full_mm: 600.0
+    river_water_mm_per_flow: 40.0   # river cells count flow as extra water
+    terrain:
+      sea: 0.0
+      coast: 0.6
+      plain: 1.0
+      forest: 0.4
+      hills: 0.4
+      mountain: 0.0
+      desert: 0.3
+      steppe: 0.5
+      wetland: 0.5
 
 output:
   runs_dir: runs

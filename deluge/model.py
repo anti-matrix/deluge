@@ -7,7 +7,8 @@ in ``deluge/systems/``; they are appended to ``PHASES`` in fixed order as rounds
     5 knowledge, 6 brains decide, 7 diplomacy and war, 8 cohesion and politics,
     9 memory, 10 data collection.
 
-Round 0 has no phases: the model only advances the year and collects data.
+``model.year`` is the year being simulated: a step runs every phase for that year,
+collects data, then advances the year.
 """
 
 from __future__ import annotations
@@ -20,8 +21,13 @@ import mesa
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
 from deluge.rng import RngStreams
+from deluge.systems import capacity, climate
+from deluge.world import generate_world
+from deluge.world.capacity import CarryingCapacity
+from deluge.world.climate import ClimateShocks, sea_level_curve, temp_anomaly_series
+from deluge.world.grid import HexGeometry, build_mesa_grid
 
-PHASES: tuple[Callable[[DelugeModel], None], ...] = ()
+PHASES: tuple[Callable[[DelugeModel], None], ...] = (climate.run, capacity.run)
 
 
 class DelugeModel(mesa.Model):
@@ -55,13 +61,41 @@ class DelugeModel(mesa.Model):
         self.config = cfg
         self.streams = streams
         self.year = 0
+
+        # World (static).
+        self.geom = HexGeometry(cfg.grid.width, cfg.grid.height, cfg.grid.torus)
+        self.world = generate_world(cfg, streams["world"])
+        self.grid = build_mesa_grid(self.geom, self.world.fields(), random=self.random)
+        self.elevation_flat = self.world.elevation.ravel()
+        self.base_temp_flat = self.world.base_temp.ravel()
+        self.base_rain_flat = self.world.base_rain.ravel()
+
+        # Climate over time.
+        self.sea_level_series = sea_level_curve(cfg.climate.sea_level, cfg.run.years)
+        self.temp_anomaly_series = temp_anomaly_series(
+            cfg.climate.temperature, cfg.run.years, streams["climate"]
+        )
+        self.shocks = ClimateShocks(cfg.climate.shocks, self.geom.positions, streams["shocks"])
+        self.carrying_capacity = CarryingCapacity(cfg.capacity, self.world)
+
+        # Per-year state, filled by the phases.
+        self.sea_level = float(self.sea_level_series[0])
+        self.is_sea = self.elevation_flat < self.sea_level
+        self.temp_anomaly = 0.0
+        self.temperature = self.base_temp_flat.copy()
+        self.rainfall = self.base_rain_flat.copy()
+        self.capacity: dict = {}
+        self.land_cells = 0
+        self.drought_cells = 0
+        self.k_forage = self.k_herd = self.k_farm = 0.0
+
         self.datacollector = make_datacollector()
 
     def step(self) -> None:
         for phase in PHASES:
             phase(self)
-        self.year += 1
         self.datacollector.collect(self)
+        self.year += 1
         if self.year >= self.config.run.years:
             self.running = False
 
