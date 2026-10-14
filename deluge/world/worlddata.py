@@ -8,6 +8,9 @@ from enum import IntEnum
 import numpy as np
 
 
+MINERALS = ("copper", "tin", "iron_ore", "coal", "oil")  # deposit kinds, WorldData field names
+
+
 class Terrain(IntEnum):
     """Terrain classes. Coast is not a class: it is a per-year flag (land next to the
     year's sea), so it moves with the sea level."""
@@ -59,6 +62,12 @@ class WorldData:
     base_rain: np.ndarray  # mm/year, baseline climate
     fertility: np.ndarray  # 0..1 soil quality
     wild_food: np.ndarray  # 0..1 forage richness
+    # Mineral deposits (``MINERALS``): abundance per cell, 0 = no deposit.
+    copper: np.ndarray
+    tin: np.ndarray
+    iron_ore: np.ndarray
+    coal: np.ndarray
+    oil: np.ndarray
 
     def __post_init__(self):
         for name in self.field_names():
@@ -73,6 +82,10 @@ class WorldData:
 
     def fields(self) -> dict[str, np.ndarray]:
         return {name: getattr(self, name) for name in self.field_names()}
+
+    def deposits(self) -> np.ndarray:
+        """(cells, minerals) abundance, flat cell ids, column order ``MINERALS``."""
+        return np.stack([getattr(self, m).ravel() for m in MINERALS], axis=1)
 
 
 @dataclass(frozen=True)

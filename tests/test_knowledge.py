@@ -33,7 +33,7 @@ def early(cfg):
 
 def test_graph_compiles_in_prerequisite_order(cfg):
     g = KnowledgeGraph.from_config(cfg.knowledge)
-    assert len(g.names) == 14
+    assert len(g.names) == 28
     pos = {t: i for i, t in enumerate(g.order)}
     for t, p in zip(*np.nonzero(g.prereq)):
         assert pos[p] < pos[t]
@@ -213,7 +213,7 @@ def test_practised_flag_follows_use(early):
 
 
 def test_invention_happens_without_teachers(cfg):
-    fast = cfg.with_overrides({"teachers": {"enabled": False}, "knowledge": {"invention_scale": 1e-3}})
+    fast = cfg.with_overrides({"teachers": {"enabled": False}, "knowledge": {"invention_scale": 1e-2}})
     m = DelugeModel(config=fast, years=200)
     m.run()
     assert (m.first_invented_year >= 0).any()
@@ -262,3 +262,28 @@ def test_event_threshold(cfg):
     assert not log.log(0, "starved", [entity("settlement", 1)], 5, cfg.events.min_magnitude["starved"] - 1)
     assert log.log(0, "starved", [entity("settlement", 1)], 5, cfg.events.min_magnitude["starved"])
     assert len(log) == 1
+
+
+def test_chronicle_view_keeps_every_event_and_pages(early):
+    """The view covers the whole log; pages, year range, group, type and text filters
+    select from it; the full text has one line per event, oldest first."""
+    view = chronicle.Chronicle(early)
+    n = len(early.events)
+    everything = view.select()
+    assert len(everything) == len(view) == n
+    size = 7
+    pages = [view.page(everything, p, size) for p in range(view.pages(everything, size))]
+    assert sum(len(p) for p in pages) == n and all(len(p) == size for p in pages[:-1])
+    assert pages[0][0] == view.line(n - 1)  # newest first
+    years = np.asarray(early.events.year)
+    sel = view.select(year_min=60, year_max=120)
+    assert len(sel) == ((years >= 60) & (years <= 120)).sum()
+    assert all(60 <= early.events.year[i] <= 120 for i in sel)
+    hits = view.select(text="TAUGHT")
+    assert len(hits) and all(" taught " in view.line(i) for i in hits)
+    assert len(view.select(text="no such words anywhere")) == 0
+    assert len(view.select(groups=set(), actions=None)) == 0
+    text = view.text()
+    rows = text.splitlines()
+    assert len(rows) == n and rows[0] == view.line(0) and rows[-1] == view.line(n - 1)
+    assert len(early.events) == n  # reading never drops events

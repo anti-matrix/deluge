@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deluge"
 version = "0.0.1"
-description = "Deluge: civilization neuroevolution sim over 11,000 years after a global catastrophe"
+description = "Deluge: civilization neuroevolution sim over 12,900 years after a global catastrophe"
 requires-python = ">=3.12"
 dependencies = [
     "mesa[rec]>=3.0,<4",

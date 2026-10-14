@@ -12,6 +12,9 @@ Checks (Round 4 brief and spec section 13):
 - total population at the last year between 50 and 300 million in every run;
 - every logged event has year, action, actors and place, and the chronicle renders them.
 
+The runs are ROUND4_YEARS (11,000) long by default, the length these checks were set for;
+the run has been 12,900 years since Round 4b (``--years`` changes it).
+
 Writes runs/round4_acceptance_w<world>.json and exits non-zero if a check fails.
 """
 
@@ -29,9 +32,10 @@ FARMING_WITHIN = 1000
 MIN_GROUPS = 3
 MIN_RUNS = 3
 POP_RANGE = (50e6, 300e6)
+ROUND4_YEARS = 11000
 
 
-def one_run(world: int, history: int, teachers: bool) -> dict:
+def one_run(world: int, history: int, teachers: bool, years: int = ROUND4_YEARS) -> dict:
     import numpy as np
 
     from deluge.config import load_config
@@ -41,7 +45,7 @@ def one_run(world: int, history: int, teachers: bool) -> dict:
 
     cfg = load_config().with_overrides({"teachers": {"enabled": teachers}})
     t0 = time.perf_counter()
-    m = DelugeModel(config=cfg, world_seed=world, history_seed=history)
+    m = DelugeModel(config=cfg, world_seed=world, history_seed=history, years=years)
 
     def river_density() -> list[float] | None:
         """People per km2 on good river land: river cells with fertility above 0.6 whose
@@ -104,8 +108,8 @@ def check(runs: list[dict]) -> dict:
     }
 
 
-def acceptance(world: int, histories: list[int], workers: int) -> dict:
-    jobs = [(world, h, t) for t in (True, False) for h in histories]
+def acceptance(world: int, histories: list[int], workers: int, years: int = ROUND4_YEARS) -> dict:
+    jobs = [(world, h, t, years) for t in (True, False) for h in histories]
     with ProcessPoolExecutor(max_workers=workers) as pool:
         runs = list(pool.map(one_run, *zip(*jobs)))
     return {"world_seed": world, "runs": runs, "checks": check(runs)}
@@ -116,8 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--world-seed", type=int, default=1)
     parser.add_argument("--history-seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--years", type=int, default=ROUND4_YEARS)
     args = parser.parse_args(argv)
-    result = acceptance(args.world_seed, args.history_seeds, args.workers)
+    result = acceptance(args.world_seed, args.history_seeds, args.workers, args.years)
     out = REPO_ROOT / "runs" / f"round4_acceptance_w{args.world_seed}.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")

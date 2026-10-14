@@ -5,23 +5,23 @@ property layer of the HexGrid as a PolyCollection on its hex mesh. Its mesh shif
 rows right, like Mesa's connectivity and ``deluge.world.grid``; it does not use
 ``cell.position`` (see docs/MESA_API_NOTES.md). Three layers are drawn, in the order
 the model added them: terrain, the year's sea over it, and one overlay on top (people per
-cell, techniques usable per cell, or latent techniques per cell: held where they cannot
-be used). Everything here only reads model state.
+cell, techniques usable per cell, latent techniques per cell: held where they cannot
+be used, the founding group of each settlement, or mineral deposits). Everything here only reads model state.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from matplotlib.colors import ListedColormap, to_rgb
+from matplotlib.colors import ListedColormap, to_rgb, to_rgba
 from mesa.visualization.components import PropertyLayerStyle
 
 from deluge.config import VizConfig
 from deluge.world.render import SEA_COLOR, TERRAIN_COLORS, _lat_axis
-from deluge.world.worlddata import Terrain
+from deluge.world.worlddata import MINERALS, Terrain
 
 TERRAIN_CMAP = ListedColormap([TERRAIN_COLORS[t] for t in Terrain], name="terrain_classes")
 MAP_LAYERS = ("terrain", "sea")
-OVERLAYS = ("population", "knowledge", "latent_knowledge")  # model layers that can be drawn over the map
+OVERLAYS = ("population", "knowledge", "latent_knowledge", "lineage", "resources")  # model layers drawn over the map
 
 
 def alpha_cmap(color: str, curve: float, n: int = 256) -> ListedColormap:
@@ -31,6 +31,28 @@ def alpha_cmap(color: str, curve: float, n: int = 256) -> ListedColormap:
     alpha = np.log1p(curve * x) / np.log1p(curve) if curve > 0 else x
     rgb = np.tile(to_rgb(color), (n, 1))
     return ListedColormap(np.column_stack([rgb, alpha]))
+
+
+def categorical_cmap(colors) -> ListedColormap:
+    """Code 0 clear, code k (1..n) the k-th colour, fully opaque."""
+    return ListedColormap([(0.0, 0.0, 0.0, 0.0)] + [to_rgba(c) for c in colors])
+
+
+def resource_colors(vcfg: VizConfig) -> list[str]:
+    """Resources overlay colours in code order: MINERALS, then several."""
+    return [vcfg.resource_colors[m] for m in MINERALS] + [vcfg.resource_colors["several"]]
+
+
+def legend_html(vcfg: VizConfig, overlay: str, group_names) -> str:
+    """Colour key for the categorical overlays ('' for the others)."""
+    if overlay == "lineage":
+        items = [(f"group {n}", c) for n, c in zip(group_names, vcfg.lineage_colors)]
+    elif overlay == "resources":
+        items = list(zip([m.replace("_", " ") for m in MINERALS] + ["several"], resource_colors(vcfg)))
+    else:
+        return ""
+    return " ".join(f'<span style="display:inline-block;width:0.9em;height:0.9em;background:{c};'
+                    f'border:1px solid #555;vertical-align:middle"></span> {label}' for label, c in items)
 
 
 def make_layer_style(vcfg: VizConfig, overlay: str = "population"):
@@ -45,6 +67,11 @@ def make_layer_style(vcfg: VizConfig, overlay: str = "population"):
                                         colorbar=False, vmin=0.0, vmax=vcfg.knowledge_vmax),
         "latent_knowledge": PropertyLayerStyle(colormap=alpha_cmap(vcfg.latent_color, 0.0), alpha=1.0,
                                                colorbar=False, vmin=0.0, vmax=vcfg.latent_vmax),
+        # Categorical: code k spans [k - 0.5, k + 0.5).
+        "lineage": PropertyLayerStyle(colormap=categorical_cmap(vcfg.lineage_colors), alpha=1.0, colorbar=False,
+                                      vmin=-0.5, vmax=len(vcfg.lineage_colors) + 0.5),
+        "resources": PropertyLayerStyle(colormap=categorical_cmap(resource_colors(vcfg)), alpha=1.0,
+                                        colorbar=False, vmin=-0.5, vmax=len(MINERALS) + 1.5),
     }[overlay]
 
     def style(layer) -> PropertyLayerStyle | None:

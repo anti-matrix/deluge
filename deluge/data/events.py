@@ -4,10 +4,10 @@ Every record is (year, action, actors, place, magnitude):
 
 - ``action`` is a generic verb code from ``ACTIONS``, the only vocabulary the log has.
   The spec's list is extended by ``learned`` and ``forgot`` for techniques gained and
-  lost.
+  lost, and ``depleted`` for a mineral deposit used up (only with depletion switched on).
 - ``actors`` is a tuple of entity ids. An entity id encodes its kind and its local id
   (``local * len(ENTITY_KINDS) + kind``): the teachers, a lineage, a settlement, a
-  technique, a technology the teachers display, an artifact.
+  technique, a technology the teachers display, an artifact, a mineral deposit.
 - ``place`` is a cell id (-1 when the event has no place).
 - ``magnitude`` is the size of the effect (people, deaths, techniques, ...). An event is
   logged only when its magnitude is at least ``events.min_magnitude[action]``.
@@ -22,10 +22,10 @@ import pandas as pd
 
 ACTIONS = (
     "arrived", "taught", "displayed", "departed", "gave", "used", "broke", "fought", "won",
-    "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot",
+    "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot", "depleted",
 )
 ACTION_CODE = {name: i for i, name in enumerate(ACTIONS)}
-ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact")
+ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit")
 KIND_CODE = {name: i for i, name in enumerate(ENTITY_KINDS)}
 TEACHERS = 0  # local id of the one teachers entity
 

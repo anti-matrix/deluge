@@ -3,7 +3,8 @@
     python scripts/render_world.py --seeds 1 2 3
 
 For each seed, writes to runs/maps_seed<seed>/ (git-ignored): physical.png, flooding.png,
-the per-layer maps, capacity maps at year 0, climate_curves.png and summary.json. Prints a
+the per-layer maps, capacity maps at year 0, resources.png (mineral deposits),
+climate_curves.png and summary.json. Prints a
 summary of each world.
 """
 
@@ -62,6 +63,10 @@ def render_seed(cfg, out: Path, layers: bool) -> dict:
             render.field_map(geom, world.wild_food.ravel(), sea, "Wild food (without coast bonus)",
                              out / "wild_food.png", "YlOrBr", Normalize(0, 1), "0..1", lats, rc.dpi),
             render.climate_curves(curve, model.temp_anomaly_series, out / "climate_curves.png", rc.dpi),
+            render.resources_map(geom, world, float(curve[-1]),
+                                 f"Mineral deposits, world seed {cfg.run.world_seed}, coast at year {len(curve) - 1:,}"
+                                 f" (sea level {curve[-1]:+.0f} m)", out / "resources.png",
+                                 dict(cfg.viz.resource_colors), lats, rc.dpi),
         ]
         for mode in ("forage", "herd", "farm"):
             k = model.capacity[mode]

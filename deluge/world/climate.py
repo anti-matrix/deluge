@@ -24,8 +24,18 @@ def preset_horizon(cfg: SeaLevelConfig) -> int:
     return int(max(p[0] for p in cfg.presets[cfg.preset]))
 
 
+def _spell(years: np.ndarray, start: int, end: int, offset: float, ramp: int) -> np.ndarray:
+    """``offset`` inside [start, end], ramping in and out over ``ramp`` years inside it."""
+    if not start + ramp < end - ramp:
+        raise ValueError("climate.temperature: a spell must be longer than two ramps")
+    return np.interp(years, [start, start + ramp, end - ramp, end], [0.0, offset, offset, 0.0],
+                     left=0.0, right=0.0)
+
+
 def temp_anomaly_curve(cfg: TempAnomalyConfig, years: int, cold_snap_depth: float) -> np.ndarray:
-    """Deterministic part of the anomaly: cold snap, recovery, optimum, late cooling."""
+    """Deterministic part of the anomaly: cold snap, recovery, optimum, slow cooling to
+    ``late_cooling_end_year`` (flat after), plus the warm and cold spells on top. Fixed in
+    calendar years, so a short run sees the same curve as the start of a long one."""
     xs = [
         cfg.cold_snap_start,
         cfg.cold_snap_end,
@@ -33,13 +43,16 @@ def temp_anomaly_curve(cfg: TempAnomalyConfig, years: int, cold_snap_depth: floa
         cfg.optimum_start - cfg.optimum_ramp_years,
         cfg.optimum_start,
         cfg.optimum_end,
-        max(years, cfg.optimum_end + 1),
+        cfg.late_cooling_end_year,
     ]
     ys = [cold_snap_depth, cold_snap_depth, 0.0, 0.0, cfg.optimum_peak, cfg.optimum_peak,
           cfg.late_cooling_end_value]
-    if np.any(np.diff(xs) <= 0):
+    if np.any(np.diff(xs) <= 0) or cfg.warm_spell_end > cfg.cold_spell_start:
         raise ValueError("climate.temperature: phase years must increase")
-    return np.interp(np.arange(years + 1, dtype=float), xs, ys)
+    t = np.arange(years + 1, dtype=float)
+    return (np.interp(t, xs, ys)
+            + _spell(t, cfg.warm_spell_start, cfg.warm_spell_end, cfg.warm_spell_offset, cfg.spell_ramp_years)
+            + _spell(t, cfg.cold_spell_start, cfg.cold_spell_end, cfg.cold_spell_offset, cfg.spell_ramp_years))
 
 
 def red_noise(phi: float, sigma: float, n: int, rng: np.random.Generator) -> np.ndarray:

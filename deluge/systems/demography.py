@@ -5,7 +5,8 @@
   lineage, before they eat; otherwise they dissolve.
 - ``grow`` (phase 3b): net growth rises with food per head up to the settlement's maximum
   (the share-weighted mode maxima: ~0.3%/yr foragers, ~1% farmers); below one ration,
-  deaths rise in proportion to the shortfall (softened while a medicine artifact lasts).
+  deaths rise in proportion to the shortfall (softened while a medicine artifact lasts,
+  and by techniques with a ``famine_mortality`` effect).
   Random demographic fluctuation scales with the square root of the population, so
   small bands can die out. Bands below ``min_population`` dissolve.
 - ``migrate`` (phase 4): starving bands move whole (sedentary farmers only after
@@ -52,8 +53,9 @@ def grow(model) -> None:
     noise = model.streams["demography"].standard_normal(len(ids))
     medicine = model.teachers_state.medicine_holders(ids)
     factor = np.where(medicine, model.config.teachers.medicine_famine_mortality, 1.0)
+    tech = model.knowledge.multiplier(t.knows[ids], "famine_mortality")  # e.g. modern medicine
     pop, ratio = t.population[ids], t.food_ratio[ids]
-    new, deaths = next_population(pop, ratio, shares @ a, shares @ r, d, noise, factor)
+    new, deaths = next_population(pop, ratio, shares @ a, shares @ r, d, noise, factor * tech)
     t.population[ids] = new
     t.peak_population[ids] = np.maximum(t.peak_population[ids], new)
     t.famine_years[ids] = np.where(ratio < 1.0, t.famine_years[ids] + 1, 0)

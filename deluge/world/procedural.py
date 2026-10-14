@@ -14,7 +14,8 @@ Stage order:
     retried with fresh draws until they hold;
  6. distance to the sea, temperature, rainfall from a 2D moisture transport;
  7. runoff and flow accumulation (rivers);
- 8. terrain classes, fertility, wild food.
+ 8. terrain classes, fertility, wild food;
+ 9. mineral deposits.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from deluge.config import (
     ElevationConfig,
     ErosionConfig,
     FertilityConfig,
+    MineralsConfig,
     RainfallConfig,
     RiverConfig,
     ShapeConfig,
@@ -39,7 +41,7 @@ from deluge.world import geography, noise, tectonics
 from deluge.world.climate import preset_horizon, sea_level_curve
 from deluge.world.grid import SQRT3, HexGeometry, hex_unit_km
 from deluge.world.tectonics import Plates, _smoothstep, map_aspect, normalized_positions
-from deluge.world.worlddata import GenerationReport, Terrain, WorldData, terrain_table
+from deluge.world.worlddata import MINERALS, GenerationReport, Terrain, WorldData, terrain_table
 
 
 class WorldGenerationError(RuntimeError):
@@ -497,6 +499,49 @@ def wild_food_field(geom: HexGeometry, terrain: np.ndarray, flow: np.ndarray, te
     return np.clip(w, 0.0, 1.0)
 
 
+def mineral_deposits(geom: HexGeometry, elev: np.ndarray, sea0: float, convergent: np.ndarray,
+                     deposit: np.ndarray, unit_km: float, rng: np.random.Generator,
+                     cfg: MineralsConfig) -> dict[str, np.ndarray]:
+    """Abundance of each mineral per cell (0 = none) on ever-land cells (above the year-0
+    sea): metals near mountain belts and plate boundaries, coal in old lowland basins, oil
+    in sedimentary basins and on the shelf the sea later takes. Each mineral's score is
+    the weighted mean of the terms in config times clustered noise; the top ``share`` of
+    ever-land cells by score hold a deposit."""
+    land = elev >= sea0
+    n_land = int(land.sum())
+    if convergent.any():
+        steps, _ = geom.distance_from(convergent)
+        belt = np.where(steps >= 0, np.exp(-steps * SQRT3 * unit_km / cfg.belt_km), 0.0)
+    else:
+        belt = np.zeros(len(elev))
+    terms = {
+        "belt": belt,
+        "upland": np.clip(elev / cfg.upland_m, 0.0, 1.0),
+        "lowland": np.where(elev >= 0.0, 1.0 - np.clip(elev / cfg.lowland_m, 0.0, 1.0), 0.0),
+        "stable": 1.0 - belt,
+        "sediment": np.where(elev >= 0.0, np.clip(deposit / cfg.sediment_ref_m, 0.0, 1.0), 0.0),
+        "shelf": (elev < 0.0).astype(float),
+    }
+    uv = normalized_positions(geom)
+    out = {}
+    for name, tc in cfg.types.items():
+        weights = {k: getattr(tc, k) for k in terms}
+        total = sum(weights.values())
+        score = sum(w * terms[k] for k, w in weights.items()) / max(total, 1e-12)
+        n = noise.fbm(uv, rng, cfg.noise_frequency, cfg.noise_octaves, cfg.noise_persistence,
+                      cfg.noise_lacunarity)
+        n01 = (n - n.min()) / max(n.max() - n.min(), 1e-12)
+        score = score * (1.0 - cfg.noise_weight + cfg.noise_weight * n01)
+        score = np.where(land, score, -np.inf)
+        count = int(round(tc.share * n_land))
+        chosen = np.argsort(-score, kind="stable")[:count]
+        chosen = chosen[score[chosen] > 0]
+        abundance = np.zeros(len(elev))
+        abundance[chosen] = rng.uniform(tc.abundance_min, tc.abundance_max, size=len(chosen))
+        out[name] = abundance
+    return out
+
+
 # --- pipeline -------------------------------------------------------------------------------
 
 
@@ -584,6 +629,13 @@ def generate_world_with_report(cfg: Config, rng: np.random.Generator) -> tuple[W
     terrain = classify_terrain(elev, temp, rain, acc, sea0, w.terrain)
     fertility = fertility_field(terrain, river, deposit, temp, w.fertility)
     wild_food = wild_food_field(geom, terrain, river, temp, w.wild_food)
+    # Last in the pipeline: its draws come after every other stage's, so adding deposits
+    # left the rest of each world unchanged.
+    none = np.zeros(geom.n_cells, dtype=bool)
+    convergent = plates.convergent if plates is not None else none
+    minerals = mineral_deposits(geom, elev, sea0, convergent, deposit, unit_km, rng, w.minerals)
+    if set(minerals) != set(MINERALS):
+        raise ValueError(f"world.minerals.types must be exactly {MINERALS}")
 
     shape = geom.shape
     world = WorldData(
@@ -598,8 +650,8 @@ def generate_world_with_report(cfg: Config, rng: np.random.Generator) -> tuple[W
         base_rain=rain.reshape(shape),
         fertility=fertility.reshape(shape),
         wild_food=wild_food.reshape(shape),
+        **{m: minerals[m].reshape(shape) for m in MINERALS},
     )
-    none = np.zeros(geom.n_cells, dtype=bool)
     report = GenerationReport(
         attempts=attempts,
         rejected=rejected,

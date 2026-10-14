@@ -3,10 +3,12 @@
     solara run deluge/viz/app.py
 
 Shows the hex map (terrain, with the year's sea drawn over it, and a chosen overlay:
-people or techniques known per cell), Mesa's play / pause / step / reset controls,
+people or techniques known per cell, the founding group of each settlement, or mineral
+deposits, with a colour key), Mesa's play / pause / step / reset controls,
 buttons that step 1, 10 or 100 years, a year counter, plots of sea level, population per
-founding group and per subsistence mode, and a chronicle of the event log (newest first,
-filtered by group and by event type). The world seed (the map) and the history seed are
+founding group and per subsistence mode, and a chronicle of the whole event log (a page
+at a time, newest first; filtered by group, event type, year range and text; downloadable
+as a text file). The world seed (the map) and the history seed are
 integer fields that take effect on Reset.
 
 Built from Mesa's own visualization pieces (SpaceRenderer and its component,
@@ -110,21 +112,53 @@ def OverlaySelect(renderer, overlay):
         force_update()
 
     solara.Select("Map overlay", values=list(portrayal.OVERLAYS), value=overlay.value, on_value=on_value)
+    legend = portrayal.legend_html(VIZ, overlay.value, CONFIG.founders.names)
+    if legend:
+        solara.HTML(tag="div", unsafe_innerHTML=legend)
 
 
 @solara.component
 def Chronicle(model: DelugeModel):
+    """The whole event log, a page at a time (newest first), filtered by group, event
+    type, year range and text; the full chronicle downloads as a text file."""
     update_counter.get()
+    view = solara.use_memo(lambda: chronicle.Chronicle(model), dependencies=[model])
     names = list(model.lineages.names)
     groups, set_groups = solara.use_state(names)
     actions, set_actions = solara.use_state(list(ACTIONS))
-    solara.SelectMultiple("Groups", values=groups, all_values=names, on_value=set_groups)
-    solara.SelectMultiple("Event types", values=actions, all_values=list(ACTIONS), on_value=set_actions)
-    chosen = {names.index(g) for g in groups}
-    shown = chronicle.lines(model, VIZ.chronicle_lines, groups=chosen, actions=set(actions))
-    text = "  \n".join(shown) if shown else "No events yet."
+    year_min, set_year_min = solara.use_state(None)
+    year_max, set_year_max = solara.use_state(None)
+    text, set_text = solara.use_state("")
+    page, set_page = solara.use_state(0)
+
+    def reset_page(setter):
+        def on_value(value):
+            setter(value)
+            set_page(0)
+
+        return on_value
+
+    solara.SelectMultiple("Groups", values=groups, all_values=names, on_value=reset_page(set_groups))
+    solara.SelectMultiple("Event types", values=actions, all_values=list(ACTIONS), on_value=reset_page(set_actions))
+    with solara.Row():
+        solara.InputInt("From year", value=year_min, optional=True, clearable=True,
+                        on_value=reset_page(set_year_min))
+        solara.InputInt("To year", value=year_max, optional=True, clearable=True,
+                        on_value=reset_page(set_year_max))
+        solara.InputText("Search", value=text, on_value=reset_page(set_text), clearable=True)
+    chosen = view.select(groups={names.index(g) for g in groups}, actions=set(actions),
+                         year_min=year_min, year_max=year_max, text=text or "")
+    pages = view.pages(chosen, VIZ.chronicle_lines)
+    shown_page = min(page, pages - 1)
+    with solara.Row():
+        solara.Button("Newer", on_click=lambda: set_page(max(shown_page - 1, 0)), disabled=shown_page == 0)
+        solara.Button("Older", on_click=lambda: set_page(shown_page + 1), disabled=shown_page >= pages - 1)
+        solara.Text(f"Page {shown_page + 1:,} of {pages:,}: {len(chosen):,} of {len(view):,} events")
+        solara.FileDownload(lambda: view.text(), filename="chronicle.txt", label="Download whole chronicle",
+                            mime_type="text/plain")
+    shown = view.page(chosen, shown_page, VIZ.chronicle_lines)
     with solara.Div(style={"max-height": "420px", "overflow-y": "auto"}):
-        solara.Markdown(text)
+        solara.Markdown("  \n".join(shown) if shown else "No events.")
 
 
 @solara.component

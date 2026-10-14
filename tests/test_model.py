@@ -9,9 +9,9 @@ import pytest
 from conftest import small_model
 from deluge.model import DelugeModel
 
-# Round 0 required 11,000 *empty* steps in under 5 s. Since Round 4 the steps run every
-# system through knowledge and the teachers, with farming populations in the hundreds of
-# millions (a few minutes at 160 x 96 on the dev machine). The guard is the spec's budget
+# Round 0 required 11,000 *empty* steps in under 5 s; the run is 12,900 years since Round
+# 4b. Since Round 4 the steps run every system through knowledge and the teachers, with
+# farming populations in the hundreds of millions (minutes at 160 x 96 on the dev machine). The guard is the spec's budget
 # of 10 minutes per run (section 14; Round 11 profiles and speeds up).
 FULL_RUN_BUDGET_S = 600.0
 

@@ -1,5 +1,6 @@
 """Round 4 acceptance on world seed 1, history seeds 1-5, with and without the teachers:
-ten full 11,000-year runs in parallel processes (about 20 minutes on 4 cores).
+ten full-length runs (run.years, 12,900 since Round 4b) in parallel processes (about 20+
+minutes on 4 cores).
 
 Marked slow and skipped by a plain ``pytest``; run with ``pytest -m slow``. The same
 check is scripts/round4_acceptance.py.

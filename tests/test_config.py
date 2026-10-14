@@ -10,7 +10,7 @@ from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 def test_default_config_loads():
     cfg = load_config()
     assert isinstance(cfg, Config)
-    assert cfg.run.years == 11000
+    assert cfg.run.years == 12900
     assert isinstance(cfg.rng.streams, tuple)
     assert "mesa" in cfg.rng.streams
 

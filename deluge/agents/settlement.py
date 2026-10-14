@@ -23,12 +23,13 @@ class SettlementTable:
     ``knows`` and ``strength`` have one column per technique: whether the settlement
     holds it, and how firmly (1 = fresh; decays when unused, forgotten at 0);
     ``practised``: it has used the technique while holding it. ``shares`` has one column
-    per subsistence mode and sums to 1."""
+    per subsistence mode and sums to 1. ``works`` has one column per mineral: the cell of the
+    deposit the settlement last worked, -1 for none."""
 
     FLOAT_COLUMNS = ("population", "store", "food_ratio", "peak_population")
     INT_COLUMNS = ("cell", "lineage", "parent", "founded", "ended", "next_split_year", "famine_years")
 
-    def __init__(self, n_techniques: int = 0, capacity: int = 256):
+    def __init__(self, n_techniques: int = 0, capacity: int = 256, n_minerals: int = 0):
         self.n = 0  # settlements ever founded; ids 0..n-1
         for name in self.FLOAT_COLUMNS:
             setattr(self, name, np.zeros(capacity))
@@ -38,9 +39,10 @@ class SettlementTable:
         self.strength = np.zeros((capacity, n_techniques))
         self.practised = np.zeros((capacity, n_techniques), dtype=bool)
         self.shares = np.zeros((capacity, len(MODES)))
+        self.works = np.full((capacity, n_minerals), -1, dtype=np.int64)
 
     def _grow(self) -> None:
-        for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + ("knows", "strength", "practised", "shares"):
+        for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + ("knows", "strength", "practised", "shares", "works"):
             old = getattr(self, name)
             fill = 0 if old.dtype.kind in "fb" else -1
             new = np.full((2 * old.shape[0],) + old.shape[1:], fill, dtype=old.dtype)
@@ -68,6 +70,7 @@ class SettlementTable:
         self.knows[sid] = False if knows is None else knows
         self.strength[sid] = 0.0 if strength is None else strength
         self.practised[sid] = False if practised is None else practised
+        self.works[sid] = -1
         if shares is None:
             self.shares[sid] = 0.0
             self.shares[sid, 0] = 1.0  # foraging

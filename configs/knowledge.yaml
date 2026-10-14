@@ -9,6 +9,12 @@
 #   the coast, herd and farm techniques on cells with no capacity for that mode. Latent
 #   techniques decay at knowledge.decay_latent (none while a neighbour practises them).
 #   Size-tied techniques are usable anywhere; small groups simply do not use them.
+# label: how the chronicle names the technique.
+# resources: minerals (world.minerals.types) the settlement needs access to, all of them, to
+#   invent, adopt or use the technique (spec section 5). Until polities (Round 5) and trade
+#   exist, access means a deposit of each mineral within world.minerals.access_radius_cells
+#   of the settlement's cell (each mineral on its own: copper and tin need not share a cell).
+#   Without access a held technique is latent.
 # unlocks: the subsistence mode a technique makes available ("" for none).
 # effects (multipliers unless noted; techniques without a mechanic yet keep their numbers
 #   for later rounds):
@@ -21,10 +27,16 @@
 #   drought_loss                   multiplier on the share of rain a drought takes from farming
 #   migration_radius               hex steps added to the migration search radius
 #   sea_steps                      sea cells a migration may cross
-#   town_cap, defense, military, monuments, memory_capacity, admin_cap, raid_range: later rounds
+#   diffusion                      multiplier on the chance of adopting techniques from neighbours
+#   famine_mortality               multiplier on famine deaths
+#   town_cap, defense, military, monuments, memory_capacity, admin_cap, raid_range, trade_range:
+#     later rounds
+# Late techniques (after iron): effect sizes are uncalibrated placeholders (Round 4b).
 
 techniques:
   animal_domestication:
+    label: animal domestication
+    resources: []
     category: subsistence
     prerequisites: []
     invention_rate: 1.0
@@ -32,6 +44,8 @@ techniques:
     unlocks: herd
     effects: {}
   agriculture:
+    label: agriculture
+    resources: []
     category: subsistence
     prerequisites: []
     invention_rate: 1.0
@@ -39,6 +53,8 @@ techniques:
     unlocks: farm
     effects: {}
   storage:
+    label: storage
+    resources: []
     category: building
     prerequisites: [agriculture]
     invention_rate: 1.0
@@ -46,6 +62,8 @@ techniques:
     unlocks: ""
     effects: {store_cap_years: 1.0, spoilage: 0.4}
   sedentary_building:
+    label: sedentary building
+    resources: []
     category: building
     prerequisites: [agriculture]
     invention_rate: 1.0
@@ -53,6 +71,8 @@ techniques:
     unlocks: ""
     effects: {town_cap: 3.0, defense: 1.3}
   division_of_labor:
+    label: division of labor
+    resources: []
     category: building
     prerequisites: [sedentary_building]
     invention_rate: 0.7
@@ -60,6 +80,8 @@ techniques:
     unlocks: ""
     effects: {production: 1.1, production_min_population: 5000}
   sky_calendar:
+    label: sky observation and calendar
+    resources: []
     category: subsistence
     prerequisites: []
     invention_rate: 0.7
@@ -67,6 +89,8 @@ techniques:
     unlocks: ""
     effects: {farm_yield: 1.1, drought_loss: 0.6}
   megalithic_construction:
+    label: megalithic construction
+    resources: []
     category: building
     prerequisites: [division_of_labor]
     invention_rate: 0.5
@@ -74,6 +98,8 @@ techniques:
     unlocks: ""
     effects: {monuments: 1.0}
   irrigation:
+    label: irrigation
+    resources: []
     category: subsistence
     prerequisites: [agriculture, division_of_labor]
     invention_rate: 0.5
@@ -81,6 +107,8 @@ techniques:
     unlocks: ""
     effects: {river_farm_yield: 1.8}
   sailing:
+    label: sailing
+    resources: []
     category: other
     prerequisites: []
     invention_rate: 0.5
@@ -88,6 +116,8 @@ techniques:
     unlocks: ""
     effects: {sea_steps: 3}
   copper_bronze:
+    label: copper and bronze
+    resources: [copper, tin]
     category: military
     prerequisites: [division_of_labor]
     invention_rate: 0.4
@@ -95,6 +125,8 @@ techniques:
     unlocks: ""
     effects: {production: 1.05, production_min_population: 0, military: 1.3}
   writing:
+    label: writing
+    resources: []
     category: building
     prerequisites: [division_of_labor, sky_calendar]
     invention_rate: 0.3
@@ -102,6 +134,8 @@ techniques:
     unlocks: ""
     effects: {memory_capacity: 2.0, admin_cap: 2.0}
   plough:
+    label: plough
+    resources: []
     category: subsistence
     prerequisites: [agriculture, animal_domestication]
     invention_rate: 0.6
@@ -109,6 +143,8 @@ techniques:
     unlocks: ""
     effects: {farm_yield: 1.4}
   horse_riding:
+    label: horse riding
+    resources: []
     category: military
     prerequisites: [animal_domestication]
     invention_rate: 0.5
@@ -116,9 +152,137 @@ techniques:
     unlocks: ""
     effects: {migration_radius: 1, raid_range: 2.0, military: 1.2}
   iron:
+    label: iron
+    resources: [iron_ore]
     category: military
     prerequisites: [copper_bronze]
     invention_rate: 0.3
     used_with: size
     unlocks: ""
     effects: {production: 1.05, production_min_population: 0, military: 1.5}
+  ocean_navigation:
+    label: ocean navigation
+    resources: []
+    category: other
+    prerequisites: [sailing, writing, sky_calendar]
+    invention_rate: 0.3
+    used_with: coast
+    unlocks: ""
+    effects: {sea_steps: 6, migration_radius: 1, trade_range: 3.0}
+  printing:
+    label: printing
+    resources: []
+    category: building
+    prerequisites: [writing]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {memory_capacity: 2.0, diffusion: 1.5}
+  mechanical_power:
+    label: mechanical power (water and wind mills)
+    resources: []
+    category: building
+    prerequisites: [division_of_labor, copper_bronze]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {production: 1.1, production_min_population: 0}
+  chemistry:
+    label: chemistry
+    resources: []
+    category: other
+    prerequisites: [writing, copper_bronze]
+    invention_rate: 0.2
+    used_with: size
+    unlocks: ""
+    effects: {}
+  gunpowder:
+    label: gunpowder
+    resources: []
+    category: military
+    prerequisites: [chemistry]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {military: 2.0}
+  steel:
+    label: steel
+    resources: []
+    category: military
+    prerequisites: [iron, mechanical_power]
+    invention_rate: 0.2
+    used_with: size
+    unlocks: ""
+    effects: {production: 1.05, production_min_population: 0, military: 1.5}
+  coal_mining:
+    label: coal mining
+    resources: [coal]
+    category: building
+    prerequisites: [iron, mechanical_power]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {}
+  steam_power:
+    label: steam power
+    resources: []
+    category: building
+    prerequisites: [coal_mining, steel, printing]
+    invention_rate: 0.1
+    used_with: size
+    unlocks: ""
+    effects: {production: 2.0, production_min_population: 0}
+  railways_steamships:
+    label: railways and steamships
+    resources: []
+    category: other
+    prerequisites: [steam_power]
+    invention_rate: 0.3
+    used_with: size
+    unlocks: ""
+    effects: {migration_radius: 2, sea_steps: 3, trade_range: 3.0, raid_range: 2.0}
+  synthetic_fertilizers:
+    label: synthetic fertilizers
+    resources: []
+    category: subsistence
+    prerequisites: [chemistry, steam_power]
+    invention_rate: 0.2
+    used_with: farm
+    unlocks: ""
+    effects: {farm_yield: 2.0}
+  modern_medicine:
+    label: modern medicine
+    resources: []
+    category: other
+    prerequisites: [printing, chemistry]
+    invention_rate: 0.2
+    used_with: size
+    unlocks: ""
+    effects: {famine_mortality: 0.3}
+  electricity:
+    label: electricity
+    resources: []
+    category: building
+    prerequisites: [steam_power, copper_bronze]
+    invention_rate: 0.2
+    used_with: size
+    unlocks: ""
+    effects: {production: 1.5, production_min_population: 0}
+  telecommunication:
+    label: telecommunication
+    resources: []
+    category: building
+    prerequisites: [electricity]
+    invention_rate: 0.2
+    used_with: size
+    unlocks: ""
+    effects: {admin_cap: 3.0, diffusion: 2.0}
+  oil_combustion:
+    label: oil and combustion engines
+    resources: [oil]
+    category: military
+    prerequisites: [steam_power]
+    invention_rate: 0.2
+    used_with: size
+    unlocks: ""
+    effects: {migration_radius: 1, military: 1.5}

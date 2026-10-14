@@ -5,7 +5,7 @@
 run:
   world_seed: 1             # the map (the "world" stream)
   history_seed: 1           # everything else: climate noise, shocks, founders, demography, Mesa
-  years: 11000              # one step = one year
+  years: 12900              # one step = one year; year 0 = the Younger Dryas analogue, year 12,900 = the present
 
 rng:
   # Named child streams of the run's single root seed, one per system.
@@ -253,6 +253,38 @@ world:
     cold_full_c: 4.0
     cold_floor: 0.15          # cold factor never drops below this
 
+  minerals:                   # deposits on land cells (ever land: above the year-0 sea), spec section 5
+    # Each cell's score for a mineral is the weighted mean of these terms, times a clustered noise
+    # factor; the top ``share`` of ever-land cells by score hold a deposit, with an abundance
+    # drawn uniformly in [abundance_min, abundance_max].
+    #   belt      near a convergent plate boundary: exp(-distance / belt_km)  (mountain belts)
+    #   upland    height above present sea level, 0 at 0 m, 1 at upland_m and up
+    #   lowland   1 at present sea level, 0 at lowland_m and up (0 below present sea level)
+    #   stable    away from convergent boundaries: 1 - belt term (old basins)
+    #   sediment  sediment laid down by erosion, 1 at sediment_ref_m and up (above present sea level)
+    #   shelf     below present sea level: land at year 0 that the sea takes (continental shelf)
+    belt_km: 500.0
+    upland_m: 800.0
+    lowland_m: 300.0
+    sediment_ref_m: 10.0
+    noise_frequency: 6.0      # cycles per map width: deposits cluster into fields and districts
+    noise_octaves: 2
+    noise_persistence: 0.5
+    noise_lacunarity: 2.0
+    noise_weight: 0.5         # score x (1 - weight + weight * noise in 0..1)
+    # Access (spec section 5: on the cell, polity control, or trade). Until polities (Round 5)
+    # and trade exist, a settlement has access to a deposit within this many hex steps of its
+    # cell; it works the nearest one. Each mineral a technique needs is looked up on its own.
+    access_radius_cells: 4
+    depletion: false          # deposits do not deplete by default (spec section 5)
+    depletion_per_settlement_year: 0.002  # with depletion on: abundance lost per year per settlement working the deposit
+    types:
+      copper:   {share: 0.03, belt: 1.0, upland: 0.5, lowland: 0.0, stable: 0.0, sediment: 0.0, shelf: 0.0, abundance_min: 0.2, abundance_max: 1.0}
+      tin:      {share: 0.012, belt: 1.0, upland: 0.7, lowland: 0.0, stable: 0.0, sediment: 0.0, shelf: 0.0, abundance_min: 0.2, abundance_max: 1.0}
+      iron_ore: {share: 0.05, belt: 0.6, upland: 0.4, lowland: 0.0, stable: 0.3, sediment: 0.0, shelf: 0.0, abundance_min: 0.2, abundance_max: 1.0}
+      coal:     {share: 0.04, belt: 0.0, upland: 0.0, lowland: 1.0, stable: 0.8, sediment: 0.6, shelf: 0.0, abundance_min: 0.2, abundance_max: 1.0}
+      oil:      {share: 0.03, belt: 0.0, upland: 0.0, lowland: 0.6, stable: 0.4, sediment: 0.8, shelf: 0.3, abundance_min: 0.2, abundance_max: 1.0}
+
 climate:
   sea_level:
     preset: default
@@ -264,7 +296,7 @@ climate:
         - [1500, -31.0]
         - [1750, -13.0]       # second fast pulse
         - [3000, 0.0]
-        - [11000, 0.0]
+        - [12900, 0.0]
       modern_melt:            # same pulse structure, 0 m to +70 m
         - [0, 0.0]
         - [500, 5.83]
@@ -272,7 +304,7 @@ climate:
         - [1500, 33.83]
         - [1750, 54.83]
         - [3000, 70.0]
-        - [11000, 70.0]
+        - [12900, 70.0]
 
   temperature:                # global anomaly, degC, added to world base_temp
     cold_snap_start: 0
@@ -281,10 +313,20 @@ climate:
     cold_snap_depth_max: -3.0
     cold_snap_ramp_years: 200   # recovery after the end
     optimum_start: 3000
-    optimum_end: 6000
+    optimum_end: 7500           # Holocene optimum analogue, years 3,000-7,500
     optimum_peak: 1.0
     optimum_ramp_years: 500
-    late_cooling_end_value: -0.6  # linear trend from optimum_end to the final year
+    late_cooling_end_year: 12900  # slow linear cooling from optimum_end to this year (the present), flat after
+    late_cooling_end_value: -0.6
+    # Short spells added on top of the cooling trend (medieval warm period and Little Ice
+    # Age analogues); each ramps in and out over spell_ramp_years inside its window.
+    warm_spell_start: 11900
+    warm_spell_end: 12200
+    warm_spell_offset: 0.4
+    cold_spell_start: 12200
+    cold_spell_end: 12800
+    cold_spell_offset: -0.5
+    spell_ramp_years: 50
     red_noise_phi: 0.97         # AR(1) coefficient, decades-long swings
     red_noise_sigma: 0.08
 
@@ -450,7 +492,7 @@ events:                       # raw event log (spec sections 11 and 12); logged 
     displayed: 0.0
     departed: 0.0
     gave: 0.0
-    used: 0.0
+    used: 0.0                 # an artifact used; a settlement starting to work a mineral deposit (people)
     broke: 0.0
     fought: 0.0
     won: 0.0
@@ -463,6 +505,7 @@ events:                       # raw event log (spec sections 11 and 12); logged 
     joined: 0.0               # people joining a band of their own lineage
     learned: 0.0              # people in a settlement that gained a technique (by invention or from a neighbour)
     forgot: 0.0               # people in a settlement that lost a technique
+    depleted: 0.0             # a mineral deposit used up (only with world.minerals.depletion on)
 
 output:
   runs_dir: runs
@@ -473,7 +516,15 @@ viz:                          # browser UI only; no effect on the simulation
   render_interval: 10         # years stepped per frame while playing, and per click of Step
   render_interval_max: 100    # slider range
   step_buttons: [1, 10, 100]  # years per click of the step buttons
-  chronicle_lines: 200        # newest event lines shown in the chronicle
+  chronicle_lines: 100        # chronicle lines per page (the log itself keeps every event)
+  lineage_colors: ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]  # lineage overlay: one per founding group, in founders.names order
+  resource_colors:            # resources overlay: one per mineral, and cells with several
+    copper: "#d95f02"
+    tin: "#7f7f7f"
+    iron_ore: "#a6361c"
+    coal: "#1a1a1a"
+    oil: "#7b3294"
+    several: "#e7298a"
   knowledge_color: "#1a9850"  # knowledge overlay: techniques known per cell
   knowledge_vmax: 14.0        # techniques usable where the settlement is
   latent_color: "#762a83"     # latent overlay: techniques held where they cannot be used

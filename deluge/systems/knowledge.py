@@ -18,6 +18,11 @@ strength:
 - latent: it falls only by the much slower ``decay_latent``, and not at all while an
   adjacent settlement practises the technique.
 
+Techniques that need minerals (``resources`` in the graph) are invented, adopted and used
+only with access to each of them: a deposit within ``world.minerals.access_radius_cells``
+of the settlement's cell until polities and trade exist (spec section 5). Held without
+access they are latent. Using one works the nearest deposit in reach (``work_deposits``).
+
 At zero the technique is gone. A settlement has ``practised`` a technique once it used it
 while holding it. Events: ``forgot`` only when a practised technique is lost (latent and
 never-used ones expire silently, counted in ``latent_expired``); ``learned`` only when the
@@ -33,6 +38,7 @@ import numpy as np
 
 from deluge.agents.settlement import MODES
 from deluge.config import KnowledgeConfig
+from deluge.world.worlddata import MINERALS
 
 USED_WITH = ("forage", "herd", "farm", "size", "coast", "always")
 
@@ -42,14 +48,17 @@ class KnowledgeGraph:
     """The technique graph from config, compiled to arrays (column order = ``names``)."""
 
     names: tuple[str, ...]
+    labels: tuple[str, ...]  # chronicle names
     prereq: np.ndarray  # (T, T) bool: prereq[t, p] = p is a prerequisite of t
+    requires: np.ndarray  # (T, minerals) bool: the technique needs access to the mineral (MINERALS order)
     order: tuple[int, ...]  # topological order
     invention_rate: np.ndarray
     used_with: np.ndarray  # index into USED_WITH
     unlocks: np.ndarray  # mode index unlocked, -1 for none
     effect: dict  # effect name -> (T,) array; multipliers default 1, additive effects 0
 
-    MULTIPLIERS = ("farm_yield", "herd_yield", "river_farm_yield", "production", "spoilage", "drought_loss")
+    MULTIPLIERS = ("farm_yield", "herd_yield", "river_farm_yield", "production", "spoilage", "drought_loss",
+                   "diffusion", "famine_mortality")
     ADDITIVE = ("migration_radius", "sea_steps", "production_min_population")
 
     @classmethod
@@ -58,11 +67,16 @@ class KnowledgeGraph:
         index = {n: i for i, n in enumerate(names)}
         T = len(names)
         prereq = np.zeros((T, T), dtype=bool)
+        requires = np.zeros((T, len(MINERALS)), dtype=bool)
         for n, tc in cfg.techniques.items():
             for p in tc.prerequisites:
                 if p not in index:
                     raise KeyError(f"technique {n}: unknown prerequisite {p}")
                 prereq[index[n], index[p]] = True
+            for r in tc.resources:
+                if r not in MINERALS:
+                    raise KeyError(f"technique {n}: unknown resource {r}; one of {MINERALS}")
+                requires[index[n], MINERALS.index(r)] = True
             if tc.used_with not in USED_WITH:
                 raise ValueError(f"technique {n}: used_with must be one of {USED_WITH}")
             if tc.unlocks and tc.unlocks not in MODES:
@@ -82,7 +96,9 @@ class KnowledgeGraph:
         effect["store_cap_years"] = np.array([cfg.techniques[n].effects.get("store_cap_years", np.nan) for n in names])
         return cls(
             names=names,
+            labels=tuple(cfg.techniques[n].label for n in names),
             prereq=prereq,
+            requires=requires,
             order=tuple(order),
             invention_rate=np.array([cfg.techniques[n].invention_rate for n in names]),
             used_with=np.array([USED_WITH.index(cfg.techniques[n].used_with) for n in names]),
@@ -131,16 +147,32 @@ def _by_used_with(model, ids: np.ndarray, columns: np.ndarray) -> np.ndarray:
     return columns[:, model.knowledge.used_with]
 
 
+def resource_access(model, ids: np.ndarray) -> np.ndarray:
+    """(S, minerals) bool: the settlement has access to a deposit of the mineral.
+
+    Spec section 5: access by sitting on a deposit cell, by polity control of one, or by
+    trade with a settlement that has access. Until polities (Round 5) and trade exist, a
+    deposit within ``world.minerals.access_radius_cells`` of the settlement's cell gives
+    access (``model.deposit_source``)."""
+    return model.deposit_source[model.settlements.cell[ids]] >= 0
+
+def resources_met(model, ids: np.ndarray) -> np.ndarray:
+    """(S, T) bool: the settlement has access to every mineral the technique needs."""
+    lacking = (~resource_access(model, ids)).astype(np.int64)
+    return (lacking @ model.knowledge.requires.T.astype(np.int64)) == 0
+
+
 def usable_mask(model, ids: np.ndarray) -> np.ndarray:
     """(S, T) bool: the technique can be used where the settlement is. Sailing needs a
-    coast, herding and farming techniques need some capacity for their mode on the cell;
-    everything else (size-tied techniques included) is usable anywhere."""
+    coast, herding and farming techniques need some capacity for their mode on the cell,
+    techniques that need minerals need access to them; everything else (size-tied
+    techniques included) is usable anywhere."""
     cells = model.settlements.cell[ids]
     ok = np.ones((len(ids), len(USED_WITH)), dtype=bool)
     ok[:, 1] = model.capacity["herd"][cells] > 0
     ok[:, 2] = model.capacity["farm"][cells] > 0
     ok[:, 4] = model.is_coast[cells]
-    return _by_used_with(model, ids, ok)
+    return _by_used_with(model, ids, ok) & resources_met(model, ids)
 
 
 def used_mask(model, ids: np.ndarray) -> np.ndarray:
@@ -161,6 +193,40 @@ def neighbour_counts(model, ids: np.ndarray, flags: np.ndarray) -> np.ndarray:
     per_cell = np.zeros((model.geom.n_cells + 1, flags.shape[1]), dtype=np.int64)
     per_cell[t.cell[ids]] = flags
     return per_cell[model.geom.neighbors[t.cell[ids]]].sum(axis=1)  # -1 reads the zero padding row
+
+
+def work_deposits(model, ids: np.ndarray, in_use: np.ndarray) -> None:
+    """Settlements using a technique that needs a mineral work the nearest deposit of it in reach.
+    The first year a settlement works a deposit is a `used` event (deposit, settlement).
+    With `world.minerals.depletion` on, each working settlement takes
+    `depletion_per_settlement_year` of the deposit's abundance a year; an exhausted
+    deposit is a `depleted` event and is gone."""
+    t, g = model.settlements, model.knowledge
+    working = (in_use.astype(np.int64) @ g.requires.astype(np.int64)) > 0  # (S, minerals)
+    working &= resource_access(model, ids)
+    if not working.any():
+        return
+    source = model.deposit_source[t.cell[ids]]  # (S, minerals): the deposit cell each works
+    for i, m in zip(*np.nonzero(working & (t.works[ids] != source))):
+        sid, cell = int(ids[i]), int(source[i, m])
+        t.works[sid, m] = cell
+        model.log_event("used", [("deposit", deposit_id(cell, int(m))), ("settlement", sid)], cell,
+                        float(t.population[sid]))
+    mc = model.config.world.minerals
+    if mc.depletion:
+        for i, m in zip(*np.nonzero(working)):
+            cell = int(source[i, m])
+            if model.deposits[cell, m] == 0.0:
+                continue  # used up earlier this year by another settlement
+            model.deposits[cell, m] = max(model.deposits[cell, m] - mc.depletion_per_settlement_year, 0.0)
+            if model.deposits[cell, m] == 0.0:
+                model.log_event("depleted", [("deposit", deposit_id(cell, int(m)))], cell, 0.0)
+        model.update_deposits()
+
+
+def deposit_id(cell: int, mineral: int) -> int:
+    """Local id of the deposit of `mineral` (MINERALS index) on `cell`."""
+    return cell * len(MINERALS) + mineral
 
 
 def run(model) -> None:
@@ -200,6 +266,7 @@ def run(model) -> None:
         practised = practised & ~lost
         t.knows[ids] = knows
     t.practised[ids] = practised
+    work_deposits(model, ids, knows & used)
 
     # Invention.
     prereq_share = np.where(g.prereq.sum(axis=1) > 0,
@@ -210,13 +277,17 @@ def run(model) -> None:
             * (pop[:, None] / k.invention_reference_population) ** k.invention_population_exponent
             * (1.0 + k.division_of_labor_invention_bonus * dol[:, None])
             * prereq_share ** k.invention_prerequisite_exponent)
-    invented = ~knows & (rng.random(knows.shape) < odds)
+    # Techniques that need minerals are only invented or adopted with access to them.
+    access = resources_met(model, ids)
+    invented = ~knows & access & (rng.random(knows.shape) < odds)
 
     # Diffusion from adjacent settlements.
     contacts = neighbour_counts(model, ids, knows)
     openness = model.lineage_openness[t.lineage[ids]]
-    p = 1.0 - (1.0 - np.clip(k.diffusion_rate * openness, 0.0, 1.0))[:, None] ** contacts
-    adopted = ~knows & ~invented & g.prerequisites_met(knows) & (contacts > 0) & (rng.random(knows.shape) < p)
+    rate = k.diffusion_rate * openness * g.multiplier(knows, "diffusion")
+    p = 1.0 - (1.0 - np.clip(rate, 0.0, 1.0))[:, None] ** contacts
+    adopted = (~knows & ~invented & access & g.prerequisites_met(knows) & (contacts > 0)
+               & (rng.random(knows.shape) < p))
 
     gained = invented | adopted
     if gained.any():

@@ -40,6 +40,7 @@ from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
 from deluge.world.climate import ClimateShocks, sea_level_curve, temp_anomaly_series
 from deluge.world.grid import HexGeometry, as_field, build_mesa_grid, hex_area_km2, hex_unit_km
+from deluge.world.worlddata import MINERALS
 
 PHASES: tuple[Callable[[DelugeModel], None], ...] = (
     climate.run,
@@ -106,6 +107,11 @@ class DelugeModel(mesa.Model):
         # Cells that are land at some point of the run; all others stay sea throughout.
         self.ever_land = np.flatnonzero(self.elevation_flat >= self.sea_level_series.min())
         self.ever_land_neighbors = self.geom.neighbors[self.ever_land]
+        # Mineral deposits: (cells, minerals) abundance, 0 = none. Static unless depletion is on.
+        self.deposits = self.world.deposits().copy()
+        self.resources_layer = PropertyLayer.from_data("resources", as_field(self.geom, np.zeros(self.geom.n_cells)))
+        self.grid.add_property_layer(self.resources_layer)
+        self.update_deposits()
         self.carrying_capacity = CarryingCapacity(cfg.capacity, self.world, self.cell_area_km2,
                                                   self.ever_land)
 
@@ -128,7 +134,7 @@ class DelugeModel(mesa.Model):
         # People and knowledge.
         self.knowledge = KnowledgeGraph.from_config(cfg.knowledge)
         self.events = EventLog(cfg.events.min_magnitude)
-        self.settlements = SettlementTable(len(self.knowledge.names))
+        self.settlements = SettlementTable(len(self.knowledge.names), n_minerals=len(MINERALS))
         self.settlement_agents: dict[int, Settlement] = {}
         self.occupant = np.full(self.geom.n_cells, -1, dtype=np.int64)  # settlement id per cell
         self.forage_health = np.ones(self.geom.n_cells)  # 1 = forage untouched by overuse
@@ -148,6 +154,8 @@ class DelugeModel(mesa.Model):
         self.grid.add_property_layer(self.knowledge_layer)
         self.latent_layer = PropertyLayer.from_data("latent_knowledge", as_field(self.geom, np.zeros(self.geom.n_cells)))
         self.grid.add_property_layer(self.latent_layer)
+        self.lineage_layer = PropertyLayer.from_data("lineage", as_field(self.geom, np.zeros(self.geom.n_cells)))
+        self.grid.add_property_layer(self.lineage_layer)
         self._update_people_summary()
 
         self.datacollector = make_datacollector(self.lineages.names)
@@ -211,6 +219,22 @@ class DelugeModel(mesa.Model):
         out[t.cell[ids]] = t.population[ids]
         return out
 
+    def update_deposits(self) -> None:
+        """Recompute, from ``deposits``, what each cell can reach and the resources layer.
+
+        ``deposit_source``: (cells, minerals), the nearest deposit cell of each mineral
+        within ``world.minerals.access_radius_cells`` hex steps, -1 if none (spec section 5
+        access, until polities and trade exist). Resources layer: 0 no deposit,
+        1..len(MINERALS) one mineral (MINERALS order), len(MINERALS) + 1 several."""
+        has = self.deposits > 0
+        radius = self.config.world.minerals.access_radius_cells
+        self.deposit_source = np.full(has.shape, -1, dtype=np.int64)
+        for m in range(len(MINERALS)):
+            if has[:, m].any():
+                steps, nearest = self.geom.distance_from(has[:, m])
+                self.deposit_source[:, m] = np.where((steps >= 0) & (steps <= radius), nearest, -1)
+        code = np.where(has.sum(axis=1) > 1, len(MINERALS) + 1, has.argmax(axis=1) + 1)
+        self.resources_layer.data[...] = as_field(self.geom, np.where(has.any(axis=1), code, 0).astype(float))
     # --- events and knowledge bookkeeping ---------------------------------------------------
 
     def log_event(self, action: str, actors, place: int, magnitude: float) -> bool:
@@ -244,6 +268,9 @@ class DelugeModel(mesa.Model):
                 self.first_farming_year[lineage] = self.year
         self.techniques_known = float(t.knows[ids].sum(axis=1).mean()) if len(ids) else 0.0
         self.population_layer.data[...] = as_field(self.geom, self.cell_population())
+        lineage = np.zeros(self.geom.n_cells)  # founding group + 1 per settled cell, 0 = nobody
+        lineage[t.cell[ids]] = t.lineage[ids] + 1
+        self.lineage_layer.data[...] = as_field(self.geom, lineage)
         # Techniques per cell: usable where the settlement is, and latent (held, unusable).
         known = np.zeros(self.geom.n_cells)
         latent = np.zeros(self.geom.n_cells)

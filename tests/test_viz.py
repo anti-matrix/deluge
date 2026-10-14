@@ -134,3 +134,25 @@ def test_initial_model_uses_config_seeds():
 def test_app_page_builds():
     assert app.Page is not None
     assert app.SEEDS == ("world_seed", "history_seed")
+
+
+def test_lineage_overlay_colors_each_settlement_by_group(model):
+    """The lineage layer holds founding group + 1 on settled cells (0 elsewhere) and the
+    overlay draws group k in the k-th configured colour."""
+    t = model.settlements
+    ids = t.alive_ids()
+    data = model.lineage_layer.data.ravel()
+    assert (data[t.cell[ids]] == t.lineage[ids] + 1).all()
+    assert (data > 0).sum() == len(ids)
+    renderer = app.make_renderer(model, overlay="lineage")
+    coll = renderer.canvas.collections[-1]
+    cid = mesh_order_to_cid(model.geom)
+    face = coll.get_facecolor()
+    lin = data[cid]
+    for k, color in enumerate(app.VIZ.lineage_colors):
+        if (lin == k + 1).any():
+            np.testing.assert_allclose(face[lin == k + 1], np.tile(to_rgba(color), ((lin == k + 1).sum(), 1)), atol=1e-6)
+    assert (face[lin == 0, 3] == 0).all()
+    assert len(set(app.VIZ.lineage_colors)) == len(app.CONFIG.founders.names)
+    assert "group A" in portrayal.legend_html(app.VIZ, "lineage", app.CONFIG.founders.names)
+    assert "iron ore" in portrayal.legend_html(app.VIZ, "resources", app.CONFIG.founders.names)

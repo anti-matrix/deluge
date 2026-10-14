@@ -16,7 +16,7 @@ from matplotlib.patches import Patch  # noqa: E402
 
 from deluge.config import RenderConfig  # noqa: E402
 from deluge.world.grid import SQRT3, HexGeometry  # noqa: E402
-from deluge.world.worlddata import Terrain, WorldData  # noqa: E402
+from deluge.world.worlddata import MINERALS, Terrain, WorldData  # noqa: E402
 
 TERRAIN_COLORS = {
     Terrain.SEA: "#2b5d8a",
@@ -260,6 +260,31 @@ def categorical_map(geom: HexGeometry, title: str, path: Path, lats: tuple[float
                     legend: list[tuple[str, str]], colors, dpi: int) -> Path:
     fig, ax = _axes(geom, title, dpi)
     _hexes(ax, geom, colors)
+    ax.legend(handles=[Patch(color=c, label=t) for t, c in legend], loc="lower left", fontsize=8,
+              framealpha=0.85)
+    _lat_axis(ax, geom, *lats)
+    return _save(fig, path)
+
+
+def resources_map(geom: HexGeometry, world: WorldData, sea_level: float, title: str, path: Path,
+                  colors: dict, lats: tuple[float, float], dpi: int) -> Path:
+    """Mineral deposits over pale land: one colour per mineral, ``colors['several']``
+    where a cell holds more than one; the coast of ``sea_level`` drawn."""
+    fig, ax = _axes(geom, title, dpi)
+    elev = world.elevation.ravel()
+    land = elev >= sea_level
+    has = world.deposits() > 0
+    cell_colors = np.where(land, LAND_COLOR, SEA_COLOR).astype(object)
+    several = has.sum(axis=1) > 1
+    legend = []
+    for i, m in enumerate(MINERALS):
+        cells = has[:, i] & ~several
+        cell_colors[cells] = colors[m]
+        legend.append((f"{m.replace('_', ' ')} ({int(has[:, i].sum())} cells)", colors[m]))
+    cell_colors[several] = colors["several"]
+    legend.append((f"several ({int(several.sum())} cells)", colors["several"]))
+    _hexes(ax, geom, list(cell_colors))
+    ax.add_collection(LineCollection(_coast_segments(geom, land), colors=COAST_COLOR, linewidths=0.6))
     ax.legend(handles=[Patch(color=c, label=t) for t, c in legend], loc="lower left", fontsize=8,
               framealpha=0.85)
     _lat_axis(ax, geom, *lats)

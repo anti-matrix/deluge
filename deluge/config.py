@@ -252,6 +252,36 @@ class WildFoodConfig:
 
 
 @dataclass(frozen=True)
+class MineralTypeConfig:
+    share: float
+    belt: float
+    upland: float
+    lowland: float
+    stable: float
+    sediment: float
+    shelf: float
+    abundance_min: float
+    abundance_max: float
+
+
+@dataclass(frozen=True)
+class MineralsConfig:
+    belt_km: float
+    upland_m: float
+    lowland_m: float
+    sediment_ref_m: float
+    noise_frequency: float
+    noise_octaves: int
+    noise_persistence: float
+    noise_lacunarity: float
+    noise_weight: float
+    access_radius_cells: int
+    depletion: bool
+    depletion_per_settlement_year: float
+    types: Mapping[str, MineralTypeConfig]
+
+
+@dataclass(frozen=True)
 class WorldConfig:
     source: str
     lat_south: float
@@ -275,6 +305,7 @@ class WorldConfig:
     terrain: TerrainConfig
     fertility: FertilityConfig
     wild_food: WildFoodConfig
+    minerals: MineralsConfig
 
 
 # --- climate over time ------------------------------------------------------------------------
@@ -297,7 +328,15 @@ class TempAnomalyConfig:
     optimum_end: int
     optimum_peak: float
     optimum_ramp_years: int
+    late_cooling_end_year: int
     late_cooling_end_value: float
+    warm_spell_start: int
+    warm_spell_end: int
+    warm_spell_offset: float
+    cold_spell_start: int
+    cold_spell_end: int
+    cold_spell_offset: float
+    spell_ramp_years: int
     red_noise_phi: float
     red_noise_sigma: float
 
@@ -431,6 +470,8 @@ class MigrationConfig:
 
 @dataclass(frozen=True)
 class TechniqueConfig:
+    label: str
+    resources: tuple[str, ...]
     category: str
     prerequisites: tuple[str, ...]
     invention_rate: float
@@ -501,6 +542,8 @@ class VizConfig:
     render_interval_max: int
     step_buttons: tuple[int, ...]
     chronicle_lines: int
+    lineage_colors: tuple[str, ...]
+    resource_colors: Mapping[str, str]
     knowledge_color: str
     knowledge_vmax: float
     latent_color: str
