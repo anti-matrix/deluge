@@ -162,6 +162,21 @@ class HexGeometry:
                     queue.append(n)
         return np.asarray(st, dtype=np.int64), np.asarray(ne, dtype=np.int64)
 
+    @cached_property
+    def axial(self) -> tuple[np.ndarray, np.ndarray]:
+        """Axial coordinates (q, r) of every cell, for the layout with even rows shifted
+        right ("even-r")."""
+        x, y = self.coords
+        return x - (y + (y & 1)) // 2, y
+
+    def hex_distance(self, a, b) -> np.ndarray:
+        """Hex steps between cells ``a`` and ``b`` (ids or arrays of ids), ignoring the
+        map edge (non-torus) and what lies between."""
+        q, r = self.axial
+        dq = q[a] - q[b]
+        dr = r[a] - r[b]
+        return (np.abs(dq) + np.abs(dr) + np.abs(dq + dr)) // 2
+
     def hex_vertices(self) -> np.ndarray:
         """(n_cells, 6, 2) polygon vertices for drawing, pointy-top hexes of size 1."""
         angles = np.deg2rad(np.array([90, 30, -30, -90, -150, 150], dtype=float))

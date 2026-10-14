@@ -84,6 +84,13 @@ Also available: `mesa.discrete_space.FixedAgent` (an agent that never moves), `m
 - **Browser UI (Round 2):** the spec names `SolaraViz` as the UI. Its layout grid does not render with the installed solara / ipyvue 3 (see Visualization above), so `deluge/viz/app.py` is a Solara `Page` built from Mesa's visualization components; the map itself is Mesa's `SpaceRenderer`, not a custom renderer.
 - **Sea flag layer (Round 2):** the model keeps the year's sea flag as a `sea` PropertyLayer on the grid (spec section 4 lists the sea flag as a cell field), updated in place by the climate phase. The UI draws it over the terrain layer.
 
+- **Two seeds (Round 3):** `run.world_seed` draws the map (the "world" stream), `run.history_seed` every other stream including Mesa's. Both are in run metadata; the UI has a control for each.
+- **Settlement state (Round 3):** settlements are Mesa `CellAgent`s (placed with `agent.cell = grid[(x, y)]`, moved the same way, removed with `agent.remove()`), but their numbers live in a NumPy `SettlementTable` so yearly demography is vectorized. At most one settlement per cell (the spec's "free neighboring cell").
+- **Drowned bands (Round 3):** bands whose cell the sea took move at the start of phase 3, before they eat, rather than in phase 4; otherwise a slow sea rise would starve them for a year.
+- **Famine migration (Round 3):** starving forager bands move whole to a free cell or, where the land around is full, into a band of their own lineage with more food per head. Bands never merge across lineages.
+- **Migration danger (Round 3):** the spec's cell utility includes danger; there is no war until Round 6, so the utility uses food, distance and crowding only.
+- **Forager density (Round 3):** foraging capacity is scaled by `capacity.forage.density_scale` (0.11), below the spec's 0.1-1 person/km2; see docs/ROUND12_NOTES.md.
+
 ## Mesa grid performance at 160 x 96 (Round 1 rework)
 
 - `HexGrid((160, 96))` with seven static property layers is built once per model; most model setup time is world generation, not Mesa.

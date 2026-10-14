@@ -17,14 +17,15 @@ def test_default_config_loads():
 def test_config_is_frozen():
     cfg = load_config()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cfg.run.seed = 1  # type: ignore[misc]
+        cfg.run.history_seed = 1  # type: ignore[misc]
 
 
 def test_overrides_return_new_config():
     cfg = load_config()
-    other = cfg.with_overrides({"run": {"seed": 7}})
-    assert other.run.seed == 7
-    assert cfg.run.seed == 42
+    other = cfg.with_overrides({"run": {"history_seed": 7}})
+    assert other.run.history_seed == 7
+    assert cfg.run.history_seed == 1
+    assert other.run.world_seed == cfg.run.world_seed
     assert other.run.years == cfg.run.years
     assert other.hash() != cfg.hash()
 

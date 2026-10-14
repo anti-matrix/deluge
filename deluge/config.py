@@ -36,7 +36,8 @@ class FrozenDict(dict):
 
 @dataclass(frozen=True)
 class RunConfig:
-    seed: int
+    world_seed: int
+    history_seed: int
     years: int
 
 
@@ -331,6 +332,7 @@ class ClimateConfig:
 class ForageConfig:
     min_density: float
     max_density: float
+    density_scale: float
     coast_bonus: float
     temp_zero_c: float
     temp_full_c: float
@@ -369,6 +371,48 @@ class CapacityConfig:
     farm: FarmConfig
 
 
+# --- people -----------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FoundersConfig:
+    names: tuple[str, ...]
+    population_min: int
+    population_max: int
+    capacity_top_share: float
+    min_distance_cells: int
+    min_landmasses: int
+    max_attempts: int
+    pinned_cells: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class DemographyConfig:
+    forage_abundance: float
+    forage_max_growth: float
+    famine_mortality: float
+    famine_max_mortality: float
+    demographic_turnover: float
+    store_cap_years: float
+    spoilage: float
+    min_population: float
+    wild_food_degrade: float
+    wild_food_recover: float
+    wild_food_floor: float
+
+
+@dataclass(frozen=True)
+class MigrationConfig:
+    split_threshold: float
+    split_fraction: float
+    split_retry_years: int
+    search_radius: int
+    distance_cost: float
+    crowding_cost: float
+    min_found_food_ratio: float
+    famine_move_ratio: float
+
+
 # --- output and rendering ----------------------------------------------------------------------
 
 
@@ -386,6 +430,9 @@ class VizConfig:
     step_buttons: tuple[int, ...]
     seed_min: int
     seed_max: int
+    population_color: str
+    population_vmax: float
+    population_alpha_curve: float
     figure_width_in: float
     figure_height_in: float
     figure_dpi: int
@@ -403,6 +450,9 @@ class RenderConfig:
     river_width_max: float
     coast_linewidth: float
     flood_years: tuple[int, ...]
+    population_years: tuple[int, ...]
+    population_density_min: float
+    population_density_max: float
 
 
 @dataclass(frozen=True)
@@ -413,6 +463,9 @@ class Config:
     world: WorldConfig
     climate: ClimateConfig
     capacity: CapacityConfig
+    founders: FoundersConfig
+    demography: DemographyConfig
+    migration: MigrationConfig
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig
@@ -426,7 +479,7 @@ class Config:
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def with_overrides(self, overrides: dict[str, Any]) -> Config:
-        """Return a new Config with nested overrides applied, e.g. {"run": {"seed": 7}}."""
+        """Return a new Config with nested overrides applied, e.g. {"run": {"history_seed": 7}}."""
         return _convert(Config, _deep_merge(self.to_dict(), overrides), "config")
 
 

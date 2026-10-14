@@ -10,3 +10,5 @@ Likely contributors to check first:
 - `capacity.forage.max_density` (1.0) and `capacity.farm.max_density` (50.0) are the upper ends of the spec's ranges and apply to large shares of land.
 
 Not changed yet, by decision: calibrate in Round 12 against the section 14 targets.
+
+**Round 3 interim calibration (foraging only):** `capacity.forage.density_scale: 0.11` scales foraging capacity so world seed 1 supports about 7.6 M foragers at year 0 (68.8 M before, measured with history seed 1's cold-snap anomaly of -3.1 °C). Effective forager densities are now 0.011-0.11 people/km², below the spec's 0.1-1. Herding and farming are unchanged; recalibrate them in Round 12.

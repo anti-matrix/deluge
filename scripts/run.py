@@ -1,6 +1,6 @@
 """Headless single run.
 
-    python scripts/run.py --config configs/default.yaml --seed 42
+    python scripts/run.py --config configs/default.yaml --world-seed 1 --history-seed 42
 
 Writes runs/<run_id>/model.parquet and runs/<run_id>/meta.json.
 """
@@ -47,20 +47,23 @@ def rng_fingerprint(model: DelugeModel) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
-    parser.add_argument("--seed", type=int, default=None, help="overrides run.seed")
+    parser.add_argument("--world-seed", type=int, default=None, help="overrides run.world_seed (the map)")
+    parser.add_argument("--history-seed", type=int, default=None, help="overrides run.history_seed")
     parser.add_argument("--years", type=int, default=None, help="overrides run.years")
     parser.add_argument("--out", default=None, help="run directory (default: <runs_dir>/<run_id>)")
     args = parser.parse_args(argv)
 
     overrides = {}
-    if args.seed is not None:
-        overrides["seed"] = args.seed
+    if args.world_seed is not None:
+        overrides["world_seed"] = args.world_seed
+    if args.history_seed is not None:
+        overrides["history_seed"] = args.history_seed
     if args.years is not None:
         overrides["years"] = args.years
     cfg = load_config(args.config, {"run": overrides} if overrides else None)
 
     started = datetime.now(timezone.utc)
-    run_id = f"{started:%Y%m%dT%H%M%S}_seed{cfg.run.seed}"
+    run_id = f"{started:%Y%m%dT%H%M%S}_w{cfg.run.world_seed}_h{cfg.run.history_seed}"
     out_dir = Path(args.out) if args.out else REPO_ROOT / cfg.output.runs_dir / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     model.datacollector.get_model_vars_dataframe().to_parquet(out_dir / "model.parquet", index=True)
     meta = {
         "run_id": run_id,
-        "seed": cfg.run.seed,
+        "world_seed": cfg.run.world_seed,
+        "history_seed": cfg.run.history_seed,
         "years": cfg.run.years,
         "final_year": model.year,
         "config_path": str(Path(args.config).resolve()),

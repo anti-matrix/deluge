@@ -7,10 +7,11 @@ import pandas as pd
 
 from deluge.model import DelugeModel
 
-# Round 0 required 11,000 *empty* steps in under 5 s. The steps now run the climate and
-# capacity phases (about 6.4 s at 160 x 96 on the dev machine); this guard catches regressions while
-# leaving room on slower CPUs. The spec's overall budget is 10 minutes per run.
-FULL_RUN_BUDGET_S = 10.0
+# Round 0 required 11,000 *empty* steps in under 5 s. Since Round 3 the steps run climate,
+# capacity, subsistence, demography and migration (about 46 s at 160 x 96 on the dev
+# machine, world seed 1); this guard catches regressions while leaving room on slower CPUs.
+# The spec's overall budget is 10 minutes per run.
+FULL_RUN_BUDGET_S = 120.0
 
 
 def test_model_is_mesa_model():
@@ -20,7 +21,7 @@ def test_model_is_mesa_model():
 
 
 def test_full_run_steps_and_budget():
-    m = DelugeModel(seed=3)
+    m = DelugeModel(world_seed=3, history_seed=3)
     t0 = time.perf_counter()
     m.run()
     elapsed = time.perf_counter() - t0
@@ -33,7 +34,7 @@ def test_full_run_steps_and_budget():
 
 
 def test_same_seed_identical_output():
-    a, b = DelugeModel(seed=3, years=500), DelugeModel(seed=3, years=500)
+    a, b = DelugeModel(world_seed=3, history_seed=3, years=500), DelugeModel(world_seed=3, history_seed=3, years=500)
     a.run()
     b.run()
     pd.testing.assert_frame_equal(
@@ -47,7 +48,7 @@ def test_same_seed_identical_output():
 
 
 def test_different_seeds_differ():
-    a, b = DelugeModel(seed=3, years=50), DelugeModel(seed=4, years=50)
+    a, b = DelugeModel(world_seed=3, history_seed=3, years=50), DelugeModel(world_seed=4, history_seed=4, years=50)
     a.run()
     b.run()
     assert not np.array_equal(a.world.elevation, b.world.elevation)
@@ -55,7 +56,7 @@ def test_different_seeds_differ():
 
 
 def test_yearly_state_follows_sea_level():
-    m = DelugeModel(seed=3, years=3001)
+    m = DelugeModel(world_seed=3, history_seed=3, years=3001)
     m.run()
     df = m.datacollector.get_model_vars_dataframe().set_index("year")
     assert df.loc[0, "sea_level"] == -60.0
@@ -67,14 +68,14 @@ def test_yearly_state_follows_sea_level():
 
 
 def test_mesa_grid_carries_world_layers():
-    m = DelugeModel(seed=3, years=1)
+    m = DelugeModel(world_seed=3, history_seed=3, years=1)
     cell = m.grid._cells[(10, 20)]
     assert cell.elevation == m.world.elevation[10, 20]
     assert cell.terrain == m.world.terrain[10, 20]
 
 
 def test_model_pickles():
-    m = DelugeModel(seed=3, years=20)
+    m = DelugeModel(world_seed=3, history_seed=3, years=20)
     m.run()
     clone = pickle.loads(pickle.dumps(m))
     np.testing.assert_array_equal(clone.world.elevation, m.world.elevation)

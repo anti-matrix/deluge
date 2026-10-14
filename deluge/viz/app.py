@@ -3,8 +3,9 @@
     solara run deluge/viz/app.py
 
 Shows the hex map (terrain, with the year's sea drawn over it), Mesa's play / pause /
-step / reset controls, buttons that step 1, 10 or 100 years, a year counter and the sea
-level curve so far. The seed slider takes effect on Reset.
+step / reset controls, buttons that step 1, 10 or 100 years, a year counter, the sea
+level curve and population per founding group so far. The world seed (the map) and the
+history seed sliders take effect on Reset. People per cell are drawn over the map.
 
 Built from Mesa's own visualization pieces (SpaceRenderer and its component,
 ModelController, ModelCreator, the plot component) in a plain Solara layout rather than
@@ -44,24 +45,27 @@ def make_renderer(model: DelugeModel) -> SpaceRenderer:
     15,000 cells they would hide the map). The axes styling only depends on the grid
     size, which is the same for every seed, so Mesa can reuse it after a Reset."""
     renderer = SpaceRenderer(model, backend="matplotlib")
-    renderer.setup_propertylayer(portrayal.map_layer_style)
+    renderer.setup_propertylayer(portrayal.make_layer_style(VIZ))
     renderer.post_process = portrayal.make_axes_styler(model, VIZ)
     renderer.draw_propertylayer()
     return renderer
 
 
 MODEL_PARAMS = {
-    "seed": {
+    name: {
         "type": "SliderInt",
-        "label": "Seed (applies on Reset)",
-        "value": CONFIG.run.seed,
+        "label": label,
+        "value": getattr(CONFIG.run, name),
         "min": VIZ.seed_min,
         "max": VIZ.seed_max,
         "step": 1,
-    },
+    }
+    for name, label in (("world_seed", "World seed: the map (applies on Reset)"),
+                        ("history_seed", "History seed (applies on Reset)"))
 }
 
 _sea_level_plot, _ = make_plot_component("sea_level")
+_population_plot, _ = make_plot_component([f"pop_{name}" for name in CONFIG.founders.names])
 
 
 @solara.component
@@ -88,9 +92,11 @@ def StepButtons(model: DelugeModel):
 
 
 @solara.component
-def SeaLevelPlot(model: DelugeModel):
+def Plots(model: DelugeModel):
     update_counter.get()
-    _sea_level_plot(model)
+    with solara.Row():
+        _sea_level_plot(model)
+        _population_plot(model)
 
 
 @solara.component
@@ -109,7 +115,7 @@ def Page():
         Controls(model, renderer, model_parameters, play_interval, render_interval, use_threads)
         with solara.Column():
             SpaceRendererComponent(model.value, renderer.value)
-            SeaLevelPlot(model.value)
+            Plots(model.value)
 
 
 @solara.component
@@ -130,5 +136,5 @@ def Controls(model, renderer, model_parameters, play_interval, render_interval, 
             Status(model.value)
 
 
-initial_model = DelugeModel(seed=CONFIG.run.seed)
+initial_model = DelugeModel(world_seed=CONFIG.run.world_seed, history_seed=CONFIG.run.history_seed)
 initial_renderer = make_renderer(initial_model)

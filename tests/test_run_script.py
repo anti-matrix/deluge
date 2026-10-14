@@ -16,7 +16,7 @@ RUN = REPO_ROOT / "scripts" / "run.py"
 
 def _run(out_dir: Path, seed: int) -> tuple[pd.DataFrame, dict]:
     subprocess.run(
-        [sys.executable, str(RUN), "--seed", str(seed), "--out", str(out_dir)],
+        [sys.executable, str(RUN), "--world-seed", str(seed), "--history-seed", str(seed), "--out", str(out_dir)],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
@@ -32,6 +32,7 @@ def test_run_script_acceptance(tmp_path):
     df_c, meta_c = _run(tmp_path / "c", seed=4)
 
     assert meta_a["final_year"] == 11000
+    assert (meta_a["world_seed"], meta_a["history_seed"]) == (3, 3)
     assert len(df_a) == 11000
     # The budget covers the yearly steps; world generation is reported separately.
     assert meta_a["step_seconds"] < FULL_RUN_BUDGET_S, f"steps took {meta_a['step_seconds']:.2f}s"

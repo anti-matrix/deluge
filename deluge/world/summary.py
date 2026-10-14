@@ -27,7 +27,7 @@ class BridgeSummary:
 
 @dataclass
 class WorldSummary:
-    seed: int
+    world_seed: int
     attempts: int
     cell_km: float  # flat-to-flat hex width
     cell_area_km2: float
@@ -87,7 +87,7 @@ def summarize(cfg: Config, world: WorldData, report: GenerationReport, years=(10
     shares = {t.key: float((terrain == t).sum() / land0.sum()) for t in Terrain if t != Terrain.SEA}
     above0 = e[land0]
     return WorldSummary(
-        seed=cfg.run.seed,
+        world_seed=cfg.run.world_seed,
         attempts=report.attempts,
         cell_km=float(np.sqrt(3) * unit_km),
         cell_area_km2=float(area),

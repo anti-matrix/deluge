@@ -3,13 +3,15 @@
 The map is drawn by Mesa's own ``SpaceRenderer`` (matplotlib backend), which draws every
 property layer of the HexGrid as a PolyCollection on its hex mesh. Its mesh shifts even
 rows right, like Mesa's connectivity and ``deluge.world.grid``; it does not use
-``cell.position`` (see docs/MESA_API_NOTES.md). Two layers are drawn: terrain, then the
-year's sea on top of it. Everything here only reads model state.
+``cell.position`` (see docs/MESA_API_NOTES.md). Three layers are drawn, in the order
+the model added them: terrain, the year's sea over it, and people per cell on top.
+Everything here only reads model state.
 """
 
 from __future__ import annotations
 
-from matplotlib.colors import ListedColormap
+import numpy as np
+from matplotlib.colors import ListedColormap, to_rgb
 from mesa.visualization.components import PropertyLayerStyle
 
 from deluge.config import VizConfig
@@ -17,19 +19,38 @@ from deluge.world.render import SEA_COLOR, TERRAIN_COLORS, _lat_axis
 from deluge.world.worlddata import Terrain
 
 TERRAIN_CMAP = ListedColormap([TERRAIN_COLORS[t] for t in Terrain], name="terrain_classes")
-MAP_LAYERS = ("terrain", "sea")
+MAP_LAYERS = ("terrain", "sea", "population")
 
 
-def map_layer_style(layer) -> PropertyLayerStyle | None:
-    """PropertyLayerStyle for the layers the map draws; None hides all other layers."""
-    if layer.name == "terrain":
-        # One colour per class: class k spans [k - 0.5, k + 0.5).
-        return PropertyLayerStyle(colormap=TERRAIN_CMAP, alpha=1.0, colorbar=False,
-                                  vmin=-0.5, vmax=len(Terrain) - 0.5)
-    if layer.name == "sea":
-        # Mesa maps the value to opacity: sea (1) fully covers the terrain, land (0) is clear.
-        return PropertyLayerStyle(color=SEA_COLOR, alpha=1.0, colorbar=False, vmin=0.0, vmax=1.0)
-    return None
+def population_cmap(vcfg: VizConfig, n: int = 256) -> ListedColormap:
+    """One colour whose opacity rises like log(1 + c x): Mesa normalizes layer values
+    linearly, so this keeps bands of a few hundred people visible next to full cells."""
+    x = np.linspace(0.0, 1.0, n)
+    c = vcfg.population_alpha_curve
+    alpha = np.log1p(c * x) / np.log1p(c)
+    rgb = np.tile(to_rgb(vcfg.population_color), (n, 1))
+    return ListedColormap(np.column_stack([rgb, alpha]), name="population")
+
+
+def make_layer_style(vcfg: VizConfig):
+    """``fn(layer) -> PropertyLayerStyle | None`` for the layers the map draws; None
+    hides all other layers."""
+    pop_cmap = population_cmap(vcfg)
+
+    def style(layer) -> PropertyLayerStyle | None:
+        if layer.name == "terrain":
+            # One colour per class: class k spans [k - 0.5, k + 0.5).
+            return PropertyLayerStyle(colormap=TERRAIN_CMAP, alpha=1.0, colorbar=False,
+                                      vmin=-0.5, vmax=len(Terrain) - 0.5)
+        if layer.name == "sea":
+            # Mesa maps the value to opacity: sea (1) fully covers the terrain, land (0) is clear.
+            return PropertyLayerStyle(color=SEA_COLOR, alpha=1.0, colorbar=False, vmin=0.0, vmax=1.0)
+        if layer.name == "population":
+            return PropertyLayerStyle(colormap=pop_cmap, alpha=1.0, colorbar=False,
+                                      vmin=0.0, vmax=vcfg.population_vmax)
+        return None
+
+    return style
 
 
 def make_axes_styler(model, vcfg: VizConfig):
@@ -65,6 +86,9 @@ def status_text(model) -> str:
         f"Sea level: {model.sea_level_series[year]:+.1f} m",
         f"Land cells: {int(model.is_sea.size - model.is_sea.sum()):,}",
         f"Temperature anomaly: {model.temp_anomaly:+.2f} °C",
-        f"Seed: {model.config.run.seed}",
+        f"Population: {model.population:,.0f} in {model.n_settlements:,} settlements",
+        "By group: " + ", ".join(f"{name} {p:,.0f}" for name, p in
+                                 zip(model.lineages.names, model.lineage_population)),
+        f"World seed: {model.config.run.world_seed}, history seed: {model.config.run.history_seed}",
     ]
     return "  \n".join(lines)

@@ -50,8 +50,8 @@ def test_tundra_cannot_be_farmed_and_forages_poorly(worlds, cfg):
 
 
 def test_densities_in_spec_ranges(worlds, cfg):
-    """Where climate is fully suitable: foraging 0.1-1 person/km2, farming on good land
-    (plains with fertile soil) 10-50 person/km2."""
+    """Where climate is fully suitable: foraging 0.1-1 person/km2 before the calibration
+    factor, farming on good land (plains with fertile soil) 10-50 person/km2."""
     c = cfg.capacity
     area = _area(cfg)
     for w in worlds.values():
@@ -60,7 +60,8 @@ def test_densities_in_spec_ranges(worlds, cfg):
         full_forage = (~sea & (t == Terrain.PLAIN)
                        & (ramp(temp, c.forage.temp_zero_c, c.forage.temp_full_c) == 1)
                        & (ramp(rain, c.forage.rain_zero_mm, c.forage.rain_full_mm) == 1))
-        dens = k["forage"][full_forage] / area
+        # Round 3 calibration scales the spec's forager densities by density_scale.
+        dens = k["forage"][full_forage] / area / c.forage.density_scale
         assert dens.min() >= c.forage.min_density - 1e-9
         assert dens.max() <= c.forage.max_density + 1e-9
         good = (~sea & (t == Terrain.PLAIN) & (w.fertility.ravel() > 0.6)

@@ -29,7 +29,7 @@ LANDMASS_COLORS = ["#d95f02", "#1b9e77", "#7570b3", "#e7298a", "#66a61e", "#e6ab
 
 def render_seed(cfg, out: Path, layers: bool) -> dict:
     out.mkdir(parents=True, exist_ok=True)
-    world, report = procedural.generate_world_with_report(cfg, RngStreams(cfg.run.seed, cfg.rng.streams)["world"])
+    world, report = procedural.generate_world_with_report(cfg, RngStreams(cfg.run.world_seed, cfg.rng.streams)["world"])
     model = DelugeModel(config=cfg)  # same seed: same world; used for curves and capacity
     assert np.array_equal(model.world.elevation, world.elevation)
     model.step()  # year 0: climate and capacity
@@ -44,7 +44,7 @@ def render_seed(cfg, out: Path, layers: bool) -> dict:
     marks = [(geom.cid(b.col, b.row), f"bridge drowns yr {b.year_drowned} ({b.crest_m:+.0f} m)")
              for b in summary.bridges if b.during_pulse]
     paths = [
-        render.physical_map(geom, world, sea0, f"Physical map, seed {cfg.run.seed}, year 0 "
+        render.physical_map(geom, world, sea0, f"Physical map, world seed {cfg.run.world_seed}, year 0 "
                             f"(sea level {sea0:+.0f} m)", out / "physical.png", model.unit_km, rc, lats, marks),
         render.flooding_panels(geom, world, {y: float(curve[y]) for y in rc.flood_years}, out / "flooding.png",
                                model.unit_km, model.cell_area_km2, rc, lats, marks),
@@ -90,13 +90,13 @@ def render_seed(cfg, out: Path, layers: bool) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
-    parser.add_argument("--seeds", type=int, nargs="+", default=None)
+    parser.add_argument("--seeds", type=int, nargs="+", default=None, help="world seeds")
     parser.add_argument("--no-layers", action="store_true", help="only the physical and flooding maps")
     args = parser.parse_args(argv)
 
     base = load_config(args.config)
-    for seed in args.seeds or [base.run.seed]:
-        cfg = base.with_overrides({"run": {"seed": seed}})
+    for seed in args.seeds or [base.run.world_seed]:
+        cfg = base.with_overrides({"run": {"world_seed": seed}})
         out = REPO_ROOT / cfg.output.runs_dir / f"maps_seed{seed}"
         data = render_seed(cfg, out, layers=not args.no_layers)
         print(json.dumps({k: v for k, v in data.items() if k != "images"}, indent=1))

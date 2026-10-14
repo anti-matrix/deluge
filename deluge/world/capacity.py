@@ -53,7 +53,8 @@ class CarryingCapacity:
         t, r = temperature[sel], rainfall[sel]
         habitable = ~is_sea[sel] & self.not_ice
         wild = np.minimum(1.0, self.wild + f.coast_bonus * is_coast[sel])
-        forage = self.area * self.forage_suit * (f.min_density + (f.max_density - f.min_density) * wild)
+        forage = self.area * f.density_scale * self.forage_suit * (
+            f.min_density + (f.max_density - f.min_density) * wild)
         local = {
             "forage": forage * ramp(t, f.temp_zero_c, f.temp_full_c) * ramp(r, f.rain_zero_mm, f.rain_full_mm),
             "herd": self.static_herd * ramp(t, h.temp_zero_c, h.temp_full_c)

@@ -3,7 +3,8 @@
 # rejects unknown and missing keys.
 
 run:
-  seed: 42
+  world_seed: 1             # the map (the "world" stream)
+  history_seed: 1           # everything else: climate noise, shocks, founders, demography, Mesa
   years: 11000              # one step = one year
 
 rng:
@@ -25,6 +26,7 @@ rng:
     - war
     - politics
     - memory
+    - founders
 
 grid:
   width: 160
@@ -304,6 +306,7 @@ capacity:                     # densities are people per km2; cell area comes fr
   forage:
     min_density: 0.1
     max_density: 1.0
+    density_scale: 0.11       # calibration (Round 3): year-0 foraging capacity of world seed 1 from 68.8 M to ~7.6 M; see docs/ROUND12_NOTES.md
     coast_bonus: 0.2          # added to wild food on cells next to the year's sea
     temp_zero_c: -20.0
     temp_full_c: 0.0
@@ -358,6 +361,39 @@ capacity:                     # densities are people per km2; cell area comes fr
       tundra: 0.0
       ice: 0.0
 
+founders:                     # the five founding forager groups, placed at year 0 from history_seed
+  names: [A, B, C, D, E]
+  population_min: 100
+  population_max: 250
+  capacity_top_share: 0.3333  # each starts on a land cell in the top third of year-0 foraging capacity
+  min_distance_cells: 25      # hex steps between any two groups
+  min_landmasses: 2           # groups spread over at least this many landmasses
+  max_attempts: 2000          # placement draws before giving up
+  pinned_cells: []            # [[col, row], ...] one per group to pin placement; empty = draw
+
+demography:                   # foraging only until Round 4; food in rations (one person-year of food)
+  forage_abundance: 2.0       # rations a forager can gather per year where food is not limiting
+  forage_max_growth: 0.003    # net growth per year when food per head is at forage_abundance
+  famine_mortality: 1.0       # share of people dying per unit of ration shortfall
+  famine_max_mortality: 0.5   # cap on the yearly famine death share
+  demographic_turnover: 0.07  # births + deaths per person-year: random fluctuation, larger in small groups
+  store_cap_years: 0.1        # foragers store at most this many years of food
+  spoilage: 0.5               # share of the store lost per year
+  min_population: 10          # settlements below this dissolve
+  wild_food_degrade: 0.05     # forage health lost per year per unit of overuse (people / capacity - 1)
+  wild_food_recover: 0.02     # share of the lost health regained per year
+  wild_food_floor: 0.3
+
+migration:
+  split_threshold: 0.5        # a band splits once it reaches this share of its cell's capacity (Round 3 tuning: 0.75 -> 0.5)
+  split_fraction: 0.4         # share of people who leave to found the daughter settlement
+  split_retry_years: 25       # wait before a band that found no place tries again
+  search_radius: 3            # hex steps searched for a new cell (same landmass)
+  distance_cost: 0.1          # utility lost per hex step
+  crowding_cost: 0.05         # utility lost per occupied neighbouring cell
+  min_found_food_ratio: 1.0   # a cell is only settled if expected food per head there is at least this
+  famine_move_ratio: 0.9      # a forager band moves whole when its food per head falls below this
+
 output:
   runs_dir: runs
 
@@ -367,8 +403,11 @@ viz:                          # browser UI only; no effect on the simulation
   render_interval: 10         # years stepped per frame while playing, and per click of Step
   render_interval_max: 100    # slider range
   step_buttons: [1, 10, 100]  # years per click of the step buttons
-  seed_min: 0                 # seed slider range
+  seed_min: 0                 # world and history seed slider range
   seed_max: 999
+  population_color: "#b2182b" # population overlay
+  population_vmax: 2000.0     # people per cell at full opacity
+  population_alpha_curve: 30.0  # opacity = log(1 + c x) / log(1 + c), x = people / vmax: small bands stay visible
   figure_width_in: 12.0
   figure_height_in: 7.0
   figure_dpi: 80
@@ -384,3 +423,6 @@ render:                       # static PNG maps only; no effect on the simulatio
   river_width_max: 3.2        # line width at the world's highest order
   coast_linewidth: 0.7
   flood_years: [0, 1000, 2000, 3000]
+  population_years: [0, 500, 1000, 2000, 3000]   # population-density maps (scripts/render_population.py)
+  population_density_min: 0.001  # people / km2, colour scale
+  population_density_max: 0.2
