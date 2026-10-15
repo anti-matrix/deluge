@@ -4,13 +4,18 @@ Every record is (year, action, actors, place, magnitude):
 
 - ``action`` is a generic verb code from ``ACTIONS``, the only vocabulary the log has.
   The spec's list is extended by ``learned`` and ``forgot`` for techniques gained and
-  lost, and ``depleted`` for a mineral deposit used up (only with depletion switched on).
+  lost, ``depleted`` for a mineral deposit used up (only with depletion switched on), and
+  ``took`` for a settlement taken by conquest.
 - ``actors`` is a tuple of entity ids. An entity id encodes its kind and its local id
   (``local * len(ENTITY_KINDS) + kind``): the teachers, a lineage, a settlement, a
   technique, a technology the teachers display, an artifact, a mineral deposit, a polity,
   a monument. Polity events reuse the generic verbs: ``founded`` (a founding polity at
   year 0, from its band; a split, from its parent polity), ``joined`` (a merger),
-  ``died`` (extinction or fragmentation), ``built`` (a monument).
+  ``died`` (extinction, fragmentation, or destruction by the second actor), ``built`` (a
+  monument). War events (``systems/war.py``): ``fought`` (a battle: attacker, defender,
+  target settlement; dead), ``won`` (a raid won; rations taken), ``took`` (conqueror,
+  settlement, former polity; people), ``lost`` (a polity losing its capital to the third
+  actor).
 - ``place`` is a cell id (-1 when the event has no place).
 - ``magnitude`` is the size of the effect (people, deaths, techniques, ...). An event is
   logged only when its magnitude is at least ``events.min_magnitude[action]``.
@@ -25,7 +30,7 @@ import pandas as pd
 
 ACTIONS = (
     "arrived", "taught", "displayed", "departed", "gave", "used", "broke", "fought", "won",
-    "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot", "depleted",
+    "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot", "depleted", "took",
 )
 ACTION_CODE = {name: i for i, name in enumerate(ACTIONS)}
 ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit", "polity",

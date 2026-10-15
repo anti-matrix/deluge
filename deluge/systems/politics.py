@@ -2,7 +2,8 @@
 
 - Secession: each member settlement but the capital secedes with probability
   ``secession_base`` x (hex steps to the capital / reference) ** exponent x (1 - cohesion)
-  x (1 + ``secession_pressure_weight`` x pressure), capped. Seceding settlements of one
+  x (1 + ``secession_pressure_weight`` x pressure) x (1 + ``secession_grievance_weight`` x
+  the settlement's grievance from conquest, ``systems/war.py``), capped. Seceding settlements of one
   polity that are in contact with each other (``contact_radius``, transitively) form one
   new polity. The weight the polity's culture gives to cultural, dialect and appearance
   distance from the core is zero until perception is wired (Round 7).
@@ -11,13 +12,15 @@
   regions: regional seats are its largest settlements at least ``region_spacing`` steps
   apart (the capital first), every member joins its nearest seat, and each region becomes
   a new polity; the old one ends (``fragmented``).
-- Every new polity keeps the parent's lineage, inherits its culture and intermarriage rate
-  with Gaussian mutation (``culture_mutation``), starts at ``child_cohesion`` and the
+- Every new polity keeps the parent's lineage, inherits its intermarriage rate and its
+  members' own culture (the parent's, except in conquered members that kept theirs) with
+  Gaussian mutation (``culture_mutation``), starts at ``child_cohesion`` and the
   initial elite ratio, and records its parent, so the polity tree stays complete. (Brains
   and memory copies join in Rounds 7 and 8.)
 - Mergers: two polities in contact merge with chance ``merge_rate`` x affinity x common
-  threat; affinity is their shared-memory overlap (Round 8) and the threat a common enemy
-  (Round 6). Both are zero until then, so no merger happens yet; ``merge`` does the union:
+  threat; affinity is their shared-memory overlap (Round 8) and the threat a common enemy.
+  Mergers stay inactive until shared memory exists (Round 8): no merger happens yet, and
+  the common enemy is not computed. ``merge`` does the union:
   the larger partner absorbs the smaller, keeps its culture (uniform crossover with the
   smaller one's with chance ``merge_crossover_chance``), and the smaller ends (``merged``).
 - Culture drift: culture moves toward the mean culture of the polities in contact.
@@ -41,14 +44,21 @@ def mutated(model, culture: np.ndarray, intermarriage: float) -> tuple[np.ndarra
 
 
 def spin_off(model, parent: int, members: list[int]) -> int:
-    """A new polity from ``members`` of ``parent`` (logged as founded from it)."""
+    """A new polity from ``members`` of ``parent`` (logged as founded from it). Its culture
+    is the members' own (population-weighted), mutated: the parent's, except where
+    conquered members kept their own. The members are no longer subjects."""
     P, t = model.polities, model.settlements
     members_arr = np.asarray(members, dtype=np.int64)
     capital = int(members_arr[np.argmax(t.population[members_arr])])
-    culture, im = mutated(model, P.culture[parent], float(P.intermarriage[parent]))
+    w = np.maximum(t.population[members_arr], 1e-12)
+    own = (w @ t.culture[members_arr]) / w.sum()
+    culture, im = mutated(model, own, float(P.intermarriage[parent]))
     pid = model.found_polity(int(P.lineage[parent]), parent, capital, culture, im,
                              model.config.polities.cohesion.child_cohesion)
     t.polity[members_arr] = pid
+    t.culture[members_arr] = culture
+    t.subject_of[members_arr] = -1
+    t.grievance[members_arr] = 0.0
     model.log_event("founded", [("polity", pid), ("polity", parent)], int(t.cell[capital]),
                     float(t.population[members_arr].sum()))
     return pid
@@ -89,7 +99,8 @@ def secession(model) -> None:
     capital = P.capital[pol]
     steps = model.geom.hex_distance(t.cell[ids], t.cell[capital]).astype(float)
     p = (pc.secession_base * (steps / pc.secession_distance_reference) ** pc.secession_distance_exponent
-         * (1.0 - P.cohesion[pol]) * (1.0 + pc.secession_pressure_weight * P.pressure[pol]))
+         * (1.0 - P.cohesion[pol]) * (1.0 + pc.secession_pressure_weight * P.pressure[pol])
+         * (1.0 + pc.secession_grievance_weight * t.grievance[ids]))
     p = np.where(ids == capital, 0.0, np.minimum(p, pc.secession_max))
     leaving = model.streams["politics"].random(len(ids)) < p
     if not leaving.any():
@@ -139,7 +150,7 @@ def fragmentation(model) -> None:
 # --- mergers ---------------------------------------------------------------------------------
 
 
-MERGER_INPUTS_EXIST = False  # set by the rounds that add shared memory (8) and war (6)
+MERGER_INPUTS_EXIST = False  # set once shared memory exists (Round 8)
 
 
 def shared_memory_overlap(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -148,7 +159,8 @@ def shared_memory_overlap(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def common_enemy(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Whether polity pairs face a common enemy: zero until war exists (Round 6)."""
+    """Whether polity pairs face a common enemy: zero while mergers are inactive (until
+    Round 8, which can read the war system's ``model.wars``)."""
     return np.zeros(len(a))
 
 

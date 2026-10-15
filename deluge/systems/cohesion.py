@@ -23,11 +23,13 @@ Per living polity, each year, in this order:
    minus state strength ((tribute - spending) per head), floored at 0.
 6. Frontier pressure f: of the members in contact with another polity's settlements
    (within ``contact_radius``), the share facing a culturally distant one (culture
-   distance ramping from ``distant_culture_min`` to ``distant_culture_full``). Recent war
-   joins f in Round 6.
+   distance ramping from ``distant_culture_min`` to ``distant_culture_full``), plus recent
+   war: ``war_frontier_weight`` x w / (w + ``war_frontier_half``), w the polity's decaying
+   count of battles (``systems/war.py``), capped at 1.
 7. Cohesion: C' = C + r0 f C (1 - C) - delta C + monuments, with delta rising with size
    (scaled down by hierarchy and administration techniques), mean distance from the
-   capital, inequality of food per head between members, elite pressure and pressure.
+   capital, inequality of food per head between members, elite pressure, pressure and the
+   members' grievance from conquest (population-weighted mean).
    The shared-memory term joins in Round 8.
 """
 
@@ -176,6 +178,8 @@ def run(model) -> None:
     border = foreign.any(axis=1)
     n_border = np.bincount(pol, weights=border.astype(float), minlength=npol)
     f = np.bincount(pol, weights=facing, minlength=npol)[pids] / np.maximum(n_border[pids], 1.0)
+    w = P.war_recent[pids]
+    f = np.minimum(f + cc.war_frontier_weight * w / (w + cc.war_frontier_half), 1.0)
     P.frontier[pids] = f
 
     # Cohesion.
@@ -187,8 +191,10 @@ def run(model) -> None:
     mu = np.bincount(pol, weights=pop * logf, minlength=npol) / safe_people
     inequality = np.sqrt(np.maximum(np.bincount(pol, weights=pop * (logf - mu[pol]) ** 2, minlength=npol)
                                     / safe_people, 0.0))[pids]
+    grievance = np.bincount(pol, weights=pop * t.grievance[ids], minlength=npol)[pids] / safe_people[pids]
     delta = (cc.base_decay + cc.size_decay * size + cc.distance_decay * mean_steps / cc.distance_reference
-             + cc.inequality_decay * inequality + cc.elite_decay * elite_pressure + cc.pressure_decay * pressure)
+             + cc.inequality_decay * inequality + cc.elite_decay * elite_pressure + cc.pressure_decay * pressure
+             + cc.grievance_decay * grievance)
     c = P.cohesion[pids]
     m = maintained[pids]
     c = c + cc.growth_rate * f * c * (1.0 - c) - delta * c + cc.monument_cohesion * m / (m + cc.monument_half) * (1 - c)

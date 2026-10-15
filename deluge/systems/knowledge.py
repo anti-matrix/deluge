@@ -60,10 +60,11 @@ class KnowledgeGraph:
     unlocks: np.ndarray  # mode index unlocked, -1 for none
     effect: dict  # effect name -> (T,) array; multipliers default 1, additive effects 0
     late: np.ndarray  # (T,) bool: part of the late graph
+    military: np.ndarray  # (T,) bool: category military
     acquirable: np.ndarray  # (T,) bool: can be invented or diffused (late ones only with late_techniques_enabled)
 
     MULTIPLIERS = ("farm_yield", "herd_yield", "river_farm_yield", "production", "spoilage", "drought_loss",
-                   "diffusion", "famine_mortality", "admin_cap")
+                   "diffusion", "famine_mortality", "admin_cap", "military", "defense", "raid_range")
     ADDITIVE = ("migration_radius", "sea_steps", "production_min_population")
 
     @classmethod
@@ -102,6 +103,7 @@ class KnowledgeGraph:
         late = np.array([cfg.techniques[n].late for n in names], dtype=bool)
         return cls(
             late=late,
+            military=np.array([cfg.techniques[n].category == "military" for n in names], dtype=bool),
             acquirable=~late | cfg.late_techniques_enabled,
             names=names,
             labels=tuple(cfg.techniques[n].label for n in names),
@@ -245,6 +247,26 @@ def work_deposits(model, ids: np.ndarray, in_use: np.ndarray) -> None:
 def deposit_id(cell: int, mineral: int) -> int:
     """Local id of the deposit of `mineral` (MINERALS index) on `cell`."""
     return cell * len(MINERALS) + mineral
+
+
+def grant(model, sid: int, technique: int, source: int) -> bool:
+    """Settlement ``sid`` adopts ``technique`` from settlement ``source`` outside the yearly
+    diffusion (war and conquest, ``systems/war.py``), under the same conditions: every
+    prerequisite held, the minerals it needs in reach, and acquirable. Logged as
+    ``learned`` from the source when usable where ``sid`` is. Returns whether it was gained."""
+    g, t = model.knowledge, model.settlements
+    if t.knows[sid, technique] or not g.acquirable[technique]:
+        return False
+    ids = np.array([sid])
+    if not (g.prerequisites_met(t.knows[ids])[0, technique] and resources_met(model, ids)[0, technique]):
+        return False
+    t.knows[sid, technique] = True
+    t.strength[sid, technique] = 1.0
+    model.note_technique_gained(technique, model.year, False)
+    if usable_mask(model, ids)[0, technique]:
+        model.log_event("learned", [("settlement", sid), ("technique", technique), ("settlement", source)],
+                        int(t.cell[sid]), float(t.population[sid]))
+    return True
 
 
 def run(model) -> None:

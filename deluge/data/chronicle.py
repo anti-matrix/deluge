@@ -39,6 +39,15 @@ TEMPLATES = {
     "learned": "{0} learned {1}{from_}",
     "forgot": "{0} forgot {1}",
     "depleted": "{0} was used up",
+    "took": "{0} took {1} from {2}",
+}
+# Templates by action, the kind of the first actor and the number of actors, then by
+# action and kind, where they differ from TEMPLATES (war events between polities).
+TEMPLATES_BY_KIND = {
+    ("fought", "polity"): "{0} attacked {1} at {2}",
+    ("won", "polity"): "{0} raided {1} at {2}",
+    ("lost", "polity"): "{0} lost its capital {1} to {2}",
+    ("died", "polity", 2): "{0} came to an end, taken by {1}",
 }
 MAGNITUDE = {
     "arrived": "{m:,.0f} people there",
@@ -53,11 +62,15 @@ MAGNITUDE = {
     "joined": "{m:,.0f} people",
     "learned": "{m:,.0f} people",
     "forgot": "{m:,.0f} people",
+    "took": "{m:,.0f} people",
 }
 # Magnitude by action and the kind of the first actor, where it differs from MAGNITUDE.
 MAGNITUDE_BY_KIND = {
     ("used", "deposit"): "{m:,.0f} people working it",
     ("died", "polity"): "{m:,.0f} people in it",
+    ("fought", "polity"): "{m:,.0f} dead",
+    ("won", "polity"): "{m:,.0f} rations taken",
+    ("lost", "polity"): "{m:,.0f} people",
 }
 if set(TEMPLATES) != set(ACTIONS):
     raise RuntimeError("chronicle templates must cover every action")
@@ -111,7 +124,10 @@ def line(record: dict, name: Namer) -> str:
     actors = record["actors"]
     names = [name(a) for a in actors]
     padded = names + [""] * 3
-    text = TEMPLATES[action].format(*padded, rest=", ".join(names[2:]) or "nothing",
+    kind = decode(actors[0])[0] if actors else ""
+    template = (TEMPLATES_BY_KIND.get((action, kind, len(actors))) or TEMPLATES_BY_KIND.get((action, kind))
+                or TEMPLATES[action])
+    text = template.format(*padded, rest=", ".join(names[2:]) or "nothing",
                                     from_=f" from {names[2]}" if action == "learned" and len(names) > 2 else "")
     if action == "learned" and len(names) == 2:
         text += " (invented)"

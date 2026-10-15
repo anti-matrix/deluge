@@ -548,6 +548,9 @@ class CohesionConfig:
     pressure_decay: float
     monument_cohesion: float
     monument_half: float
+    war_frontier_weight: float
+    war_frontier_half: float
+    grievance_decay: float
 
 
 @dataclass(frozen=True)
@@ -583,6 +586,7 @@ class PolitiesConfig:
     secession_distance_reference: float
     secession_distance_exponent: float
     secession_pressure_weight: float
+    secession_grievance_weight: float
     secession_max: float
     fragment_cohesion: float
     fragment_pressure: float
@@ -615,11 +619,53 @@ class AncestryConfig:
     dialect_founder_sigma: float
     dialect_drift_sigma: float
     dialect_contact_rate: float
+    dialect_assimilation_rate: float
     selection_enabled: bool
     selection_trait: str
     selection_rate: float
     selection_optimum_equator: float
     selection_optimum_pole: float
+
+
+@dataclass(frozen=True)
+class WarConfig:
+    enabled: bool
+    attack_rate: float
+    max_wars: int
+    war_memory_years: int
+    weight_stores: float
+    weight_land: float
+    weight_weakness: float
+    store_half_years: float
+    campaign_share: float
+    mobilization_base: float
+    mobilization_militarism: float
+    mobilization_hierarchy: float
+    mobilization_max: float
+    logistics_km: float
+    home_bonus: float
+    terrain_defense: Mapping[str, float]
+    win_steepness: float
+    casualty_rate: float
+    loser_casualty_factor: float
+    attacker_casualty_cap: float
+    defender_casualty_cap: float
+    raid_loot_share: float
+    neighbor_capture_chance: float
+    settler_share: float
+    settler_source_cap: float
+    capital_cohesion_loss: float
+    destroy_ratio: float
+    battle_log_min_losses: float
+    war_recent_decay: float
+    enemy_military_diffusion: float
+    subject_diffusion_rate: float
+    grievance_conquest: float
+    grievance_decay: float
+    grievance_floor: float
+    assimilation_rate: float
+    assimilation_memory_weight: float
+    assimilated_distance: float
 
 
 # --- output and rendering ----------------------------------------------------------------------
@@ -688,6 +734,7 @@ class Config:
     events: EventsConfig
     polities: PolitiesConfig
     ancestry: AncestryConfig
+    war: WarConfig
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig

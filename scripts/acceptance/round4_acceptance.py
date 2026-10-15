@@ -1,7 +1,7 @@
 """Round 4 acceptance on one world: full runs for several history seeds, with and without
 the teachers, run in parallel processes.
 
-    python scripts/round4_acceptance.py --world-seed 1 --history-seeds 1 2 3 4 5 --workers 4
+    python scripts/acceptance/round4_acceptance.py --world-seed 1 --history-seeds 1 2 3 4 5 --workers 4
 
 Checks (Round 4 brief and spec section 13):
 - with teachers, farming appears in at least 3 of the 5 groups within 1,000 years of
@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 FARMING_WITHIN = 1000
 MIN_GROUPS = 3
 MIN_RUNS = 3

@@ -1,6 +1,6 @@
 """Round 4b acceptance (functional): one full-length run, reported, not judged.
 
-    python scripts/round4b_acceptance.py --world-seed 1 --history-seed 1
+    python scripts/acceptance/round4b_acceptance.py --world-seed 1 --history-seed 1
 
 Reports the run time, the final population, when each technique after iron first
 appeared (and whether by invention), how many settlements worked each mineral, and the
@@ -23,7 +23,7 @@ from deluge.data.events import ACTIONS, decode
 from deluge.model import DelugeModel
 from deluge.world.worlddata import MINERALS
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 LATE_AFTER = "iron"  # techniques listed after this one in the graph are the late graph
 
 

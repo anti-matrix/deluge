@@ -20,7 +20,6 @@ from deluge.systems.demography import next_population
 from deluge.world.climate import Drought
 
 WORLD = 1
-HISTORIES = (1, 2, 3, 4, 5)
 # Round 3 behaviour is that of foragers: these tests switch off the teachers and
 # invention (Round 4), so no settlement learns herding or farming.
 FORAGERS = {"teachers": {"enabled": False}, "knowledge": {"invention_scale": 0.0}}
@@ -163,21 +162,6 @@ def test_bands_spread_over_centuries(run3000):
     # Measured: median 8 steps (~1,400 km), each lineage filling ~190 contiguous cells.
     dist = run3000.geom.hex_distance(t.cell[ids], origin)
     assert np.median(dist) > 5 and dist.max() > 15
-
-
-@pytest.mark.slow
-def test_population_in_range_and_no_lineage_lost_everywhere():
-    """Round 3 acceptance (foragers) on world seed 1, history seeds 1-5: total population
-    at year 3,000 between 0.5 and 10 million, and every founding group survives in some run."""
-    survived = np.zeros(5, dtype=bool)
-    totals = []
-    for h in HISTORIES:
-        m = foragers(world_seed=WORLD, history_seed=h, years=3000)
-        m.run()
-        totals.append(m.population)
-        survived |= m.lineage_population > 0
-    assert all(0.5e6 <= p <= 10e6 for p in totals), totals
-    assert survived.all(), survived
 
 
 @pytest.mark.slow

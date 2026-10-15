@@ -28,6 +28,18 @@ Measured on world seed 1 (history seed 1 full run; seeds 2 and 3 for 3,000 years
 - The polity count rises to about 2,000 by year 6,000 and then fluctuates (largest drop 261). Real consolidation needs mergers (inactive until Rounds 6 and 8) and conquest (Round 6).
 - Monuments: `monument_cost` was raised from 5,000 to 100,000 rations after 7,800 monuments in a 3,000-year probe. Still 4,900-8,800 built in 3,000 years, most of them unmaintained later.
 
+## War (Round 6, two tuning iterations)
+
+Measured on world seed 1, history seeds 1-3, 5,000 years each (`scripts/acceptance/round6_acceptance.py`). Only secession and fragmentation were tuned; war numbers in `war:` are first guesses.
+
+| Setting | Polity births per 5,000 years (h1 / h2 / h3) |
+| --- | --- |
+| `secession_base` 0.0005, `fragment_rate` 0.02 (Round 5 values) | 7,716 / 8,150 / 8,518 |
+| 0.0002, 0.01 | 5,133 / 5,850 / 5,057 |
+| 0.0001, 0.005 (kept) | 4,280 / 4,157 / 3,558 |
+
+Still above the ~3,000 target. Most births are single settlements seceding (grievance from conquest triples the odds) that are conquered back within decades: the median polity lifespan is 54-80 years and "conquered" is the most common end. Levers for Round 12: `war.grievance_conquest` / `secession_grievance_weight`, `war.attack_rate`, `war.destroy_ratio`.
+
 ## Late techniques switched off until calibrated (after Round 4b)
 
 In the Round 4b full run (world seed 1, history seed 1) industry arrived far too early: steam power was first invented in year 2,902, electricity in 3,130, telecommunication in 3,580, and the population ended near 1 billion. The 14 late techniques (marked `late` in `configs/knowledge.yaml`) are therefore off by default: `knowledge.late_techniques_enabled: false` stops their invention and diffusion. **They must be calibrated (invention rates, effect sizes, resource access) before the switch is turned back on.** The Round 4b scenario tests run with the switch on.

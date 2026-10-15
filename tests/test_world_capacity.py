@@ -73,7 +73,7 @@ def test_densities_in_spec_ranges(worlds, cfg):
                 & (ramp(temp, c.farm.temp_zero_c, c.farm.temp_full_c) == 1))
         if good.any():
             # Round 4 calibration scales the spec's farming densities by density_scale (the
-            # calibrated density on good river land is checked by scripts/round4_acceptance.py).
+            # calibrated density on good river land is checked by scripts/acceptance/round4_acceptance.py).
             farm = k["farm"][good] / area / c.farm.density_scale
             assert farm.max() <= c.farm.max_density + 1e-9
             assert np.median(farm[farm > 0]) >= c.farm.min_density

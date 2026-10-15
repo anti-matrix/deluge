@@ -33,8 +33,11 @@
 #   sea_steps                      sea cells a migration may cross
 #   diffusion                      multiplier on the chance of adopting techniques from neighbours
 #   famine_mortality               multiplier on famine deaths
-#   town_cap, defense, military, monuments, memory_capacity, admin_cap, raid_range, trade_range:
-#     later rounds
+#   admin_cap                      multiplier on the polity size cohesion tolerates (Round 5)
+#   military                       multiplier on war strength (Round 6)
+#   defense                        multiplier on a defended settlement's strength (Round 6)
+#   raid_range                     multiplier on the war logistics range from the capital (Round 6)
+#   town_cap, monuments, memory_capacity, trade_range: later rounds
 # Late techniques (after iron): effect sizes are uncalibrated placeholders (Round 4b).
 
 techniques:
@@ -127,7 +130,7 @@ techniques:
     invention_rate: 0.5
     used_with: coast
     unlocks: ""
-    effects: {sea_steps: 3}
+    effects: {sea_steps: 3, raid_range: 1.5}
   copper_bronze:
     label: copper and bronze
     late: false
@@ -147,7 +150,7 @@ techniques:
     invention_rate: 0.3
     used_with: size
     unlocks: ""
-    effects: {memory_capacity: 2.0, admin_cap: 2.0}
+    effects: {memory_capacity: 2.0, admin_cap: 2.0, raid_range: 1.5}
   plough:
     label: plough
     late: false

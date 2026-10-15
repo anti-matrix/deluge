@@ -1,6 +1,6 @@
 """Round 5 acceptance: polities and cohesion, appearance and dialect (spec sections 8, 13).
 
-    python scripts/round5_acceptance.py --world-seed 1 --jobs 1:12900 2:3000 3:3000
+    python scripts/acceptance/round5_acceptance.py --world-seed 1 --jobs 1:12900 2:3000 3:3000
 
 Each job is history_seed:years, run in parallel (at most cores - 1 processes). Every job
 takes snapshots every ``--snapshot`` years: polity count and sizes, cohesion, the polity
@@ -28,7 +28,7 @@ from deluge.data.events import ACTIONS, decode
 from deluge.model import DelugeModel
 from deluge.systems import identity
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def snapshot(m: DelugeModel) -> dict:

@@ -29,15 +29,21 @@ class SettlementTable:
     ``appearance_mean`` / ``appearance_var`` (one column per appearance trait) and
     ``dialect`` are identity markers (spec "Ancestry, appearance and identity"). Only the
     perception-and-mixing system (``deluge/systems/identity.py``) reads or writes them; a
-    new row gets zeros, and the caller sets them through that system."""
+    new row gets zeros, and the caller sets them through that system.
 
-    FLOAT_COLUMNS = ("population", "store", "food_ratio", "peak_population")
-    INT_COLUMNS = ("cell", "lineage", "parent", "founded", "ended", "next_split_year", "famine_years", "polity")
+    ``culture`` (one column per culture trait) is the settlement's own culture: its polity's,
+    except in a conquered settlement, which keeps its own until assimilated (spec section 9).
+    ``subject_of``: the polity that conquered it, while it is an unassimilated subject (-1 for
+    none); ``grievance``: its resentment of conquest, decaying over generations."""
+
+    FLOAT_COLUMNS = ("population", "store", "food_ratio", "peak_population", "grievance")
+    INT_COLUMNS = ("cell", "lineage", "parent", "founded", "ended", "next_split_year", "famine_years", "polity",
+                   "subject_of")
     MATRIX_COLUMNS = ("knows", "strength", "practised", "shares", "works", "appearance_mean", "appearance_var",
-                      "dialect")
+                      "dialect", "culture")
 
     def __init__(self, n_techniques: int = 0, capacity: int = 256, n_minerals: int = 0, n_appearance: int = 0,
-                 n_dialect: int = 0):
+                 n_dialect: int = 0, n_traits: int = 0):
         self.n = 0  # settlements ever founded; ids 0..n-1
         for name in self.FLOAT_COLUMNS:
             setattr(self, name, np.zeros(capacity))
@@ -51,6 +57,7 @@ class SettlementTable:
         self.appearance_mean = np.zeros((capacity, n_appearance))
         self.appearance_var = np.zeros((capacity, n_appearance))
         self.dialect = np.zeros((capacity, n_dialect))
+        self.culture = np.zeros((capacity, n_traits))
 
     def _grow(self) -> None:
         for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + self.MATRIX_COLUMNS:
@@ -79,6 +86,8 @@ class SettlementTable:
         self.ended[sid] = ALIVE
         self.next_split_year[sid] = year
         self.famine_years[sid] = 0
+        self.grievance[sid] = 0.0
+        self.subject_of[sid] = -1
         self.knows[sid] = False if knows is None else knows
         self.strength[sid] = 0.0 if strength is None else strength
         self.practised[sid] = False if practised is None else practised

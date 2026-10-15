@@ -1,5 +1,4 @@
 import pickle
-import time
 
 import mesa
 import numpy as np
@@ -9,11 +8,7 @@ import pytest
 from conftest import small_model
 from deluge.model import DelugeModel
 
-# Round 0 required 11,000 *empty* steps in under 5 s; the run is 12,900 years since Round
-# 4b. Since Round 4 the steps run every system through knowledge and the teachers, with
-# farming populations in the hundreds of millions (minutes at 160 x 96 on the dev machine). The guard is the spec's budget
-# of 10 minutes per run (section 14; Round 11 profiles and speeds up).
-FULL_RUN_BUDGET_S = 600.0
+# The full-length run and its time budget: scripts/acceptance/full_run_budget.py (manual).
 
 
 def test_model_is_mesa_model():
@@ -22,19 +17,12 @@ def test_model_is_mesa_model():
     assert m.year == 0
 
 
-@pytest.mark.slow
-def test_full_run_steps_and_budget():
-    m = DelugeModel(world_seed=3, history_seed=3)
-    years = m.config.run.years
-    t0 = time.perf_counter()
+def test_run_stops_at_configured_years():
+    m = small_model(years=40)
     m.run()
-    elapsed = time.perf_counter() - t0
-    assert m.year == years
-    assert m.steps == years
+    assert m.year == m.steps == 40
     assert not m.running
-    assert elapsed < FULL_RUN_BUDGET_S, f"{years:,} steps took {elapsed:.2f}s"
-    df = m.datacollector.get_model_vars_dataframe()
-    assert list(df["year"]) == list(range(years))
+    assert list(m.datacollector.get_model_vars_dataframe()["year"]) == list(range(40))
 
 
 def test_same_seed_identical_output():

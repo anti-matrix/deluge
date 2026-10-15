@@ -510,6 +510,7 @@ events:                       # raw event log (spec sections 11 and 12); logged 
     learned: 0.0              # people in a settlement that gained a technique (by invention or from a neighbour)
     forgot: 0.0               # people in a settlement that lost a technique
     depleted: 0.0             # a mineral deposit used up (only with world.minerals.depletion on)
+    took: 0.0                 # a settlement taken by conquest (people); battles are filtered by war.battle_log_min_losses
 
 polities:                     # spec section 8; one polity per founding group at year 0
   contact_radius: 2           # settlements within this many hex steps are in contact (frontier, secession groups, culture drift)
@@ -526,15 +527,17 @@ polities:                     # spec section 8; one polity per founding group at
   monument_upkeep: 0.01       # share of a monument's cost paid each year to keep it maintained
   # Secession: per settlement per year (never the capital)
   #   p = base x (distance to capital / reference) ** exponent x (1 - cohesion) x (1 + pressure_weight x pressure)
-  secession_base: 0.0005
+  #       x (1 + grievance_weight x the settlement's grievance)
+  secession_base: 0.0001     # Round 6 tuning: 0.0005 -> 0.0002 -> 0.0001 (polity births, docs/ROUND12_NOTES.md)
   secession_distance_reference: 5.0
   secession_distance_exponent: 1.0
   secession_pressure_weight: 2.0
+  secession_grievance_weight: 3.0
   secession_max: 0.05
   # Fragmentation: below this cohesion and above this pressure, the polity breaks into its regions with this chance per year
   fragment_cohesion: 0.1
   fragment_pressure: 0.3
-  fragment_rate: 0.02
+  fragment_rate: 0.005       # Round 6 tuning: 0.02 -> 0.01 -> 0.005
   region_spacing: 4           # regional seats (largest settlements first) are at least this many hex steps apart
   # Mergers (spec: high shared memory and a common enemy). Both inputs are zero until memory (Round 8)
   # and war (Round 6) exist, so no merger happens yet; the mechanism is in place.
@@ -557,7 +560,10 @@ polities:                     # spec section 8; one polity per founding group at
     pressure_decay: 0.01      # x structural-demographic pressure
     monument_cohesion: 0.01   # per year: + monument_cohesion x m / (m + monument_half) x (1 - C), m maintained monuments
     monument_half: 3.0
-  pressure:                   # structural-demographic pressure (>= 0)
+    war_frontier_weight: 0.5  # recent war joins f: f = min(1, culture frontier + weight x w / (w + half)),
+    war_frontier_half: 2.0    # w = the polity's recent battles (war.war_recent_decay)
+    grievance_decay: 0.01     # delta + this x population-weighted mean grievance of the members
+  pressure:                  # structural-demographic pressure (>= 0)
     population_reference: 0.9 # population pressure: (people / capacity - reference) / (1 - reference), clipped to 0..1
     population_weight: 1.0
     elite_weight: 1.0         # x elite pressure = max(elite_ratio / positions - 1, 0)
@@ -589,11 +595,87 @@ ancestry:                     # spec "Ancestry, appearance and identity": marker
   dialect_founder_sigma: 1.0  # founding peoples' dialects: independent normal draws
   dialect_drift_sigma: 0.05   # per dimension per generation
   dialect_contact_rate: 0.005 # per year, dialect moves this share toward the population-weighted mean of settlements in contact
+  dialect_assimilation_rate: 0.01  # per year, a conquered settlement's dialect moves this share x its ruler's openness
+                                   # toward the ruler's capital (only while it is an unassimilated subject)
   selection_enabled: false    # optional environmental selection (spec: off by default)
   selection_trait: skin_tone
   selection_rate: 0.02        # per generation, share of the gap to the latitude optimum closed
   selection_optimum_equator: 0.8
   selection_optimum_pole: 0.2
+
+war:                          # spec section 9; war choice is a rule-based placeholder until the brains (Round 7)
+  enabled: true
+  # Choice. Candidate targets: foreign settlements in contact (polities.contact_radius) with one of the
+  # attacker's. Score = attractiveness x estimated win chance; attractiveness = weighted mean of
+  #   stores   years of food stored per head, s / (s + store_half_years)
+  #   land     the target cell's fertility (0..1)
+  #   weakness R / (R + 1), R = estimated strength ratio attacker / defender
+  # Each polity attacks its best target with chance attack_rate x militarism x score x min(food per head, 1).
+  # Appearance and dialect are not perceived (Round 7).
+  attack_rate: 0.1
+  max_wars: 2                 # a polity at war with this many polities only attacks those
+  war_memory_years: 10        # a pair is at war until this many years after its last battle
+  weight_stores: 1.0
+  weight_land: 1.0
+  weight_weakness: 1.0
+  store_half_years: 0.5
+  campaign_share: 0.5         # a campaign (not a raid) with chance campaign_share x estimated win chance
+  # Strength S = P x mobilization x M_tech x (0.5 + cohesion) x D, D = exp(-km from the capital / (logistics_km x raid_range))
+  # Mobilization share = base + militarism x m + hierarchy x h, capped. M_tech: product of the capital's
+  # military multipliers (knowledge graph) and teachers.weapons_military while a member holds a weapons artifact.
+  # The defender fights with the target settlement's people at full strength plus the rest of its
+  # polity at D, times terrain_defense[cell], the target's defense multiplier (sedentary building) and home_bonus.
+  mobilization_base: 0.02
+  mobilization_militarism: 0.08
+  mobilization_hierarchy: 0.04
+  mobilization_max: 0.2
+  logistics_km: 500.0
+  home_bonus: 1.2
+  terrain_defense:
+    sea: 1.0
+    plain: 1.0
+    forest: 1.2
+    hills: 1.5
+    mountain: 2.0
+    desert: 1.0
+    steppe: 0.9
+    wetland: 1.5
+    tundra: 1.0
+    ice: 1.0
+  # Resolution: attacker wins with chance Sa^k / (Sa^k + Sd^k), k = win_steepness. Each side loses
+  # casualty_rate x the other's strength (x loser_casualty_factor for the loser), capped: the attacker at
+  # attacker_casualty_cap of its mobilized force (spread over its settlements by population), the
+  # defender at defender_casualty_cap of the target settlement's people.
+  win_steepness: 2.0
+  casualty_rate: 0.2
+  loser_casualty_factor: 2.0
+  attacker_casualty_cap: 0.5
+  defender_casualty_cap: 0.2
+  raid_loot_share: 0.5        # share of the target's store a winning raid carries off
+  # Campaign won: the target joins the attacker, and each other settlement of the loser in contact with it
+  # (not its capital) with neighbor_capture_chance. Settlers from the attacking settlement move in:
+  # settler_share x the target's people, at most settler_source_cap of the source's.
+  neighbor_capture_chance: 0.3
+  settler_share: 0.1
+  settler_source_cap: 0.1
+  # Capital taken: the loser's cohesion x (1 - capital_cohesion_loss) and the largest settlement left becomes
+  # its capital; if the people it has left are fewer than destroy_ratio x the conqueror's, it is destroyed
+  # and the conqueror takes every settlement it had.
+  capital_cohesion_loss: 0.3
+  destroy_ratio: 0.5
+  battle_log_min_losses: 100.0  # battles with at least this many dead are logged (fought); raids won always are (won)
+  war_recent_decay: 0.05      # per year, a polity's recent-battle count decays by this share (cohesion frontier term)
+  enemy_military_diffusion: 0.05  # per battle, each military technique one side holds passes to the other's settlement
+  subject_diffusion_rate: 0.1     # per year, each technique a subject settlement holds passes to its ruler's capital
+  # After conquest (spec section 9): a conquered settlement keeps its own culture, gets grievance, and is a
+  # subject until assimilated. Its culture moves toward its ruler's at assimilation_rate x the ruler's
+  # openness x (1 + memory_weight x shared-memory overlap; overlap is zero until memory, Round 8).
+  grievance_conquest: 1.0
+  grievance_decay: 0.01       # per year
+  grievance_floor: 0.05       # a subject is assimilated once grievance is below this
+  assimilation_rate: 0.01
+  assimilation_memory_weight: 1.0
+  assimilated_distance: 0.02  # and its culture is this close to its ruler's (euclidean / sqrt(traits))
 
 output:
   runs_dir: runs

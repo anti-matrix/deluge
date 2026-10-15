@@ -22,6 +22,7 @@ HELD = {
     "demography": {"famine_mortality": 0.0, "demographic_turnover": 0.0},
     "migration": {"famine_move_ratio": 0.0, "split_threshold": 1e9},
     "knowledge": {"invention_scale": 0.0},
+    "war": {"enabled": False},
 }
 
 
@@ -109,7 +110,9 @@ def test_every_polity_traces_to_a_founder_and_the_tree_exports():
     m.run()
     P = m.polities
     assert P.n > 8 and (P.parent[: P.n] >= 0).sum() >= 4
-    founders = {int(m.settlements.polity[f.settlement]): f.lineage for f in m.lineages.founders}
+    # The founding polities (their bands may since have been conquered).
+    founders = {int(pid): int(P.lineage[pid]) for pid in np.flatnonzero(P.parent[: P.n] == -1)}
+    assert sorted(founders.values()) == [f.lineage for f in m.lineages.founders]
     for pid in range(P.n):
         chain = m.lineages.polity_ancestry(P, pid)
         assert chain[-1] in founders and P.lineage[pid] == founders[chain[-1]]

@@ -8,9 +8,10 @@ in ``deluge/systems/``; they are appended to ``PHASES`` in fixed order as rounds
     9 memory, 10 data collection.
 
 Phase 3 starts by moving bands whose cell the sea took this year (they move before they
-eat), then runs subsistence and demography. Phase 8 runs cohesion (tribute, monuments,
-elites, pressure, cohesion), then politics (secession, fragmentation, mergers, culture
-drift, territory), then the drift and mixing of appearance and dialect.
+eat), then runs subsistence and demography. Phase 7 runs war (assimilation of
+conquered settlements, then the rule-based war choice and battles). Phase 8 runs cohesion
+(tribute, monuments, elites, pressure, cohesion), then politics (secession, fragmentation,
+mergers, culture drift, territory), then the drift and mixing of appearance and dialect.
 
 ``model.year`` is the year being simulated: a step runs every phase for that year,
 collects data, then advances the year.
@@ -37,7 +38,7 @@ from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
 from deluge.data.events import EventLog, entity
 from deluge.rng import RngStreams
-from deluge.systems import capacity, climate, cohesion, demography, identity, knowledge, politics, subsistence
+from deluge.systems import capacity, climate, cohesion, demography, identity, knowledge, politics, subsistence, war
 from deluge.systems.knowledge import KnowledgeGraph, usable_mask
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
@@ -53,6 +54,7 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
     demography.grow,
     demography.migrate,
     knowledge.run,
+    war.run,
     cohesion.run,
     politics.run,
     identity.run,
@@ -60,7 +62,8 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
 
 YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost", "techniques_learned",
               "techniques_lost", "losses_after_crash", "latent_expired", "polities_founded", "secessions",
-              "fragmentations", "mergers", "polity_extinctions", "monuments_built")
+              "fragmentations", "mergers", "polity_extinctions", "monuments_built", "battles", "raids",
+              "campaigns", "conquests", "capitals_taken", "polities_destroyed", "war_deaths")
 
 
 class DelugeModel(mesa.Model):
@@ -143,7 +146,8 @@ class DelugeModel(mesa.Model):
         self.events = EventLog(cfg.events.min_magnitude)
         self.settlements = SettlementTable(len(self.knowledge.names), n_minerals=len(MINERALS),
                                            n_appearance=len(cfg.ancestry.appearance_traits),
-                                           n_dialect=cfg.ancestry.dialect_dims)
+                                           n_dialect=cfg.ancestry.dialect_dims,
+                                           n_traits=len(cfg.founders.culture_traits))
         self.settlement_agents: dict[int, Settlement] = {}
         self.occupant = np.full(self.geom.n_cells, -1, dtype=np.int64)  # settlement id per cell
         self.forage_health = np.ones(self.geom.n_cells)  # 1 = forage untouched by overuse
@@ -151,6 +155,8 @@ class DelugeModel(mesa.Model):
         self.polities = PolityTable(len(cfg.founders.culture_traits), len(MINERALS))
         self.polity_agents: dict[int, Polity] = {}
         self.monuments = Monuments()
+        self.wars: dict[tuple[int, int], int] = {}  # polity pair (low id first) -> year of its last battle
+        self.wars_active = 0
         self.contact_cells = self.geom.cells_within(cfg.polities.contact_radius)
         self.territory_cells = self.geom.cells_within(cfg.polities.territory_radius)
         self.stats = dict.fromkeys(YEAR_STATS, 0.0)
@@ -207,15 +213,22 @@ class DelugeModel(mesa.Model):
                          store: float = 0.0, knows=None, strength=None, shares=None, practised=None,
                          polity: int | None = None) -> int:
         """A new settlement. ``polity`` defaults to the parent's; a daughter inherits the
-        parent's appearance and dialect."""
+        parent's appearance, dialect and culture, and, in the parent's polity, its grievance
+        and subject status. Without a parent it takes its polity's culture."""
         if self.occupant[cell] >= 0 or self.is_sea[cell]:
             raise ValueError(f"cell {cell} is not free land")
         if polity is None:
             polity = int(self.settlements.polity[parent]) if parent >= 0 else -1
-        sid = self.settlements.add(cell, population, lineage, parent, self.year, store, knows, strength, shares,
-                                   practised, polity)
+        t = self.settlements
+        sid = t.add(cell, population, lineage, parent, self.year, store, knows, strength, shares, practised, polity)
         if parent >= 0:
             identity.inherit(self, sid, parent)
+            t.culture[sid] = t.culture[parent]
+            if polity == t.polity[parent]:
+                t.grievance[sid] = t.grievance[parent]
+                t.subject_of[sid] = t.subject_of[parent]
+        elif polity >= 0:
+            t.culture[sid] = self.polities.culture[polity]
         self.occupant[cell] = sid
         self.settlement_agents[sid] = Settlement(self, sid, self.grid[self.geom.xy(cell)])
         return sid
@@ -224,20 +237,26 @@ class DelugeModel(mesa.Model):
 
     def found_polity(self, lineage: int, parent: int, capital: int, culture: np.ndarray, intermarriage: float,
                      cohesion: float) -> int:
+        """A new polity with ``capital``; a capital with no polity yet takes its culture."""
+        if self.settlements.polity[capital] < 0:
+            self.settlements.culture[capital] = culture
         pid = self.polities.add(lineage, parent, self.year, capital, culture, intermarriage, cohesion,
                                 self.config.polities.elites.initial_ratio)
         self.polity_agents[pid] = Polity(self, pid)
         self.stats["polities_founded"] += 1
         return pid
 
-    def end_polity(self, pid: int, cause: str, merged_into: int = -1) -> None:
+    def end_polity(self, pid: int, cause: str, merged_into: int = -1, people: float | None = None) -> None:
         """End a polity: ``extinct`` (no settlements left), ``fragmented`` (broken into its
-        regions) or ``merged`` (absorbed by ``merged_into``). Extinction and fragmentation
-        are logged as the polity's end; a merger is logged by the caller as ``joined``."""
+        regions), ``merged`` (absorbed by ``merged_into``) or ``conquered`` (destroyed by
+        ``merged_into``). Every end but a merger is logged as the polity's end (``died``, with
+        the conqueror as second actor; ``people`` defaults to its last counted population); a
+        merger is logged by the caller as ``joined``."""
         P = self.polities
         if cause != "merged":
-            self.log_event("died", [("polity", pid)], int(self.settlements.cell[P.capital[pid]]),
-                           float(P.population[pid]))
+            actors = [("polity", pid)] + ([("polity", merged_into)] if cause == "conquered" else [])
+            self.log_event("died", actors, int(self.settlements.cell[P.capital[pid]]),
+                           float(P.population[pid] if people is None else people))
         if cause == "extinct":
             self.stats["polity_extinctions"] += 1
         P.ended[pid] = self.year

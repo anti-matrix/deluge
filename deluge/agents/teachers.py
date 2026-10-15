@@ -220,6 +220,10 @@ class TeachersState:
         held = self._held("medicine") if self.kind else {}
         return np.isin(ids, list(held)) if held else np.zeros(len(ids), dtype=bool)
 
+    def weapons_holders(self, ids: np.ndarray) -> np.ndarray:
+        held = self._held("weapons") if self.kind else {}
+        return np.isin(ids, list(held)) if held else np.zeros(len(ids), dtype=bool)
+
     def medicine_artifacts(self, sid: int) -> list[int]:
         return self._held("medicine").get(sid, [])
 

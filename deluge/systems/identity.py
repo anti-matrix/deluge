@@ -13,19 +13,24 @@ other system reads these fields.
   vector. The teachers get their own appearance draw (fixed by config if given); they
   leave no settlements, so it is only kept for the memory records of later rounds.
 - Inheritance (``inherit``): a daughter settlement copies its parent's markers.
-- Mixing: when a band joins another (``blend``), the host's markers move toward the
-  newcomers', weighted by the numbers of people. Each year, settlements of the same polity
+- Mixing: when a band joins another, or settlers from the conqueror move into a
+  conquered settlement (``blend``), the host's markers move toward the newcomers',
+  weighted by the numbers of people. Each year, settlements of the same polity
   in contact (``polities.contact_radius``) exchange a share ``mixing_rate`` x the polity's
   intermarriage rate of their people with the population-weighted mean of those contacts
   (appearance means and variances mix as a population mixture). Dialects converge between
-  all settlements in contact, of any polity, at ``dialect_contact_rate``.
+  all settlements in contact, of any polity, at ``dialect_contact_rate``. A conquered
+  settlement that is still an unassimilated subject (``subject_of``, ``systems/war.py``)
+  also moves its dialect toward its ruler's capital at ``dialect_assimilation_rate`` x the
+  ruler's openness; its appearance blends through the settlers and then through the
+  ruler's intermarriage like any member's.
 - Drift, once per generation (``generation_years``): appearance means wander with sd
   ``drift_sigma`` x sqrt(reference / population) (capped), faster in small populations;
   dialects wander with sd ``dialect_drift_sigma``.
 - Optional environmental selection (off by default): one trait is pulled toward a
   latitude-dependent optimum.
 
-Conquest and assimilation mixing come with war (Round 6); unions with mergers.
+Unions mix through mergers (inactive until memory, Round 8).
 """
 
 from __future__ import annotations
@@ -74,10 +79,12 @@ def _mix(mean, var, other_mean, other_var, w):
     return new, new_var
 
 
-def blend(model, host: int, guest: int) -> None:
-    """Band ``guest`` joins band ``host`` (call before their people are pooled)."""
+def blend(model, host: int, guest: int, people: float | None = None) -> None:
+    """Band ``guest`` joins band ``host``, or ``people`` of it settle there (conquest
+    settlers); call before the people are added to the host."""
     t = model.settlements
-    ph, pg = float(t.population[host]), float(t.population[guest])
+    ph = float(t.population[host])
+    pg = float(t.population[guest]) if people is None else float(people)
     w = pg / max(ph + pg, 1e-12)
     t.appearance_mean[host], t.appearance_var[host] = _mix(t.appearance_mean[host], t.appearance_var[host],
                                                           t.appearance_mean[guest], t.appearance_var[guest], w)
@@ -117,6 +124,12 @@ def run(model) -> None:
     has, _, _, dialect = _contact_means(model, ids, same_polity=False)
     wd = (a.dialect_contact_rate * has)[:, None]
     t.dialect[ids] = (1.0 - wd) * t.dialect[ids] + wd * dialect
+    # Assimilation: subjects' dialect moves toward their ruler's capital.
+    subjects = ids[(t.subject_of[ids] >= 0) & (t.subject_of[ids] == t.polity[ids])]
+    if len(subjects):
+        ws = (a.dialect_assimilation_rate * model.openness_of(subjects))[:, None]
+        capital_dialect = t.dialect[model.polities.capital[t.polity[subjects]]]
+        t.dialect[subjects] += ws * (capital_dialect - t.dialect[subjects])
 
     if model.year == 0 or model.year % a.generation_years:
         return

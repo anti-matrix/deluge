@@ -10,13 +10,15 @@ Columns:
 
 - ``lineage``: founding group the polity descends from; ``parent``: the polity it split
   from (-1 for the five founding polities); ``founded`` / ``ended`` year (-1 while alive);
-  ``end_cause``: index into ``END_CAUSES``; ``merged_into``: the polity that absorbed it.
+  ``end_cause``: index into ``END_CAUSES``; ``merged_into``: the polity that absorbed it
+  (merged) or destroyed it (conquered).
 - ``capital``: settlement id; ``culture``: one column per culture trait
   (``founders.culture_traits``), 0..1; ``intermarriage``: the evolvable rate at which its
   settlements exchange people (appearance mixing, ``systems/identity.py``).
 - ``cohesion`` (asabiya), ``elite_ratio``, ``pressure`` (structural-demographic),
   ``frontier`` (f), ``treasury`` (rations), ``monument_fund``, ``tribute`` and
-  ``spending`` (this year), ``prestige`` (cost of its maintained monuments).
+  ``spending`` (this year), ``prestige`` (cost of its maintained monuments),
+  ``war_recent`` (its battles, decaying: the war term of frontier pressure).
 - ``deposit``: (polities, minerals) a deposit cell in its territory, -1 for none.
 - Bookkeeping: ``population``, ``n_settlements`` (this year), their peaks.
 """
@@ -27,12 +29,12 @@ import mesa
 import numpy as np
 
 ALIVE = -1
-END_CAUSES = ("", "extinct", "fragmented", "merged")
+END_CAUSES = ("", "extinct", "fragmented", "merged", "conquered")
 
 
 class PolityTable:
     FLOAT_COLUMNS = ("cohesion", "elite_ratio", "pressure", "frontier", "treasury", "monument_fund", "tribute",
-                     "spending", "prestige", "intermarriage", "population", "peak_population")
+                     "spending", "prestige", "intermarriage", "population", "peak_population", "war_recent")
     INT_COLUMNS = ("lineage", "parent", "founded", "ended", "end_cause", "merged_into", "capital", "n_settlements",
                    "peak_settlements")
 
