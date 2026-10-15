@@ -28,7 +28,7 @@ LATE = ("ocean_navigation", "printing", "mechanical_power", "chemistry", "gunpow
 
 def scenario(overrides=None, years=200):
     """Small world, one step taken (capacity known); returns the model."""
-    knowledge = {"invention_scale": 0.0}
+    knowledge = {"invention_scale": 0.0, "late_techniques_enabled": True}
     knowledge.update((overrides or {}).pop("knowledge", {}))
     m = small_model({**HELD, "knowledge": knowledge, **(overrides or {})}, years=years)
     m.step()
@@ -288,6 +288,30 @@ def test_depletion_switch():
         cell, mineral = divmod(decode(r["actors"][0])[1], len(MINERALS))
         assert cell == r["place"] and m_on.deposits[cell, mineral] == 0.0
     assert m_on.resources_layer.data.ravel()[gone[0]["place"]] != len(MINERALS) + 1  # layer updated
+
+
+def test_late_techniques_off_by_default():
+    """With knowledge.late_techniques_enabled false (the default), a settlement holding every
+    prerequisite of printing neither invents it nor adopts it from a neighbour; early
+    techniques still spread."""
+    m = small_model({**HELD, "knowledge": {"invention_scale": 1.0, "diffusion_rate": 1.0}}, years=40)
+    assert not m.config.knowledge.late_techniques_enabled
+    m.step()
+    g, t = m.knowledge, m.settlements
+    assert g.late.sum() == len(LATE) and {g.names[j] for j in np.flatnonzero(g.late)} == set(LATE)
+    src = int(t.alive_ids()[0])
+    dst = m.found_settlement(free_neighbour(m, src), 8000.0, int(t.lineage[src]), src)
+    give(m, src, ancestors(g, "printing"))
+    give(m, dst, ancestors(g, "printing") - {"printing"})
+    for sid in (src, dst):
+        set_people(m, sid, 8000.0)
+    m.run()
+    ids = t.alive_ids()
+    late = np.flatnonzero(g.late)
+    assert not t.knows[dst, g.index("printing")]
+    assert (m.first_invented_year[late] == -1).all()
+    assert t.knows[ids][:, late].sum() == 1  # only the hand-given printing
+    assert (m.first_invented_year[~g.late] >= 0).any()
 
 
 # --- chronicle -----------------------------------------------------------------------------------------

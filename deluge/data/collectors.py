@@ -24,10 +24,16 @@ MODEL_REPORTERS = (
     "n_settlements",
     "farming_settlements",
     "techniques_known",
+    "n_polities",
+    "mean_cohesion",
+    "largest_polity_settlements",
+    "largest_polity_population",
 )
 
 YEAR_STAT_REPORTERS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost",
-                       "techniques_learned", "techniques_lost", "losses_after_crash", "latent_expired")
+                       "techniques_learned", "techniques_lost", "losses_after_crash", "latent_expired",
+                       "polities_founded", "secessions", "fragmentations", "mergers", "polity_extinctions",
+                       "monuments_built")
 
 
 def year_stat(name: str, model) -> float:

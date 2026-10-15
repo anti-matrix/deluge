@@ -155,4 +155,26 @@ def test_lineage_overlay_colors_each_settlement_by_group(model):
     assert (face[lin == 0, 3] == 0).all()
     assert len(set(app.VIZ.lineage_colors)) == len(app.CONFIG.founders.names)
     assert "group A" in portrayal.legend_html(app.VIZ, "lineage", app.CONFIG.founders.names)
+
+
+def test_polity_overlay_shades_each_polity_by_its_group(model):
+    """Polity code 1 + lineage x shades + shade: drawn in a shade of the group's colour;
+    polities of one group differ in shade, never in hue family."""
+    vcfg = app.VIZ
+    colors = portrayal.polity_colors(vcfg)
+    assert len(colors) == len(vcfg.lineage_colors) * vcfg.polity_shades
+    renderer = app.make_renderer(model, overlay="polity")
+    face = renderer.canvas.collections[-1].get_facecolor()
+    cid = mesh_order_to_cid(model.geom)
+    code = model.polity_layer.data.ravel()[cid]
+    assert (face[code == 0, 3] == 0).all()
+    for c in np.unique(code[code > 0]).astype(int):
+        np.testing.assert_allclose(face[code == c][0], colors[c - 1], atol=1e-6)
+    mid = vcfg.polity_shades // 2
+    base = np.array(to_rgba(vcfg.lineage_colors[0])[:3])
+    shades = np.array([c[:3] for c in colors[: vcfg.polity_shades]])
+    assert len({tuple(s.round(6)) for s in shades}) == vcfg.polity_shades
+    assert np.abs(shades - base).max(axis=1)[mid - 1:mid + 1].min() < 0.3
+    assert "polities of group A" in portrayal.legend_html(vcfg, "polity", app.CONFIG.founders.names)
+    assert "Polities: 5" in portrayal.status_text(model)
     assert "iron ore" in portrayal.legend_html(app.VIZ, "resources", app.CONFIG.founders.names)

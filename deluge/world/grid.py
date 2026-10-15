@@ -87,6 +87,24 @@ class HexGeometry:
     def neighbor_mask(self) -> np.ndarray:
         return self.neighbors >= 0
 
+    def cells_within(self, radius: int) -> np.ndarray:
+        """(n_cells, k) ids of the cells 1..``radius`` hex steps away (the cell itself
+        excluded), padded with -1."""
+        if radius < 1:
+            return np.full((self.n_cells, 0), -1, dtype=np.int64)
+        reach = self.neighbors
+        for _ in range(radius - 1):
+            padded = np.vstack([self.neighbors, np.full((1, 6), -1, dtype=np.int64)])
+            reach = np.hstack([reach, padded[reach].reshape(self.n_cells, -1)])
+        reach = np.where(reach == np.arange(self.n_cells)[:, None], -1, reach)
+        reach = np.sort(reach, axis=1)
+        dup = np.zeros_like(reach, dtype=bool)
+        dup[:, 1:] = reach[:, 1:] == reach[:, :-1]
+        reach = np.where(dup, -1, reach)
+        reach = -np.sort(-reach, axis=1)  # ids first, -1 padding last
+        width = int((reach >= 0).sum(axis=1).max())
+        return reach[:, :width]
+
     def neighbor_any(self, flags: np.ndarray) -> np.ndarray:
         """For a flat bool array, True where any neighbor is True."""
         padded = np.append(flags, False)

@@ -26,6 +26,7 @@ import numpy as np
 
 from deluge.agents.settlement import ALIVE, MODES
 from deluge.config import DemographyConfig
+from deluge.systems import identity
 from deluge.systems.subsistence import fed_capacity, food_per_head, mode_capacity, mode_parameters
 
 
@@ -162,9 +163,11 @@ def best_kin_to_join(model, sid: int) -> int:
 
 def join_kin(model, sid: int, host: int) -> None:
     """Band ``sid`` joins band ``host``: people, store and techniques pool, artifacts
-    pass to the host."""
+    pass to the host, appearance and dialect mix by numbers of people. The band leaves its
+    polity (it may be another polity of the same founding group)."""
     t = model.settlements
     pop = float(t.population[sid])
+    identity.blend(model, host, sid)
     t.population[host] += pop
     t.peak_population[host] = max(t.peak_population[host], t.population[host])
     t.store[host] += t.store[sid]

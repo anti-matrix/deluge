@@ -7,7 +7,8 @@ are a Mesa CellAgent on the visited band's cell; they never enter demography, mi
 or politics.
 
 Each contact year, every technique of their knowledge the visited band lacks (and whose
-prerequisites it holds) transfers with chance ``teach_rate`` x the group's openness, so
+prerequisites it holds) transfers with chance ``teach_rate`` x the openness of the band's
+polity, so
 groups come away with different subsets. What the groups witness is logged as raw
 events: each arrival and the departure (by flight), each contact year (with the
 techniques passed on), medicine when the visited band is starving, weapons only if
@@ -131,7 +132,7 @@ class TeachersState:
     def _teach(self, model) -> None:
         g, t = model.knowledge, model.settlements
         sid = self.target
-        openness = float(model.lineage_openness[self.group])
+        openness = float(model.openness_of(np.array([sid]))[0])
         taught = []
         for j in sorted(self.knowledge, key=g.order.index):
             if t.knows[sid, j] or not (t.knows[sid] | ~g.prereq[j]).all():

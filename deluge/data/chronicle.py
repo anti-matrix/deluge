@@ -2,7 +2,7 @@
 
 Each line is a template over the raw fields (year, action, actors, place, magnitude).
 The templates only say what the sim did, in its own terms; entities are named by kind
-and id (``settlement 412 (group C)``, a technique by its label from the knowledge graph,
+and id (``settlement 412 (group C)``, ``polity 37 (group C)``, a technique by its label from the knowledge graph,
 ``copper deposit at cell (31, 12)``, ``the teachers``). No names or story language are
 invented.
 
@@ -32,7 +32,7 @@ TEMPLATES = {
     "lost": "{0} lost against {1}",
     "moved": "{0} moved",
     "founded": "{0} was founded from {1}",
-    "built": "{0} built",
+    "built": "{0} built {1} at {2}",
     "starved": "{0} starved",
     "died": "{0} came to an end",
     "joined": "{0} joined {1}",
@@ -47,6 +47,7 @@ MAGNITUDE = {
     "used": "{m:,.0f} famine deaths spared",
     "moved": "{m:,.0f} people",
     "founded": "{m:,.0f} people",
+    "built": "{m:,.0f} rations of labour",
     "starved": "{m:,.0f} deaths",
     "died": "{m:,.0f} people left",
     "joined": "{m:,.0f} people",
@@ -56,6 +57,7 @@ MAGNITUDE = {
 # Magnitude by action and the kind of the first actor, where it differs from MAGNITUDE.
 MAGNITUDE_BY_KIND = {
     ("used", "deposit"): "{m:,.0f} people working it",
+    ("died", "polity"): "{m:,.0f} people in it",
 }
 if set(TEMPLATES) != set(ACTIONS):
     raise RuntimeError("chronicle templates must cover every action")
@@ -74,6 +76,8 @@ class Namer:
             return int(self.model.settlements.lineage[i])
         if kind == "lineage":
             return i
+        if kind == "polity":
+            return int(self.model.polities.lineage[i])
         return -1
 
     def __call__(self, eid: int) -> str:
@@ -85,6 +89,10 @@ class Namer:
             return f"group {m.lineages.names[i]}"
         if kind == "settlement":
             return f"settlement {i} (group {m.lineages.names[int(m.settlements.lineage[i])]})"
+        if kind == "polity":
+            return f"polity {i} (group {m.lineages.names[int(m.polities.lineage[i])]})"
+        if kind == "monument":
+            return f"monument {i}"
         if kind == "technique":
             return m.knowledge.labels[i]
         if kind == "technology":

@@ -5,8 +5,10 @@ property layer of the HexGrid as a PolyCollection on its hex mesh. Its mesh shif
 rows right, like Mesa's connectivity and ``deluge.world.grid``; it does not use
 ``cell.position`` (see docs/MESA_API_NOTES.md). Three layers are drawn, in the order
 the model added them: terrain, the year's sea over it, and one overlay on top (people per
-cell, techniques usable per cell, latent techniques per cell: held where they cannot
-be used, the founding group of each settlement, or mineral deposits). Everything here only reads model state.
+cell, the polity of each settlement (its founding group's colour, one shade per polity),
+techniques usable per cell, latent techniques per cell: held where they cannot be used,
+the founding group of each settlement, or mineral deposits). Everything here only reads
+model state.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from deluge.world.worlddata import MINERALS, Terrain
 
 TERRAIN_CMAP = ListedColormap([TERRAIN_COLORS[t] for t in Terrain], name="terrain_classes")
 MAP_LAYERS = ("terrain", "sea")
-OVERLAYS = ("population", "knowledge", "latent_knowledge", "lineage", "resources")  # model layers drawn over the map
+OVERLAYS = ("population", "polity", "knowledge", "latent_knowledge", "lineage", "resources")  # model layers drawn over the map
 
 
 def alpha_cmap(color: str, curve: float, n: int = 256) -> ListedColormap:
@@ -43,10 +45,27 @@ def resource_colors(vcfg: VizConfig) -> list[str]:
     return [vcfg.resource_colors[m] for m in MINERALS] + [vcfg.resource_colors["several"]]
 
 
+def shade(color: str, factor: float) -> tuple[float, float, float, float]:
+    """``color`` darkened toward black (factor < 0) or lightened toward white (factor > 0)."""
+    rgb = np.array(to_rgb(color))
+    rgb = rgb * (1.0 + factor) if factor < 0 else rgb + (1.0 - rgb) * factor
+    return (*rgb.tolist(), 1.0)
+
+
+def polity_colors(vcfg: VizConfig) -> list[tuple]:
+    """Polity overlay colours in code order (code 1 + lineage x shades + shade): each
+    founding group's colour in ``polity_shades`` shades."""
+    n, r = vcfg.polity_shades, vcfg.polity_shade_range
+    factors = np.linspace(-r, r, n) if n > 1 else np.zeros(1)
+    return [shade(c, float(f)) for c in vcfg.lineage_colors for f in factors]
+
+
 def legend_html(vcfg: VizConfig, overlay: str, group_names) -> str:
     """Colour key for the categorical overlays ('' for the others)."""
     if overlay == "lineage":
         items = [(f"group {n}", c) for n, c in zip(group_names, vcfg.lineage_colors)]
+    elif overlay == "polity":
+        items = [(f"polities of group {n} (shades: one per polity)", c) for n, c in zip(group_names, vcfg.lineage_colors)]
     elif overlay == "resources":
         items = list(zip([m.replace("_", " ") for m in MINERALS] + ["several"], resource_colors(vcfg)))
     else:
@@ -70,6 +89,8 @@ def make_layer_style(vcfg: VizConfig, overlay: str = "population"):
         # Categorical: code k spans [k - 0.5, k + 0.5).
         "lineage": PropertyLayerStyle(colormap=categorical_cmap(vcfg.lineage_colors), alpha=1.0, colorbar=False,
                                       vmin=-0.5, vmax=len(vcfg.lineage_colors) + 0.5),
+        "polity": PropertyLayerStyle(colormap=categorical_cmap(polity_colors(vcfg)), alpha=1.0, colorbar=False,
+                                     vmin=-0.5, vmax=len(polity_colors(vcfg)) + 0.5),
         "resources": PropertyLayerStyle(colormap=categorical_cmap(resource_colors(vcfg)), alpha=1.0,
                                         colorbar=False, vmin=-0.5, vmax=len(MINERALS) + 1.5),
     }[overlay]
@@ -131,6 +152,8 @@ def status_text(model) -> str:
                                  zip(model.lineages.names, model.lineage_population)),
         f"By mode: {modes}",
         f"Techniques per settlement: {model.techniques_known:.1f}; teachers: {teachers}",
+        f"Polities: {model.n_polities:,}; mean cohesion {model.mean_cohesion:.2f}; largest "
+        f"{model.largest_polity_settlements:,} settlements, {model.largest_polity_population:,.0f} people",
         f"World seed: {model.config.run.world_seed}, history seed: {model.config.run.history_seed}",
     ]
     return "  \n".join(lines)

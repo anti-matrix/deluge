@@ -3,7 +3,8 @@
     python scripts/run.py --config configs/default.yaml --world-seed 1 --history-seed 42
 
 Writes runs/<run_id>/model.parquet, events.parquet (the raw event log), entities.parquet
-(kind and label of every entity id in the log) and meta.json.
+(kind and label of every entity id in the log), polity_tree.parquet (the polity lineage
+tree) and meta.json.
 """
 
 from __future__ import annotations
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     model.datacollector.get_model_vars_dataframe().to_parquet(out_dir / "model.parquet", index=True)
     model.events.write(out_dir / "events.parquet")
     entity_table(model).to_parquet(out_dir / "entities.parquet", index=False)
+    model.lineages.polity_tree(model).to_parquet(out_dir / "polity_tree.parquet", index=False)
     meta = {
         "run_id": run_id,
         "world_seed": cfg.run.world_seed,

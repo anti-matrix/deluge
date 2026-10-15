@@ -471,6 +471,7 @@ class MigrationConfig:
 @dataclass(frozen=True)
 class TechniqueConfig:
     label: str
+    late: bool
     resources: tuple[str, ...]
     category: str
     prerequisites: tuple[str, ...]
@@ -484,6 +485,7 @@ class TechniqueConfig:
 class KnowledgeConfig:
     graph_file: str
     techniques: Mapping[str, TechniqueConfig]
+    late_techniques_enabled: bool
     invention_scale: float
     invention_reference_population: float
     invention_population_exponent: float
@@ -526,6 +528,100 @@ class EventsConfig:
     min_magnitude: Mapping[str, float]
 
 
+# --- polities, cohesion, ancestry ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CohesionConfig:
+    founder_cohesion: float
+    child_cohesion: float
+    growth_rate: float
+    distant_culture_min: float
+    distant_culture_full: float
+    base_decay: float
+    size_decay: float
+    size_reference_settlements: float
+    distance_decay: float
+    distance_reference: float
+    inequality_decay: float
+    elite_decay: float
+    pressure_decay: float
+    monument_cohesion: float
+    monument_half: float
+
+
+@dataclass(frozen=True)
+class PressureConfig:
+    population_reference: float
+    population_weight: float
+    elite_weight: float
+    state_weight: float
+    state_reference: float
+
+
+@dataclass(frozen=True)
+class EliteConfig:
+    initial_ratio: float
+    growth: float
+    tribute_reference: float
+    decline: float
+    positions: float
+
+
+@dataclass(frozen=True)
+class PolitiesConfig:
+    contact_radius: int
+    territory_radius: int
+    culture_mutation: float
+    culture_contact_drift: float
+    tribute_max_rate: float
+    treasury_spoilage: float
+    monument_max_share: float
+    monument_cost: float
+    monument_upkeep: float
+    secession_base: float
+    secession_distance_reference: float
+    secession_distance_exponent: float
+    secession_pressure_weight: float
+    secession_max: float
+    fragment_cohesion: float
+    fragment_pressure: float
+    fragment_rate: float
+    region_spacing: int
+    merge_rate: float
+    merge_crossover_chance: float
+    cohesion: CohesionConfig
+    pressure: PressureConfig
+    elites: EliteConfig
+
+
+@dataclass(frozen=True)
+class AncestryConfig:
+    appearance_traits: tuple[str, ...]
+    founder_mean_min: float
+    founder_mean_max: float
+    founder_min_distance: float
+    founder_variance: float
+    founder_max_attempts: int
+    teachers_appearance: tuple[float, ...]
+    generation_years: int
+    drift_sigma: float
+    drift_reference_population: float
+    drift_sigma_max: float
+    mixing_rate: float
+    intermarriage_min: float
+    intermarriage_max: float
+    dialect_dims: int
+    dialect_founder_sigma: float
+    dialect_drift_sigma: float
+    dialect_contact_rate: float
+    selection_enabled: bool
+    selection_trait: str
+    selection_rate: float
+    selection_optimum_equator: float
+    selection_optimum_pole: float
+
+
 # --- output and rendering ----------------------------------------------------------------------
 
 
@@ -543,6 +639,8 @@ class VizConfig:
     step_buttons: tuple[int, ...]
     chronicle_lines: int
     lineage_colors: tuple[str, ...]
+    polity_shades: int
+    polity_shade_range: float
     resource_colors: Mapping[str, str]
     knowledge_color: str
     knowledge_vmax: float
@@ -588,6 +686,8 @@ class Config:
     knowledge: KnowledgeConfig
     teachers: TeachersConfig
     events: EventsConfig
+    polities: PolitiesConfig
+    ancestry: AncestryConfig
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig

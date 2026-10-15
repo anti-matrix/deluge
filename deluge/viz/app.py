@@ -3,10 +3,10 @@
     solara run deluge/viz/app.py
 
 Shows the hex map (terrain, with the year's sea drawn over it, and a chosen overlay:
-people or techniques known per cell, the founding group of each settlement, or mineral
-deposits, with a colour key), Mesa's play / pause / step / reset controls,
+people or techniques known per cell, the polity or founding group of each settlement, or
+mineral deposits, with a colour key), Mesa's play / pause / step / reset controls,
 buttons that step 1, 10 or 100 years, a year counter, plots of sea level, population per
-founding group and per subsistence mode, and a chronicle of the whole event log (a page
+founding group and per subsistence mode, and the number of polities, and a chronicle of the whole event log (a page
 at a time, newest first; filtered by group, event type, year range and text; downloadable
 as a text file). The world seed (the map) and the history seed are
 integer fields that take effect on Reset.
@@ -62,6 +62,7 @@ def make_renderer(model: DelugeModel, overlay: str = "population") -> SpaceRende
 _sea_level_plot, _ = make_plot_component("sea_level")
 _group_plot, _ = make_plot_component([f"pop_{name}" for name in CONFIG.founders.names])
 _mode_plot, _ = make_plot_component([f"pop_{mode}" for mode in MODES])
+_polity_plot, _ = make_plot_component("n_polities")
 
 
 @solara.component
@@ -168,6 +169,7 @@ def Plots(model: DelugeModel):
         _sea_level_plot(model)
         _group_plot(model)
         _mode_plot(model)
+        _polity_plot(model)
 
 
 _initial: list = []

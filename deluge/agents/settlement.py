@@ -24,12 +24,20 @@ class SettlementTable:
     holds it, and how firmly (1 = fresh; decays when unused, forgotten at 0);
     ``practised``: it has used the technique while holding it. ``shares`` has one column
     per subsistence mode and sums to 1. ``works`` has one column per mineral: the cell of the
-    deposit the settlement last worked, -1 for none."""
+    deposit the settlement last worked, -1 for none. ``polity``: the polity it belongs to.
+
+    ``appearance_mean`` / ``appearance_var`` (one column per appearance trait) and
+    ``dialect`` are identity markers (spec "Ancestry, appearance and identity"). Only the
+    perception-and-mixing system (``deluge/systems/identity.py``) reads or writes them; a
+    new row gets zeros, and the caller sets them through that system."""
 
     FLOAT_COLUMNS = ("population", "store", "food_ratio", "peak_population")
-    INT_COLUMNS = ("cell", "lineage", "parent", "founded", "ended", "next_split_year", "famine_years")
+    INT_COLUMNS = ("cell", "lineage", "parent", "founded", "ended", "next_split_year", "famine_years", "polity")
+    MATRIX_COLUMNS = ("knows", "strength", "practised", "shares", "works", "appearance_mean", "appearance_var",
+                      "dialect")
 
-    def __init__(self, n_techniques: int = 0, capacity: int = 256, n_minerals: int = 0):
+    def __init__(self, n_techniques: int = 0, capacity: int = 256, n_minerals: int = 0, n_appearance: int = 0,
+                 n_dialect: int = 0):
         self.n = 0  # settlements ever founded; ids 0..n-1
         for name in self.FLOAT_COLUMNS:
             setattr(self, name, np.zeros(capacity))
@@ -40,9 +48,12 @@ class SettlementTable:
         self.practised = np.zeros((capacity, n_techniques), dtype=bool)
         self.shares = np.zeros((capacity, len(MODES)))
         self.works = np.full((capacity, n_minerals), -1, dtype=np.int64)
+        self.appearance_mean = np.zeros((capacity, n_appearance))
+        self.appearance_var = np.zeros((capacity, n_appearance))
+        self.dialect = np.zeros((capacity, n_dialect))
 
     def _grow(self) -> None:
-        for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + ("knows", "strength", "practised", "shares", "works"):
+        for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + self.MATRIX_COLUMNS:
             old = getattr(self, name)
             fill = 0 if old.dtype.kind in "fb" else -1
             new = np.full((2 * old.shape[0],) + old.shape[1:], fill, dtype=old.dtype)
@@ -51,12 +62,13 @@ class SettlementTable:
 
     def add(self, cell: int, population: float, lineage: int, parent: int, year: int,
             store: float = 0.0, knows: np.ndarray | None = None, strength: np.ndarray | None = None,
-            shares: np.ndarray | None = None, practised: np.ndarray | None = None) -> int:
+            shares: np.ndarray | None = None, practised: np.ndarray | None = None, polity: int = -1) -> int:
         if self.n == len(self.population):
             self._grow()
         sid = self.n
         self.n += 1
         self.cell[sid] = cell
+        self.polity[sid] = polity
         self.population[sid] = population
         self.peak_population[sid] = population
         self.store[sid] = store
@@ -101,6 +113,10 @@ class Settlement(CellAgent):
     @property
     def parent(self) -> int:
         return int(self.model.settlements.parent[self.sid])
+
+    @property
+    def polity(self) -> int:
+        return int(self.model.settlements.polity[self.sid])
 
     @property
     def techniques(self) -> tuple[str, ...]:

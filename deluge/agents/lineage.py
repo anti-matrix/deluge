@@ -4,7 +4,8 @@ Every settlement carries a lineage id (its founding group) and a parent id (the
 settlement it split from, -1 for a founding band), so descent is a tree that can be
 rebuilt at any year from the settlement table. The registry holds the five founding
 groups with their culture vectors; the teachers, the sixth founder, leave no settlements
-(their visits are kept in ``model.teachers_state``).
+(their visits are kept in ``model.teachers_state``). Polities form a second tree: each
+records its parent polity, back to the founding polity of its group (``polity_tree``).
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 
+from deluge.agents.polity import END_CAUSES
 from deluge.agents.settlement import ALIVE, SettlementTable
 
 
@@ -71,3 +74,32 @@ class LineageRegistry:
         while table.parent[chain[-1]] >= 0:
             chain.append(int(table.parent[chain[-1]]))
         return chain
+
+    # --- polities ----------------------------------------------------------------------------
+
+    @staticmethod
+    def polity_ancestry(polities, pid: int) -> list[int]:
+        """Polity ids from ``pid`` back to its founding polity (parent -1)."""
+        chain = [pid]
+        while polities.parent[chain[-1]] >= 0:
+            chain.append(int(polities.parent[chain[-1]]))
+        return chain
+
+    def polity_tree(self, model) -> pd.DataFrame:
+        """The polity lineage tree: one row per polity ever formed, with its parent (-1 for
+        the five founding polities), founding group, years founded and ended (-1 while
+        alive), how it ended, the polity it merged into, and its peak size."""
+        P = model.polities
+        n = P.n
+        return pd.DataFrame({
+            "polity": np.arange(n),
+            "parent": P.parent[:n].copy(),
+            "lineage": P.lineage[:n].copy(),
+            "group": [self.founders[int(g)].name for g in P.lineage[:n]],
+            "founded": P.founded[:n].copy(),
+            "ended": P.ended[:n].copy(),
+            "end_cause": [END_CAUSES[int(c)] for c in P.end_cause[:n]],
+            "merged_into": P.merged_into[:n].copy(),
+            "peak_settlements": P.peak_settlements[:n].copy(),
+            "peak_population": P.peak_population[:n].copy(),
+        })

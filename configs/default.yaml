@@ -27,6 +27,7 @@ rng:
     - politics
     - memory
     - founders
+    - identity
 
 grid:
   width: 160
@@ -272,9 +273,10 @@ world:
     noise_persistence: 0.5
     noise_lacunarity: 2.0
     noise_weight: 0.5         # score x (1 - weight + weight * noise in 0..1)
-    # Access (spec section 5: on the cell, polity control, or trade). Until polities (Round 5)
-    # and trade exist, a settlement has access to a deposit within this many hex steps of its
-    # cell; it works the nearest one. Each mineral a technique needs is looked up on its own.
+    # Access (spec section 5: on the cell, polity control, or trade). A settlement has access to a
+    # deposit within this many hex steps of its cell (the stand-in for local reach and trade until
+    # trade exists; it works the nearest one), or to one in its polity's territory
+    # (polities.territory_radius). Each mineral a technique needs is looked up on its own.
     access_radius_cells: 4
     depletion: false          # deposits do not deplete by default (spec section 5)
     depletion_per_settlement_year: 0.002  # with depletion on: abundance lost per year per settlement working the deposit
@@ -451,6 +453,8 @@ migration:
 
 knowledge:                    # spec section 7; the graph itself is a data file
   graph_file: knowledge.yaml  # relative to this config file
+  late_techniques_enabled: false  # techniques marked late (after iron) can be invented and diffused only when true;
+                                  # off until calibrated (industry arrived by year 2,902 in Round 4b; docs/ROUND12_NOTES.md)
   invention_scale: 2.0e-6     # inventions per settlement-year at the reference population, times the technique's invention_rate
   invention_reference_population: 1000
   invention_population_exponent: 1.0
@@ -507,6 +511,90 @@ events:                       # raw event log (spec sections 11 and 12); logged 
     forgot: 0.0               # people in a settlement that lost a technique
     depleted: 0.0             # a mineral deposit used up (only with world.minerals.depletion on)
 
+polities:                     # spec section 8; one polity per founding group at year 0
+  contact_radius: 2           # settlements within this many hex steps are in contact (frontier, secession groups, culture drift)
+  territory_radius: 1         # a polity controls its settlements' cells and cells within this many steps (deposit access)
+  culture_mutation: 0.05      # sd of the change per culture trait (and intermarriage) when a polity inherits it at a split
+  culture_contact_drift: 0.002  # per year, culture moves this share toward the mean culture of polities in contact,
+                                # times the share of its settlements that touch them
+  # Tribute and monuments are rule-based placeholders until the brains (Round 7):
+  tribute_max_rate: 0.2       # share of each member's store taken per year = max rate x hierarchy
+  treasury_spoilage: 0.2      # share of the treasury lost per year
+  monument_max_share: 0.3     # share of the treasury put toward monuments per year = max share x ritual_investment
+                              # (only once the capital holds megalithic construction)
+  monument_cost: 100000.0     # rations (labour) per monument (tuning: 5,000 built ~7,800 monuments in 3,000 years)
+  monument_upkeep: 0.01       # share of a monument's cost paid each year to keep it maintained
+  # Secession: per settlement per year (never the capital)
+  #   p = base x (distance to capital / reference) ** exponent x (1 - cohesion) x (1 + pressure_weight x pressure)
+  secession_base: 0.0005
+  secession_distance_reference: 5.0
+  secession_distance_exponent: 1.0
+  secession_pressure_weight: 2.0
+  secession_max: 0.05
+  # Fragmentation: below this cohesion and above this pressure, the polity breaks into its regions with this chance per year
+  fragment_cohesion: 0.1
+  fragment_pressure: 0.3
+  fragment_rate: 0.02
+  region_spacing: 4           # regional seats (largest settlements first) are at least this many hex steps apart
+  # Mergers (spec: high shared memory and a common enemy). Both inputs are zero until memory (Round 8)
+  # and war (Round 6) exist, so no merger happens yet; the mechanism is in place.
+  merge_rate: 0.01            # chance per year per pair in contact at full affinity and full common threat
+  merge_crossover_chance: 0.5 # chance that the merged culture is a uniform crossover (each trait from either partner)
+                              # instead of the larger partner's
+  cohesion:                   # C' = C + growth_rate f C (1 - C) - delta C, plus maintained monuments
+    founder_cohesion: 0.5     # founding groups at year 0
+    child_cohesion: 0.5       # polities formed by secession or fragmentation
+    growth_rate: 0.05         # r0
+    distant_culture_min: 0.15 # culture distance (euclidean / sqrt(traits)) at which a neighbour starts to count as distant
+    distant_culture_full: 0.4 # and counts fully
+    base_decay: 0.002         # delta = base + size + distance + inequality + elite pressure + pressure terms
+    size_decay: 0.005         # x settlements / (size_reference x admin_cap x (0.5 + hierarchy))
+    size_reference_settlements: 20.0
+    distance_decay: 0.003     # x mean hex steps from the capital / distance_reference
+    distance_reference: 10.0
+    inequality_decay: 0.01    # x population-weighted sd of log food per head across settlements
+    elite_decay: 0.01         # x elite pressure
+    pressure_decay: 0.01      # x structural-demographic pressure
+    monument_cohesion: 0.01   # per year: + monument_cohesion x m / (m + monument_half) x (1 - C), m maintained monuments
+    monument_half: 3.0
+  pressure:                   # structural-demographic pressure (>= 0)
+    population_reference: 0.9 # population pressure: (people / capacity - reference) / (1 - reference), clipped to 0..1
+    population_weight: 1.0
+    elite_weight: 1.0         # x elite pressure = max(elite_ratio / positions - 1, 0)
+    state_weight: 0.5         # minus state strength: (tribute - spending) per head / state_reference, capped at 1
+    state_reference: 0.05
+  elites:
+    initial_ratio: 0.02       # tribute-takers per person in a new polity
+    growth: 0.004             # logistic growth per year, times min(tribute per head / tribute_reference, 1)
+    tribute_reference: 0.02
+    decline: 0.02             # share lost per year while the polity's people are short of food on average
+    positions: 0.04           # positions available per person = positions x (0.5 + hierarchy)
+
+ancestry:                     # spec "Ancestry, appearance and identity": markers only, no capability effect
+  appearance_traits: [skin_tone, hair_color, eye_color, stature]  # population mean and variance per settlement, 0..1
+  founder_mean_min: 0.05      # each founding people's mean per trait, drawn uniformly
+  founder_mean_max: 0.95
+  founder_min_distance: 0.4   # euclidean distance between any two founding peoples' means
+  founder_variance: 0.002
+  founder_max_attempts: 1000
+  teachers_appearance: []     # one value per trait to fix the teachers' means; empty = drawn like a founding people
+  generation_years: 25        # drift runs once per generation
+  drift_sigma: 0.01           # sd of the change per trait mean per generation at the reference population
+  drift_reference_population: 1000.0  # sd x sqrt(reference / population): faster in small populations
+  drift_sigma_max: 0.05
+  mixing_rate: 0.02           # share of people exchanged per year with same-polity settlements in contact, x intermarriage
+  intermarriage_min: 0.0      # founding polities' intermarriage rate, drawn uniformly (evolvable: mutates at splits)
+  intermarriage_max: 1.0
+  dialect_dims: 8
+  dialect_founder_sigma: 1.0  # founding peoples' dialects: independent normal draws
+  dialect_drift_sigma: 0.05   # per dimension per generation
+  dialect_contact_rate: 0.005 # per year, dialect moves this share toward the population-weighted mean of settlements in contact
+  selection_enabled: false    # optional environmental selection (spec: off by default)
+  selection_trait: skin_tone
+  selection_rate: 0.02        # per generation, share of the gap to the latitude optimum closed
+  selection_optimum_equator: 0.8
+  selection_optimum_pole: 0.2
+
 output:
   runs_dir: runs
 
@@ -518,6 +606,8 @@ viz:                          # browser UI only; no effect on the simulation
   step_buttons: [1, 10, 100]  # years per click of the step buttons
   chronicle_lines: 100        # chronicle lines per page (the log itself keeps every event)
   lineage_colors: ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]  # lineage overlay: one per founding group, in founders.names order
+  polity_shades: 6            # polity overlay: polities of one founding group get this many shades of its colour
+  polity_shade_range: 0.6     # shades run from the colour darkened by this share to the colour lightened by it
   resource_colors:            # resources overlay: one per mineral, and cells with several
     copper: "#d95f02"
     tin: "#7f7f7f"

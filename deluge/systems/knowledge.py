@@ -20,8 +20,11 @@ strength:
 
 Techniques that need minerals (``resources`` in the graph) are invented, adopted and used
 only with access to each of them: a deposit within ``world.minerals.access_radius_cells``
-of the settlement's cell until polities and trade exist (spec section 5). Held without
-access they are latent. Using one works the nearest deposit in reach (``work_deposits``).
+of the settlement's cell, or one in its polity's territory (spec section 5; trade comes
+later). Held without access they are latent. Using one works a deposit in reach
+(``work_deposits``). Late techniques (``late`` in the graph) are invented and adopted only
+with ``knowledge.late_techniques_enabled``. Diffusion scales with the receiver's polity's
+openness.
 
 At zero the technique is gone. A settlement has ``practised`` a technique once it used it
 while holding it. Events: ``forgot`` only when a practised technique is lost (latent and
@@ -56,9 +59,11 @@ class KnowledgeGraph:
     used_with: np.ndarray  # index into USED_WITH
     unlocks: np.ndarray  # mode index unlocked, -1 for none
     effect: dict  # effect name -> (T,) array; multipliers default 1, additive effects 0
+    late: np.ndarray  # (T,) bool: part of the late graph
+    acquirable: np.ndarray  # (T,) bool: can be invented or diffused (late ones only with late_techniques_enabled)
 
     MULTIPLIERS = ("farm_yield", "herd_yield", "river_farm_yield", "production", "spoilage", "drought_loss",
-                   "diffusion", "famine_mortality")
+                   "diffusion", "famine_mortality", "admin_cap")
     ADDITIVE = ("migration_radius", "sea_steps", "production_min_population")
 
     @classmethod
@@ -94,7 +99,10 @@ class KnowledgeGraph:
         for name in cls.ADDITIVE:
             effect[name] = np.array([cfg.techniques[n].effects.get(name, 0.0) for n in names])
         effect["store_cap_years"] = np.array([cfg.techniques[n].effects.get("store_cap_years", np.nan) for n in names])
+        late = np.array([cfg.techniques[n].late for n in names], dtype=bool)
         return cls(
+            late=late,
+            acquirable=~late | cfg.late_techniques_enabled,
             names=names,
             labels=tuple(cfg.techniques[n].label for n in names),
             prereq=prereq,
@@ -147,14 +155,24 @@ def _by_used_with(model, ids: np.ndarray, columns: np.ndarray) -> np.ndarray:
     return columns[:, model.knowledge.used_with]
 
 
-def resource_access(model, ids: np.ndarray) -> np.ndarray:
-    """(S, minerals) bool: the settlement has access to a deposit of the mineral.
+def deposit_sources(model, ids: np.ndarray) -> np.ndarray:
+    """(S, minerals): the deposit cell each settlement works for each mineral, -1 for none.
 
     Spec section 5: access by sitting on a deposit cell, by polity control of one, or by
-    trade with a settlement that has access. Until polities (Round 5) and trade exist, a
-    deposit within ``world.minerals.access_radius_cells`` of the settlement's cell gives
-    access (``model.deposit_source``)."""
-    return model.deposit_source[model.settlements.cell[ids]] >= 0
+    trade with a settlement that has access. A deposit within
+    ``world.minerals.access_radius_cells`` of the settlement's cell (``model.deposit_source``,
+    the stand-in for local reach and trade until trade exists) comes first; otherwise a
+    deposit in its polity's territory (``polities.territory_radius`` of any member
+    settlement; ``model.polities.deposit``, updated each year by the politics phase)."""
+    t = model.settlements
+    own = model.deposit_source[t.cell[ids]]
+    via_polity = model.polities.deposit[t.polity[ids]]
+    return np.where(own >= 0, own, via_polity)
+
+
+def resource_access(model, ids: np.ndarray) -> np.ndarray:
+    """(S, minerals) bool: the settlement has access to a deposit of the mineral."""
+    return deposit_sources(model, ids) >= 0
 
 def resources_met(model, ids: np.ndarray) -> np.ndarray:
     """(S, T) bool: the settlement has access to every mineral the technique needs."""
@@ -203,10 +221,10 @@ def work_deposits(model, ids: np.ndarray, in_use: np.ndarray) -> None:
     deposit is a `depleted` event and is gone."""
     t, g = model.settlements, model.knowledge
     working = (in_use.astype(np.int64) @ g.requires.astype(np.int64)) > 0  # (S, minerals)
-    working &= resource_access(model, ids)
+    source = deposit_sources(model, ids)  # (S, minerals): the deposit cell each works
+    working &= source >= 0
     if not working.any():
         return
-    source = model.deposit_source[t.cell[ids]]  # (S, minerals): the deposit cell each works
     for i, m in zip(*np.nonzero(working & (t.works[ids] != source))):
         sid, cell = int(ids[i]), int(source[i, m])
         t.works[sid, m] = cell
@@ -278,12 +296,13 @@ def run(model) -> None:
             * (1.0 + k.division_of_labor_invention_bonus * dol[:, None])
             * prereq_share ** k.invention_prerequisite_exponent)
     # Techniques that need minerals are only invented or adopted with access to them.
-    access = resources_met(model, ids)
+    # Late techniques only while knowledge.late_techniques_enabled.
+    access = resources_met(model, ids) & g.acquirable[None, :]
     invented = ~knows & access & (rng.random(knows.shape) < odds)
 
-    # Diffusion from adjacent settlements.
+    # Diffusion from adjacent settlements, scaled by the receiver's polity's openness.
     contacts = neighbour_counts(model, ids, knows)
-    openness = model.lineage_openness[t.lineage[ids]]
+    openness = model.openness_of(ids)
     rate = k.diffusion_rate * openness * g.multiplier(knows, "diffusion")
     p = 1.0 - (1.0 - np.clip(rate, 0.0, 1.0))[:, None] ** contacts
     adopted = (~knows & ~invented & access & g.prerequisites_met(knows) & (contacts > 0)

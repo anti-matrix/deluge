@@ -8,7 +8,9 @@ in ``deluge/systems/``; they are appended to ``PHASES`` in fixed order as rounds
     9 memory, 10 data collection.
 
 Phase 3 starts by moving bands whose cell the sea took this year (they move before they
-eat), then runs subsistence and demography.
+eat), then runs subsistence and demography. Phase 8 runs cohesion (tribute, monuments,
+elites, pressure, cohesion), then politics (secession, fragmentation, mergers, culture
+drift, territory), then the drift and mixing of appearance and dialect.
 
 ``model.year`` is the year being simulated: a step runs every phase for that year,
 collects data, then advances the year.
@@ -28,13 +30,14 @@ from mesa.discrete_space import PropertyLayer
 
 from deluge.agents.founders import landmass_labels, place_founders
 from deluge.agents.lineage import LineageRegistry
+from deluge.agents.polity import END_CAUSES, Monuments, Polity, PolityTable
 from deluge.agents.settlement import MODES, Settlement, SettlementTable
 from deluge.agents.teachers import TeachersState
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
 from deluge.data.events import EventLog, entity
 from deluge.rng import RngStreams
-from deluge.systems import capacity, climate, demography, knowledge, subsistence
+from deluge.systems import capacity, climate, cohesion, demography, identity, knowledge, politics, subsistence
 from deluge.systems.knowledge import KnowledgeGraph, usable_mask
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
@@ -50,10 +53,14 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
     demography.grow,
     demography.migrate,
     knowledge.run,
+    cohesion.run,
+    politics.run,
+    identity.run,
 )
 
 YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost", "techniques_learned",
-              "techniques_lost", "losses_after_crash", "latent_expired")
+              "techniques_lost", "losses_after_crash", "latent_expired", "polities_founded", "secessions",
+              "fragmentations", "mergers", "polity_extinctions", "monuments_built")
 
 
 class DelugeModel(mesa.Model):
@@ -134,18 +141,25 @@ class DelugeModel(mesa.Model):
         # People and knowledge.
         self.knowledge = KnowledgeGraph.from_config(cfg.knowledge)
         self.events = EventLog(cfg.events.min_magnitude)
-        self.settlements = SettlementTable(len(self.knowledge.names), n_minerals=len(MINERALS))
+        self.settlements = SettlementTable(len(self.knowledge.names), n_minerals=len(MINERALS),
+                                           n_appearance=len(cfg.ancestry.appearance_traits),
+                                           n_dialect=cfg.ancestry.dialect_dims)
         self.settlement_agents: dict[int, Settlement] = {}
         self.occupant = np.full(self.geom.n_cells, -1, dtype=np.int64)  # settlement id per cell
         self.forage_health = np.ones(self.geom.n_cells)  # 1 = forage untouched by overuse
         self.lineages = LineageRegistry()
+        self.polities = PolityTable(len(cfg.founders.culture_traits), len(MINERALS))
+        self.polity_agents: dict[int, Polity] = {}
+        self.monuments = Monuments()
+        self.contact_cells = self.geom.cells_within(cfg.polities.contact_radius)
+        self.territory_cells = self.geom.cells_within(cfg.polities.territory_radius)
         self.stats = dict.fromkeys(YEAR_STATS, 0.0)
         n_tech = len(self.knowledge.names)
         self.first_known_year = np.full(n_tech, -1)  # first year any settlement held each technique
         self.first_invented_year = np.full(n_tech, -1)  # first independent invention
         self.first_farming_year = np.full(len(cfg.founders.names), -1)  # per group, farming >= use_share
         self._place_founders()
-        self.lineage_openness = np.array([f.culture["openness"] for f in self.lineages.founders])
+        politics.update_territory(self)
         self.teachers_state = TeachersState(cfg.teachers, len(self.lineages.founders), self.knowledge.index,
                                             streams["teachers"])
         self.population_layer = PropertyLayer.from_data("population", as_field(self.geom, self.cell_population()))
@@ -156,6 +170,8 @@ class DelugeModel(mesa.Model):
         self.grid.add_property_layer(self.latent_layer)
         self.lineage_layer = PropertyLayer.from_data("lineage", as_field(self.geom, np.zeros(self.geom.n_cells)))
         self.grid.add_property_layer(self.lineage_layer)
+        self.polity_layer = PropertyLayer.from_data("polity", as_field(self.geom, np.zeros(self.geom.n_cells)))
+        self.grid.add_property_layer(self.polity_layer)
         self._update_people_summary()
 
         self.datacollector = make_datacollector(self.lineages.names)
@@ -172,21 +188,74 @@ class DelugeModel(mesa.Model):
         self.founder_capacity, self.founder_landmass = k0, landmass  # what placement saw
         rng = self.streams["founders"]
         cells, sizes = place_founders(self.geom, k0, ~self.is_sea, landmass, cfg.founders, rng)
-        f = cfg.founders
+        f, a = cfg.founders, cfg.ancestry
+        sids = []
         for name, cell, size in zip(f.names, cells, sizes):
             culture = {trait: float(rng.uniform(f.culture_min, f.culture_max)) for trait in f.culture_traits}
-            sid = self.found_settlement(cell, float(size), lineage=len(self.lineages.founders), parent=-1)
+            lineage = len(self.lineages.founders)
+            sid = self.found_settlement(cell, float(size), lineage=lineage, parent=-1, polity=-1)
             self.lineages.add_founder(name, sid, cell, size, self.year, culture)
+            intermarriage = float(self.streams["politics"].uniform(a.intermarriage_min, a.intermarriage_max))
+            pid = self.found_polity(lineage, -1, sid, np.array([culture[tr] for tr in f.culture_traits]),
+                                    intermarriage, cfg.polities.cohesion.founder_cohesion)
+            self.settlements.polity[sid] = pid
+            self.log_event("founded", [("polity", pid), ("settlement", sid)], cell, float(size))
+            sids.append(sid)
+        identity.draw_founders(self, sids)
 
     def found_settlement(self, cell: int, population: float, lineage: int, parent: int,
-                         store: float = 0.0, knows=None, strength=None, shares=None, practised=None) -> int:
+                         store: float = 0.0, knows=None, strength=None, shares=None, practised=None,
+                         polity: int | None = None) -> int:
+        """A new settlement. ``polity`` defaults to the parent's; a daughter inherits the
+        parent's appearance and dialect."""
         if self.occupant[cell] >= 0 or self.is_sea[cell]:
             raise ValueError(f"cell {cell} is not free land")
+        if polity is None:
+            polity = int(self.settlements.polity[parent]) if parent >= 0 else -1
         sid = self.settlements.add(cell, population, lineage, parent, self.year, store, knows, strength, shares,
-                                   practised)
+                                   practised, polity)
+        if parent >= 0:
+            identity.inherit(self, sid, parent)
         self.occupant[cell] = sid
         self.settlement_agents[sid] = Settlement(self, sid, self.grid[self.geom.xy(cell)])
         return sid
+
+    # --- polities --------------------------------------------------------------------------
+
+    def found_polity(self, lineage: int, parent: int, capital: int, culture: np.ndarray, intermarriage: float,
+                     cohesion: float) -> int:
+        pid = self.polities.add(lineage, parent, self.year, capital, culture, intermarriage, cohesion,
+                                self.config.polities.elites.initial_ratio)
+        self.polity_agents[pid] = Polity(self, pid)
+        self.stats["polities_founded"] += 1
+        return pid
+
+    def end_polity(self, pid: int, cause: str, merged_into: int = -1) -> None:
+        """End a polity: ``extinct`` (no settlements left), ``fragmented`` (broken into its
+        regions) or ``merged`` (absorbed by ``merged_into``). Extinction and fragmentation
+        are logged as the polity's end; a merger is logged by the caller as ``joined``."""
+        P = self.polities
+        if cause != "merged":
+            self.log_event("died", [("polity", pid)], int(self.settlements.cell[P.capital[pid]]),
+                           float(P.population[pid]))
+        if cause == "extinct":
+            self.stats["polity_extinctions"] += 1
+        P.ended[pid] = self.year
+        P.end_cause[pid] = END_CAUSES.index(cause)
+        P.merged_into[pid] = merged_into
+        self.polity_agents.pop(pid).remove()
+
+    def build_monument(self, pid: int, sid: int, cost: float) -> int:
+        cell = int(self.settlements.cell[sid])
+        mid = self.monuments.add(sid, cell, pid, self.year, cost)
+        self.stats["monuments_built"] += 1
+        self.log_event("built", [("polity", pid), ("monument", mid), ("settlement", sid)], cell, cost)
+        return mid
+
+    def openness_of(self, ids: np.ndarray) -> np.ndarray:
+        """The openness trait of each settlement's polity."""
+        j = self.config.founders.culture_traits.index("openness")
+        return self.polities.culture[self.settlements.polity[ids], j]
 
     def move_settlement(self, sid: int, cell: int) -> None:
         if self.occupant[cell] >= 0 or self.is_sea[cell]:
@@ -223,8 +292,9 @@ class DelugeModel(mesa.Model):
         """Recompute, from ``deposits``, what each cell can reach and the resources layer.
 
         ``deposit_source``: (cells, minerals), the nearest deposit cell of each mineral
-        within ``world.minerals.access_radius_cells`` hex steps, -1 if none (spec section 5
-        access, until polities and trade exist). Resources layer: 0 no deposit,
+        within ``world.minerals.access_radius_cells`` hex steps, -1 if none (local reach, the
+        stand-in for trade; polity territory adds access, ``politics.update_territory``,
+        refreshed here too). Resources layer: 0 no deposit,
         1..len(MINERALS) one mineral (MINERALS order), len(MINERALS) + 1 several."""
         has = self.deposits > 0
         radius = self.config.world.minerals.access_radius_cells
@@ -235,6 +305,8 @@ class DelugeModel(mesa.Model):
                 self.deposit_source[:, m] = np.where((steps >= 0) & (steps <= radius), nearest, -1)
         code = np.where(has.sum(axis=1) > 1, len(MINERALS) + 1, has.argmax(axis=1) + 1)
         self.resources_layer.data[...] = as_field(self.geom, np.where(has.any(axis=1), code, 0).astype(float))
+        if hasattr(self, "polities"):  # polity territories reach deposits too (set up after the world)
+            politics.update_territory(self)
     # --- events and knowledge bookkeeping ---------------------------------------------------
 
     def log_event(self, action: str, actors, place: int, magnitude: float) -> bool:
@@ -271,6 +343,20 @@ class DelugeModel(mesa.Model):
         lineage = np.zeros(self.geom.n_cells)  # founding group + 1 per settled cell, 0 = nobody
         lineage[t.cell[ids]] = t.lineage[ids] + 1
         self.lineage_layer.data[...] = as_field(self.geom, lineage)
+        # Polity layer: 1 + polity lineage x shades + shade, 0 = nobody (viz/portrayal.py).
+        P = self.polities
+        shades = self.config.viz.polity_shades
+        pol = t.polity[ids]
+        code = np.zeros(self.geom.n_cells)
+        code[t.cell[ids]] = 1 + P.lineage[pol] * shades + pol % shades
+        self.polity_layer.data[...] = as_field(self.geom, code)
+        pids = P.alive_ids()
+        self.n_polities = len(pids)
+        self.mean_cohesion = float(P.cohesion[pids].mean()) if len(pids) else 0.0
+        sizes = np.bincount(pol, minlength=P.n)
+        self.largest_polity_settlements = int(sizes.max()) if len(ids) else 0
+        self.largest_polity_population = float(np.bincount(pol, weights=t.population[ids], minlength=P.n).max()) \
+            if len(ids) else 0.0
         # Techniques per cell: usable where the settlement is, and latent (held, unusable).
         known = np.zeros(self.geom.n_cells)
         latent = np.zeros(self.geom.n_cells)

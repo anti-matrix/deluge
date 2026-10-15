@@ -7,7 +7,10 @@ Every record is (year, action, actors, place, magnitude):
   lost, and ``depleted`` for a mineral deposit used up (only with depletion switched on).
 - ``actors`` is a tuple of entity ids. An entity id encodes its kind and its local id
   (``local * len(ENTITY_KINDS) + kind``): the teachers, a lineage, a settlement, a
-  technique, a technology the teachers display, an artifact, a mineral deposit.
+  technique, a technology the teachers display, an artifact, a mineral deposit, a polity,
+  a monument. Polity events reuse the generic verbs: ``founded`` (a founding polity at
+  year 0, from its band; a split, from its parent polity), ``joined`` (a merger),
+  ``died`` (extinction or fragmentation), ``built`` (a monument).
 - ``place`` is a cell id (-1 when the event has no place).
 - ``magnitude`` is the size of the effect (people, deaths, techniques, ...). An event is
   logged only when its magnitude is at least ``events.min_magnitude[action]``.
@@ -25,7 +28,8 @@ ACTIONS = (
     "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot", "depleted",
 )
 ACTION_CODE = {name: i for i, name in enumerate(ACTIONS)}
-ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit")
+ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit", "polity",
+                "monument")
 KIND_CODE = {name: i for i, name in enumerate(ENTITY_KINDS)}
 TEACHERS = 0  # local id of the one teachers entity
 
