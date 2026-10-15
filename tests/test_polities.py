@@ -275,6 +275,8 @@ def test_tribute_elites_and_monuments():
     culture[traits.index("hierarchy")] = 1.0
     culture[traits.index("ritual_investment")] = 1.0
     pid, sid = lone_polity(m, origin, pop=5000.0, culture=culture)
+    from test_brains import scripted
+    scripted(m, pid, tribute=1.0, monuments=1.0)
     t.knows[sid, g.index("megalithic_construction")] = True
     t.strength[sid, g.index("megalithic_construction")] = 1.0
     e0 = float(P.elite_ratio[pid])

@@ -428,6 +428,9 @@ demography:                   # food in rations (one person-year of food)
   herd_max_growth: 0.006
   farm_max_growth: 0.01
   mode_shift_rate: 0.05       # share of people moved per year toward the mode that promises faster growth
+  mode_brain_bias: 0.0005     # the polity brain's farming / herding outputs add bias x (output - 0.5) to the expected
+                              # growth of a shift toward that mode (Round 7): an influence, not a command (one shift
+                              # step changes expected growth by up to ~mode_shift_rate x farm_max_growth = 0.0005)
   farm_stickiness: 0.2        # shifting away from farming runs at this fraction of mode_shift_rate
   famine_mortality: 1.0       # share of people dying per unit of ration shortfall
   famine_max_mortality: 0.5   # cap on the yearly famine death share
@@ -440,7 +443,8 @@ demography:                   # food in rations (one person-year of food)
   wild_food_floor: 0.3
 
 migration:
-  split_threshold: 0.5        # a band splits once it reaches this share of its cell's capacity (Round 3 tuning: 0.75 -> 0.5)
+  split_threshold: 0.5        # a band splits once it reaches this share of its cell's capacity (Round 3 tuning: 0.75 -> 0.5),
+  split_threshold_range: 0.5  # + range x (0.5 - its polity brain's expand output) (Round 7): 0.25 .. 0.75
   split_fraction: 0.4         # share of people who leave to found the daughter settlement
   split_retry_years: 25       # wait before a band that found no place tries again
   search_radius: 3            # hex steps searched for a new cell (same landmass)
@@ -450,6 +454,8 @@ migration:
   famine_move_ratio: 0.9      # a band moves whole when its food per head falls below this
   sedentary_farm_share: 0.5   # bands farming at least this share are sedentary:
   farmer_famine_years: 3      # they move only after this many famine years in a row (spec section 6)
+  core_move_rate: 0.05        # per year, chance x the brain's core migration output that a polity's capital band
+                              # (not sedentary) moves whole to a better free cell in reach (Round 7)
 
 knowledge:                    # spec section 7; the graph itself is a data file
   graph_file: knowledge.yaml  # relative to this config file
@@ -518,10 +524,11 @@ polities:                     # spec section 8; one polity per founding group at
   culture_mutation: 0.05      # sd of the change per culture trait (and intermarriage) when a polity inherits it at a split
   culture_contact_drift: 0.002  # per year, culture moves this share toward the mean culture of polities in contact,
                                 # times the share of its settlements that touch them
-  # Tribute and monuments are rule-based placeholders until the brains (Round 7):
-  tribute_max_rate: 0.2       # share of each member's store taken per year = max rate x hierarchy
+  # Tribute and monuments follow the polity brain's outputs (Round 7):
+  tribute_max_rate: 0.2       # share of each member's store taken per year = max rate x tribute output
+                              # (x the marker factor, below)
   treasury_spoilage: 0.2      # share of the treasury lost per year
-  monument_max_share: 0.3     # share of the treasury put toward monuments per year = max share x ritual_investment
+  monument_max_share: 0.3     # share of the treasury put toward monuments per year = max share x monument output
                               # (only once the capital holds megalithic construction)
   monument_cost: 100000.0     # rations (labour) per monument (tuning: 5,000 built ~7,800 monuments in 3,000 years)
   monument_upkeep: 0.01       # share of a monument's cost paid each year to keep it maintained
@@ -543,7 +550,16 @@ polities:                     # spec section 8; one polity per founding group at
   # and war (Round 6) exist, so no merger happens yet; the mechanism is in place.
   merge_rate: 0.01            # chance per year per pair in contact at full affinity and full common threat
   merge_crossover_chance: 0.5 # chance that the merged culture is a uniform crossover (each trait from either partner)
-                              # instead of the larger partner's
+                              # instead of the larger partner's (and the same for its brain's weights)
+  # Marker effects (spec "Ancestry, appearance and identity"): evolvable culture parameters of each polity
+  # (agents/polity.py MARKER_EFFECTS) weighing a member's perceived appearance and dialect distance from its
+  # capital (and, for secession, its culture distance). Zero in the founding polities, inherited with Gaussian
+  # mutation at every split, free to go either way.
+  marker_mutation: 0.05       # sd of the change per parameter at a split
+  marker_effect_max: 3.0      # each parameter stays within [-max, max]
+  marker_cohesion_decay: 0.01 # cohesion delta + this x (parameters . members' mean perceived distances); delta >= 0
+  marker_grievance_rate: 0.01 # per year a member's grievance + this x (parameters . its distances), floored at 0
+  marker_factor_max: 3.0      # tribute and secession odds x (1 + parameters . distances), clipped to [0, max]
   cohesion:                   # C' = C + growth_rate f C (1 - C) - delta C, plus maintained monuments
     founder_cohesion: 0.5     # founding groups at year 0
     child_cohesion: 0.5       # polities formed by secession or fragmentation
@@ -602,24 +618,22 @@ ancestry:                     # spec "Ancestry, appearance and identity": marker
   selection_rate: 0.02        # per generation, share of the gap to the latitude optimum closed
   selection_optimum_equator: 0.8
   selection_optimum_pole: 0.2
+  # Perception (Round 7): perceived distance = tanh(euclidean distance / reference), 0..1. The polity brains
+  # read it (inputs and the per-neighbour target head) and the marker-effect culture parameters weigh it.
+  blind_perception: false     # control: every perceived appearance and dialect distance is zero
+  perceived_appearance_reference: 0.5
+  perceived_dialect_reference: 4.0
 
-war:                          # spec section 9; war choice is a rule-based placeholder until the brains (Round 7)
+war:                          # spec section 9; the choice follows the polity brains (Round 7)
   enabled: true
   # Choice. Candidate targets: foreign settlements in contact (polities.contact_radius) with one of the
-  # attacker's. Score = attractiveness x estimated win chance; attractiveness = weighted mean of
-  #   stores   years of food stored per head, s / (s + store_half_years)
-  #   land     the target cell's fertility (0..1)
-  #   weakness R / (R + 1), R = estimated strength ratio attacker / defender
-  # Each polity attacks its best target with chance attack_rate x militarism x score x min(food per head, 1).
-  # Appearance and dialect are not perceived (Round 7).
+  # attacker's. The brain's per-neighbour target head scores each (brains/features.py TARGET_FEATURES);
+  # each polity attacks its best-scoring target with chance attack_rate x aggression output x score x
+  # min(food per head, 1), as a campaign with chance = its campaign output (else a raid).
   attack_rate: 0.1
   max_wars: 2                 # a polity at war with this many polities only attacks those
   war_memory_years: 10        # a pair is at war until this many years after its last battle
-  weight_stores: 1.0
-  weight_land: 1.0
-  weight_weakness: 1.0
-  store_half_years: 0.5
-  campaign_share: 0.5         # a campaign (not a raid) with chance campaign_share x estimated win chance
+  store_half_years: 0.5       # target feature: years of food stored per head s, as s / (s + half)
   # Strength S = P x mobilization x M_tech x (0.5 + cohesion) x D, D = exp(-km from the capital / (logistics_km x raid_range))
   # Mobilization share = base + militarism x m + hierarchy x h, capped. M_tech: product of the capital's
   # military multipliers (knowledge graph) and teachers.weapons_military while a member holds a weapons artifact.
@@ -676,6 +690,31 @@ war:                          # spec section 9; war choice is a rule-based place
   assimilation_rate: 0.01
   assimilation_memory_weight: 1.0
   assimilated_distance: 0.02  # and its culture is this close to its ruler's (euclidean / sqrt(traits))
+
+brains:                       # spec section 10: a fixed-topology MLP per polity, all evaluated in one batch a year
+  hidden: 16                  # tanh units; inputs and outputs are listed in brains/features.py and brains/network.py
+  recurrent_units: 0          # hidden units fed back as inputs the next year; 0 = off (spec default)
+  memory_inputs: 3            # slots for the memory summary; zero until memory exists (Round 8)
+  init_sigma: 2.0             # founding brains: every weight and bias ~ N(0, init_sigma / sqrt(fan in)) (history_seed);
+                              # 2.0 spreads the founders' outputs about as widely as uniform 0..1 traits (sd ~0.26)
+  marker_init_sigma: 0.0      # the same for weights that read appearance or dialect: they start at zero (spec hard rule)
+  mutation_sigma: 0.05        # at a split every weight + N(0, sigma) ...
+  jump_chance: 0.01           # ... and with this chance per weight a larger jump
+  jump_sigma: 0.5
+  frozen: false               # control: no mutation; every polity carries an exact copy of its founding brain
+  features:                   # input normalisation, to about -1..1
+    log_population_center: 3.0  # (log10 people - center) / scale, clipped
+    log_population_scale: 2.0
+    store_half_years: 0.5     # years of food stored per head s, as s / (s + half)
+    elite_reference: 0.05     # tanh(elite ratio / reference)
+    settlements_reference: 10.0  # tanh(settlements / reference)
+    growth_window_years: 25   # territory growth: change in settlements over this many years, relative
+    technique_reference: 5.0  # tanh(techniques known at the capital in a category / reference)
+    strength_ratio_scale: 2.0 # tanh(ln(own strength / neighbour's) / scale)
+    hostile_reference: 2.0    # tanh(polities at war with / reference)
+    war_record_reference: 3.0 # tanh(recent battles won (lost) / reference)
+    war_record_decay: 0.05    # per year the counts of battles won and lost decay by this share
+    temp_anomaly_scale: 3.0   # tanh(climate anomaly degC / scale)
 
 output:
   runs_dir: runs

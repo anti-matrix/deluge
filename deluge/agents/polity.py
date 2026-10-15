@@ -18,9 +18,19 @@ Columns:
 - ``cohesion`` (asabiya), ``elite_ratio``, ``pressure`` (structural-demographic),
   ``frontier`` (f), ``treasury`` (rations), ``monument_fund``, ``tribute`` and
   ``spending`` (this year), ``prestige`` (cost of its maintained monuments),
-  ``war_recent`` (its battles, decaying: the war term of frontier pressure).
+  ``war_recent`` (its battles, decaying: the war term of frontier pressure),
+  ``wins_recent`` / ``losses_recent`` (battles won and lost, decaying: brain inputs),
+  ``load`` (people over the capacity of its members' cells, last counted by the cohesion phase).
+- ``marker``: (polities, ``MARKER_EFFECTS``) evolvable culture parameters weighing a member's
+  perceived appearance and dialect distance from the capital (and, for secession, its
+  culture distance) in cohesion, grievance, tribute and secession. Zero in the founding
+  polities, mutated at splits, free to take either sign (spec "Ancestry, appearance and
+  identity").
 - ``deposit``: (polities, minerals) a deposit cell in its territory, -1 for none.
 - Bookkeeping: ``population``, ``n_settlements`` (this year), their peaks.
+
+The polity's brain lives in the model's ``BrainTable`` (``brains/network.py``), under the
+same id.
 """
 
 from __future__ import annotations
@@ -30,13 +40,22 @@ import numpy as np
 
 ALIVE = -1
 END_CAUSES = ("", "extinct", "fragmented", "merged", "conquered")
+MARKER_EFFECTS = ("cohesion_appearance", "cohesion_dialect", "grievance_appearance", "grievance_dialect",
+                  "tribute_appearance", "tribute_dialect", "secession_appearance", "secession_dialect",
+                  "secession_culture")
+
+
+def marker_index(*names: str) -> list[int]:
+    return [MARKER_EFFECTS.index(n) for n in names]
 
 
 class PolityTable:
     FLOAT_COLUMNS = ("cohesion", "elite_ratio", "pressure", "frontier", "treasury", "monument_fund", "tribute",
-                     "spending", "prestige", "intermarriage", "population", "peak_population", "war_recent")
+                     "spending", "prestige", "intermarriage", "population", "peak_population", "war_recent",
+                     "wins_recent", "losses_recent", "load")
     INT_COLUMNS = ("lineage", "parent", "founded", "ended", "end_cause", "merged_into", "capital", "n_settlements",
                    "peak_settlements")
+    MATRIX_COLUMNS = ("culture", "deposit", "marker")
 
     def __init__(self, n_traits: int, n_minerals: int, capacity: int = 64):
         self.n = 0
@@ -46,9 +65,10 @@ class PolityTable:
             setattr(self, name, np.full(capacity, -1, dtype=np.int64))
         self.culture = np.zeros((capacity, n_traits))
         self.deposit = np.full((capacity, n_minerals), -1, dtype=np.int64)
+        self.marker = np.zeros((capacity, len(MARKER_EFFECTS)))
 
     def _grow(self) -> None:
-        for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + ("culture", "deposit"):
+        for name in self.FLOAT_COLUMNS + self.INT_COLUMNS + self.MATRIX_COLUMNS:
             old = getattr(self, name)
             fill = 0 if old.dtype.kind == "f" else -1
             new = np.full((2 * old.shape[0],) + old.shape[1:], fill, dtype=old.dtype)
@@ -56,7 +76,7 @@ class PolityTable:
             setattr(self, name, new)
 
     def add(self, lineage: int, parent: int, year: int, capital: int, culture: np.ndarray, intermarriage: float,
-            cohesion: float, elite_ratio: float) -> int:
+            cohesion: float, elite_ratio: float, marker: np.ndarray | None = None) -> int:
         if self.n == len(self.cohesion):
             self._grow()
         pid = self.n
@@ -77,6 +97,7 @@ class PolityTable:
         self.cohesion[pid] = cohesion
         self.elite_ratio[pid] = elite_ratio
         self.deposit[pid] = -1
+        self.marker[pid] = 0.0 if marker is None else marker
         return pid
 
     def alive_ids(self) -> np.ndarray:

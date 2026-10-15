@@ -11,8 +11,13 @@
   small bands can die out. Bands below ``min_population`` dissolve.
 - ``migrate`` (phase 4): starving bands move whole (sedentary farmers only after
   ``farmer_famine_years`` famine years in a row), to a free cell or, where the land
-  around is full, into a band of their own lineage that has more food per head; crowded
-  bands split and found a daughter settlement on the best free cell in reach.
+  around is full, into a band of their own lineage that has more food per head; a band
+  of another polity takes them in with chance = its polity brain's newcomers output.
+  Each polity's capital band, unless sedentary, moves whole with chance
+  ``core_move_rate`` x the brain's core migration output to a better free cell in reach.
+  Crowded bands split and found a daughter settlement on the best free cell in reach;
+  crowded means at least ``split_threshold`` + ``split_threshold_range`` x (0.5 - the
+  brain's expand output) of the cell's capacity.
 
 Reach is ``search_radius`` hex steps over land, plus technique bonuses; with sailing a
 path may cross a few sea cells. A cell's appeal is a utility over expected food per head
@@ -25,6 +30,7 @@ from __future__ import annotations
 import numpy as np
 
 from deluge.agents.settlement import ALIVE, MODES
+from deluge.brains.network import OUT
 from deluge.config import DemographyConfig
 from deluge.systems import identity
 from deluge.systems.subsistence import fed_capacity, food_per_head, mode_capacity, mode_parameters
@@ -143,15 +149,30 @@ def best_free_cell(model, sid: int, people: float, min_ratio: float, origin: int
     return int(cells[i]), float(u[i])
 
 
+def welcoming(model, sid: int, hosts: np.ndarray) -> np.ndarray:
+    """The ``hosts`` that would take in band ``sid``: those of its own polity, and those of
+    another polity with chance = that polity brain's newcomers output."""
+    t = model.settlements
+    foreign = t.polity[hosts] != t.polity[sid]
+    if not foreign.any():
+        return hosts
+    accept = model.brains.output[t.polity[hosts], OUT["newcomers"]]
+    draw = model.streams["migration"].random(len(hosts))
+    return hosts[~foreign | (draw < accept)]
+
+
 def best_kin_to_join(model, sid: int) -> int:
-    """The reachable band of the same lineage where food per head after taking in band
-    ``sid`` would be highest, if that beats staying; -1 if none does."""
+    """The reachable band of the same lineage that would take band ``sid`` in
+    (``welcoming``) where food per head after taking it in would be highest, if that beats
+    staying; -1 if none does."""
     t, d = model.settlements, model.config.demography
     origin, pop = int(t.cell[sid]), float(t.population[sid])
     cells, _ = reach(model, sid)
     hosts = model.occupant[cells]
     hosts = hosts[hosts >= 0]
     hosts = hosts[t.lineage[hosts] == t.lineage[sid]]
+    if len(hosts):
+        hosts = welcoming(model, sid, hosts)
     if len(hosts) == 0:
         return -1
     k_host = mode_capacity(model, t.knows[hosts], t.cell[hosts])
@@ -199,6 +220,8 @@ def relocate_drowned(model) -> None:
         host = model.occupant[cells]
         kin = host[(host >= 0) & (t.lineage[np.maximum(host, 0)] == t.lineage[sid])]
         if len(kin):
+            kin = welcoming(model, sid, kin)
+        if len(kin):
             join_kin(model, sid, int(kin[np.argmax(t.population[kin])]))
         else:
             model.stats["drowned_lost"] += pop
@@ -214,6 +237,32 @@ def free_land_nearby(model) -> np.ndarray:
     for _ in range(radius):
         near = near | model.geom.neighbor_any(near)
     return near
+
+
+def move_cores(model, near_free: np.ndarray) -> None:
+    """Migration of the core: a polity's capital band, unless sedentary, moves whole with
+    chance ``core_move_rate`` x its brain's core migration output, if a free cell in reach
+    promises more than staying."""
+    m, t, P = model.config.migration, model.settlements, model.polities
+    pids = P.alive_ids()
+    if len(pids) == 0:
+        return
+    farm = MODES.index("farm")
+    draw = model.streams["migration"].random(len(pids))
+    going = pids[draw < m.core_move_rate * model.brains.output[pids, OUT["core_migration"]]]
+    for pid in going.tolist():
+        cap = int(P.capital[pid])
+        if t.ended[cap] != ALIVE or t.polity[cap] != pid or t.shares[cap, farm] >= m.sedentary_farm_share:
+            continue
+        origin = int(t.cell[cap])
+        if not near_free[origin]:
+            continue
+        pop = float(t.population[cap])
+        here = cell_utility(model, cap, np.array([origin]), np.zeros(1, dtype=np.int64), pop)[0]
+        cell, util = best_free_cell(model, cap, pop, 0.0)
+        if cell >= 0 and util > here:
+            move(model, cap, cell)
+            near_free = free_land_nearby(model)
 
 
 def migrate(model) -> None:
@@ -247,10 +296,14 @@ def migrate(model) -> None:
             model.stats["moves"] += 1
             near_free = free_land_nearby(model)
 
+    move_cores(model, near_free)
+    near_free = free_land_nearby(model)
+
     # Crowded bands split (founding only fills cells, so the mask stays conservative).
     ids = t.alive_ids()
     k = fed_capacity(t.shares[ids], mode_capacity(model, t.knows[ids], t.cell[ids]), d)
-    crowded = ids[(t.population[ids] >= m.split_threshold * k) & (t.next_split_year[ids] <= year)]
+    threshold = m.split_threshold + m.split_threshold_range * (0.5 - model.brains.output[t.polity[ids], OUT["expand"]])
+    crowded = ids[(t.population[ids] >= threshold * k) & (t.next_split_year[ids] <= year)]
     for sid in crowded.tolist():
         leaving = m.split_fraction * float(t.population[sid])
         cell = -1

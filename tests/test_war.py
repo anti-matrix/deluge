@@ -1,8 +1,9 @@
-"""Round 6: war and conquest (spec section 9).
+"""Round 6: war and conquest (spec section 9); the choice follows the brains from Round 7.
 
 Scenarios run on the small test world with settlements held in place and fed
 (``test_polities.held``); war is switched on where a test needs the yearly choice, and
-battles are otherwise resolved directly with ``war.battle``.
+battles are otherwise resolved directly with ``war.battle``. Where a test needs a given
+choice, the polity gets a scripted brain (``test_brains.scripted``).
 """
 
 import numpy as np
@@ -325,16 +326,21 @@ def test_recent_war_raises_frontier_pressure():
 # --- choice ----------------------------------------------------------------------------------------
 
 
-def test_militarism_drives_attacks_and_wars_stay_capped():
-    """A militarist attacks its pacifist neighbours, which never attack (militarism 0); an
-    attacker never fights more than max_wars polities within the war memory."""
-    over = dict(HELD, war={"attack_rate": 1.0, "max_wars": 1, "campaign_share": 0.0, "battle_log_min_losses": 0.0})
+def test_aggression_drives_attacks_and_wars_stay_capped():
+    """An aggressive brain attacks its neighbours, whose brains (aggression 0) never attack;
+    an attacker never fights more than max_wars polities within the war memory."""
+    from test_brains import SATURATE, scripted
+
+    over = dict(HELD, war={"attack_rate": 1.0, "max_wars": 1, "battle_log_min_losses": 0.0})
     m = small_model(over, years=200)
     m.step()
     origin = interior_cell(m, 4)
-    a, _ = lone_polity(m, origin, pop=3000.0, culture=culture(militarism=1.0))
-    b, _ = lone_polity(m, free_land(m, origin, 1)[0], lineage=1, pop=3000.0, culture=culture(militarism=0.0))
-    c, _ = lone_polity(m, free_land(m, origin, 2)[0], lineage=2, pop=3000.0, culture=culture(militarism=0.0))
+    a, _ = lone_polity(m, origin, pop=3000.0)
+    b, _ = lone_polity(m, free_land(m, origin, 1)[0], lineage=1, pop=3000.0)
+    c, _ = lone_polity(m, free_land(m, origin, 2)[0], lineage=2, pop=3000.0)
+    scripted(m, a, aggression=1.0, campaign=0.0, target={"bias": SATURATE})
+    for pid in (b, c):
+        scripted(m, pid, aggression=0.0)
     for _ in range(100):
         m.step()
     battles = [(r["year"], r["actors"][0], r["actors"][1]) for r in events(m, "fought")]
@@ -346,17 +352,22 @@ def test_militarism_drives_attacks_and_wars_stay_capped():
         assert len({d for yy, d in by_a if y - memory <= yy <= y}) <= 1
 
 
-def test_war_choice_ignores_appearance_and_dialect():
-    """Same seeds and an active war; one run has every settlement's appearance and dialect
-    replaced: every war decision and outcome is identical."""
-    over = dict(HELD, war={"attack_rate": 1.0})
+def test_war_choice_ignores_appearance_and_dialect_while_marker_weights_are_zero():
+    """Same seeds and an active war between brains whose marker weights are zero (the
+    founding default, frozen so no mutation moves them); one run has every settlement's
+    appearance and dialect replaced: every war decision and outcome is identical."""
+    from test_brains import SATURATE, scripted
+
+    over = dict(HELD, war={"attack_rate": 1.0}, brains={"frozen": True}, polities={"marker_mutation": 0.0})
 
     def scenario():
         m = small_model(over, years=200)
         m.step()
         origin = interior_cell(m, 4)
-        lone_polity(m, origin, pop=3000.0, culture=culture(militarism=1.0))
-        lone_polity(m, free_land(m, origin, 1)[0], lineage=1, pop=3000.0, culture=culture(militarism=1.0))
+        a, _ = lone_polity(m, origin, pop=3000.0, culture=culture(militarism=1.0))
+        b, _ = lone_polity(m, free_land(m, origin, 1)[0], lineage=1, pop=3000.0, culture=culture(militarism=1.0))
+        for pid in (a, b):
+            scripted(m, pid, aggression=1.0, target={"bias": SATURATE})
         return m
 
     x, y = scenario(), scenario()
@@ -377,10 +388,13 @@ def test_war_choice_ignores_appearance_and_dialect():
 
 
 def test_war_switch():
+    from test_brains import SATURATE, scripted
+
     m = small_model(dict(HELD, war={"enabled": False, "attack_rate": 1.0}), years=100)
     m.step()
     origin = interior_cell(m, 4)
-    lone_polity(m, origin, pop=3000.0, culture=culture(militarism=1.0))
+    a, _ = lone_polity(m, origin, pop=3000.0, culture=culture(militarism=1.0))
+    scripted(m, a, aggression=1.0, target={"bias": SATURATE})
     lone_polity(m, free_land(m, origin, 1)[0], lineage=1, pop=3000.0)
     m.run()
     assert m.datacollector.get_model_vars_dataframe()["battles"].sum() == 0

@@ -49,6 +49,11 @@ def test_run_script_acceptance(tmp_path, small_cfg):
     assert len(ev_a) > 0 and set(ev_a.columns) == {"year", "action", "actors", "place", "magnitude"}
     entities = pd.read_parquet(tmp_path / "a" / "entities.parquet")
     assert set(entities.entity) == {a for actors in ev_a.actors for a in actors}
+    brains = pd.read_parquet(tmp_path / "a" / "brains" / "brains.parquet")
+    tree = pd.read_parquet(tmp_path / "a" / "polity_tree.parquet")
+    layout = json.loads((tmp_path / "a" / "brains" / "layout.json").read_text(encoding="utf-8"))
+    assert list(brains.polity) == list(tree.polity) and list(brains.parent) == list(tree.parent)
+    assert {len(w) for w in brains.weights} == {layout["blocks"]["q0"]["stop"]}
 
 
 @pytest.mark.slow

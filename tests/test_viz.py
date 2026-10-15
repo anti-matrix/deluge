@@ -178,3 +178,33 @@ def test_polity_overlay_shades_each_polity_by_its_group(model):
     assert "polities of group A" in portrayal.legend_html(vcfg, "polity", app.CONFIG.founders.names)
     assert "Polities: 5" in portrayal.status_text(model)
     assert "iron ore" in portrayal.legend_html(app.VIZ, "resources", app.CONFIG.founders.names)
+
+
+def test_chronicle_filter_reads_one_snapshot_while_events_are_appended():
+    """The model can append events while the browser chronicle filters (Round 6 bug:
+    "operands could not be broadcast together"). Events appended between the column
+    reads of one select wait for the next select."""
+    from deluge.data import chronicle
+
+    m = small_model(years=20)
+    for _ in range(5):
+        m.step()
+    view = chronicle.Chronicle(m)
+
+    class AppendingWhileRead:
+        """An actions filter whose iteration appends events, as a running model would."""
+
+        def __iter__(self):
+            for _ in range(3):
+                m.log_event("moved", [("settlement", 0)], 0, 1.0)
+            return iter(["moved", "founded"])
+
+    n = len(m.events)
+    sel = view.select(actions=AppendingWhileRead(), groups={0, 1, 2, 3, 4}, year_min=0)
+    assert len(m.events) == n + 3 and (sel < n).all()
+    # Half-appended record (year written, other columns not yet): left for the next call.
+    m.events.year.append(m.year)
+    later = view.select(actions={"moved"})
+    m.events.year.pop()
+    assert later.max() == n + 2
+    assert len(view.text().splitlines()) == n + 3

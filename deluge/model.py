@@ -8,8 +8,11 @@ in ``deluge/systems/``; they are appended to ``PHASES`` in fixed order as rounds
     9 memory, 10 data collection.
 
 Phase 3 starts by moving bands whose cell the sea took this year (they move before they
-eat), then runs subsistence and demography. Phase 7 runs war (assimilation of
-conquered settlements, then the rule-based war choice and battles). Phase 8 runs cohesion
+eat), then runs subsistence and demography. Phase 6 evaluates every polity brain in one
+batch (``systems/decide.py``); its outputs steer the year's war, tribute and monuments
+and, until the next decision, expansion, migration of the core, openness to newcomers
+and subsistence shift. Phase 7 runs war (assimilation of
+conquered settlements, then the brains' war choice and battles). Phase 8 runs cohesion
 (tribute, monuments, elites, pressure, cohesion), then politics (secession, fragmentation,
 mergers, culture drift, territory), then the drift and mixing of appearance and dialect.
 
@@ -34,11 +37,13 @@ from deluge.agents.lineage import LineageRegistry
 from deluge.agents.polity import END_CAUSES, Monuments, Polity, PolityTable
 from deluge.agents.settlement import MODES, Settlement, SettlementTable
 from deluge.agents.teachers import TeachersState
+from deluge.brains import evolution, features, network
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
 from deluge.data.events import EventLog, entity
 from deluge.rng import RngStreams
-from deluge.systems import capacity, climate, cohesion, demography, identity, knowledge, politics, subsistence, war
+from deluge.systems import (capacity, climate, cohesion, decide, demography, identity, knowledge, politics,
+                            subsistence, war)
 from deluge.systems.knowledge import KnowledgeGraph, usable_mask
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
@@ -54,6 +59,7 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
     demography.grow,
     demography.migrate,
     knowledge.run,
+    decide.run,
     war.run,
     cohesion.run,
     politics.run,
@@ -154,6 +160,13 @@ class DelugeModel(mesa.Model):
         self.lineages = LineageRegistry()
         self.polities = PolityTable(len(cfg.founders.culture_traits), len(MINERALS))
         self.polity_agents: dict[int, Polity] = {}
+        self.brain_layout = network.Layout(features.input_names(cfg.brains), cfg.brains.hidden, network.OUTPUTS,
+                                           features.TARGET_FEATURES)
+        self.brains = network.BrainTable(self.brain_layout, cfg.brains.recurrent_units,
+                                         cfg.brains.features.growth_window_years)
+        self.brain_fan_in = self.brain_layout.fan_in()
+        self.brain_marker_mask = self.brain_layout.mask(features.MARKER_FEATURES, features.MARKER_TARGET_FEATURES)
+        self.brain_output_mean = np.zeros(len(network.OUTPUTS))
         self.monuments = Monuments()
         self.wars: dict[tuple[int, int], int] = {}  # polity pair (low id first) -> year of its last battle
         self.wars_active = 0
@@ -236,12 +249,27 @@ class DelugeModel(mesa.Model):
     # --- polities --------------------------------------------------------------------------
 
     def found_polity(self, lineage: int, parent: int, capital: int, culture: np.ndarray, intermarriage: float,
-                     cohesion: float) -> int:
-        """A new polity with ``capital``; a capital with no polity yet takes its culture."""
+                     cohesion: float, marker: np.ndarray | None = None) -> int:
+        """A new polity with ``capital``; a capital with no polity yet takes its culture.
+
+        Its brain: a mutated copy of the parent's, with the parent's priorities until its
+        first decision; without a parent, a fresh random brain (``brains`` stream) and its
+        response to zero inputs. ``marker``: its marker parameters (zero if None)."""
         if self.settlements.polity[capital] < 0:
             self.settlements.culture[capital] = culture
-        pid = self.polities.add(lineage, parent, self.year, capital, culture, intermarriage, cohesion,
-                                self.config.polities.elites.initial_ratio)
+        P, B = self.polities, self.brains
+        pid = P.add(lineage, parent, self.year, capital, culture, intermarriage, cohesion,
+                    self.config.polities.elites.initial_ratio, marker)
+        rng = self.streams["brains"]
+        if parent >= 0:
+            P.load[pid] = P.load[parent]
+            B.born(pid, evolution.mutate(B.genome[parent], self.config.brains, rng), B.output[parent],
+                   B.target_w[parent], B.state[parent])
+        else:
+            genome = evolution.founder_genome(self.brain_fan_in, self.brain_marker_mask, self.config.brains, rng)
+            out, target_w, _ = network.forward(self.brain_layout, genome[None, :],
+                                               np.zeros((1, self.brain_layout.n_in)))
+            B.born(pid, genome, out[0], target_w[0], np.zeros(B.state.shape[1]))
         self.polity_agents[pid] = Polity(self, pid)
         self.stats["polities_founded"] += 1
         return pid

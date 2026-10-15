@@ -29,9 +29,12 @@ def test_no_other_system_reads_the_markers():
 
 
 def test_markers_have_no_capability_effect():
-    """Same seeds; one run has every founding people's appearance and dialect replaced.
-    Everything but the markers is identical after 300 years."""
-    a, b = small_model(years=300), small_model(years=300)
+    """Same seeds, perception blind (so the only channel the markers have, perception
+    through evolved weights, is shut); one run has every founding people's appearance and
+    dialect replaced. Everything but the markers is identical after 300 years.
+    (``test_brains`` checks the same with perception on and marker weights at zero.)"""
+    blind = {"ancestry": {"blind_perception": True}}
+    a, b = small_model(blind, years=300), small_model(blind, years=300)
     t = b.settlements
     rng = np.random.default_rng(99)
     ids = t.alive_ids()

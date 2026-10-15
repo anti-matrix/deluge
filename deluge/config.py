@@ -439,6 +439,7 @@ class DemographyConfig:
     herd_max_growth: float
     farm_max_growth: float
     mode_shift_rate: float
+    mode_brain_bias: float
     farm_stickiness: float
     famine_mortality: float
     famine_max_mortality: float
@@ -463,6 +464,8 @@ class MigrationConfig:
     famine_move_ratio: float
     sedentary_farm_share: float
     farmer_famine_years: int
+    split_threshold_range: float
+    core_move_rate: float
 
 
 # --- knowledge, teachers, events --------------------------------------------------------------
@@ -594,6 +597,11 @@ class PolitiesConfig:
     region_spacing: int
     merge_rate: float
     merge_crossover_chance: float
+    marker_mutation: float
+    marker_effect_max: float
+    marker_cohesion_decay: float
+    marker_grievance_rate: float
+    marker_factor_max: float
     cohesion: CohesionConfig
     pressure: PressureConfig
     elites: EliteConfig
@@ -625,6 +633,9 @@ class AncestryConfig:
     selection_rate: float
     selection_optimum_equator: float
     selection_optimum_pole: float
+    blind_perception: bool
+    perceived_appearance_reference: float
+    perceived_dialect_reference: float
 
 
 @dataclass(frozen=True)
@@ -633,11 +644,7 @@ class WarConfig:
     attack_rate: float
     max_wars: int
     war_memory_years: int
-    weight_stores: float
-    weight_land: float
-    weight_weakness: float
     store_half_years: float
-    campaign_share: float
     mobilization_base: float
     mobilization_militarism: float
     mobilization_hierarchy: float
@@ -666,6 +673,36 @@ class WarConfig:
     assimilation_rate: float
     assimilation_memory_weight: float
     assimilated_distance: float
+
+
+@dataclass(frozen=True)
+class BrainFeaturesConfig:
+    log_population_center: float
+    log_population_scale: float
+    store_half_years: float
+    elite_reference: float
+    settlements_reference: float
+    growth_window_years: int
+    technique_reference: float
+    strength_ratio_scale: float
+    hostile_reference: float
+    war_record_reference: float
+    war_record_decay: float
+    temp_anomaly_scale: float
+
+
+@dataclass(frozen=True)
+class BrainsConfig:
+    hidden: int
+    recurrent_units: int
+    memory_inputs: int
+    init_sigma: float
+    marker_init_sigma: float
+    mutation_sigma: float
+    jump_chance: float
+    jump_sigma: float
+    frozen: bool
+    features: BrainFeaturesConfig
 
 
 # --- output and rendering ----------------------------------------------------------------------
@@ -735,6 +772,7 @@ class Config:
     polities: PolitiesConfig
     ancestry: AncestryConfig
     war: WarConfig
+    brains: BrainsConfig
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig

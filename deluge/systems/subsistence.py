@@ -12,10 +12,11 @@ available = production + what is left of the store after spoilage; food per head
 capacity (``fed_capacity``) is the population its mode mix feeds at one ration per head;
 for a pure forager band it is the cell's forage capacity.
 
-Mode choice is a rule-based placeholder until the polity brains of Round 7: each year a
-settlement moves ``mode_shift_rate`` of its people toward the mode whose shift promises
-the fastest growth (farming grows fastest but yields less per worker; foraging the
-reverse), or stays. Leaving farming is sticky (``farm_stickiness``).
+Mode choice: each year a settlement moves ``mode_shift_rate`` of its people toward the
+mode whose shift promises the fastest growth (farming grows fastest but yields less per
+worker; foraging the reverse), or stays. Its polity brain influences the choice: a shift
+toward farming (herding) gets ``mode_brain_bias`` x (farming (herding) output - 0.5)
+added to its expected growth. Leaving farming is sticky (``farm_stickiness``).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import numpy as np
 
 from deluge.agents.settlement import MODES
+from deluge.brains.network import OUT
 from deluge.systems.knowledge import production_multiplier
 
 
@@ -96,6 +98,10 @@ def shift_modes(model, ids: np.ndarray, k: np.ndarray) -> np.ndarray:
     shares = available_shares(t.shares[ids], available)
     pop = t.population[ids]
     farm = MODES.index("farm")
+    brain = model.brains.output[t.polity[ids]]
+    bias = np.zeros((len(ids), len(MODES)))
+    bias[:, farm] = d.mode_brain_bias * (brain[:, OUT["farming"]] - 0.5)
+    bias[:, MODES.index("herd")] = d.mode_brain_bias * (brain[:, OUT["herding"]] - 0.5)
     best = shares
     best_g = expected_growth(shares, k, pop, d)
     for m in range(len(MODES)):
@@ -112,7 +118,7 @@ def shift_modes(model, ids: np.ndarray, k: np.ndarray) -> np.ndarray:
             others[:, farm] = new_farm
             cand = np.where(leaving[:, None], others, cand)
         ok = available[:, m]
-        g = expected_growth(cand, k, pop, d)
+        g = expected_growth(cand, k, pop, d) + bias[:, m]
         better = ok & (g > best_g + 1e-12)
         best = np.where(better[:, None], cand, best)
         best_g = np.where(better, g, best_g)

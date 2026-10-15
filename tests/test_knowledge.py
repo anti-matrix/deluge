@@ -202,11 +202,15 @@ def test_latent_technique_decays_slowly_and_silently(cfg):
 
 
 def test_practised_flag_follows_use(early):
-    """A technique counts as practised once used where it is held; a farming band has
-    practised agriculture."""
+    """A technique counts as practised once used where it is held; a farming band where
+    agriculture is usable has practised it. (A band can keep a farming share on a cell where
+    farming is latent when the growth comparison is a close call the brain tips, Round 7.)"""
+    from deluge.systems.knowledge import usable_mask
+
     t, g = early.settlements, early.knowledge
     ids = t.alive_ids()
-    farming = ids[t.shares[ids, 2] >= early.config.knowledge.use_share]
+    usable = usable_mask(early, ids)[:, g.index("agriculture")]
+    farming = ids[(t.shares[ids, 2] >= early.config.knowledge.use_share) & usable]
     assert len(farming)
     assert t.practised[farming, g.index("agriculture")].all()
     assert not (t.practised[: t.n] & ~t.knows[: t.n]).any()

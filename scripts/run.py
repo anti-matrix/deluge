@@ -4,7 +4,8 @@
 
 Writes runs/<run_id>/model.parquet, events.parquet (the raw event log), entities.parquet
 (kind and label of every entity id in the log), polity_tree.parquet (the polity lineage
-tree) and meta.json.
+tree), brains/brains.parquet (every brain born: polity, parent, group, year, weights) with
+brains/layout.json (where each weight sits), and meta.json.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pathlib import Path
 import mesa
 import pandas as pd
 
+from deluge.brains.network import archive_frame
 from deluge.config import DEFAULT_CONFIG_PATH, load_config, read_overrides
 from deluge.data.chronicle import Namer
 from deluge.data.events import decode
@@ -98,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     model.events.write(out_dir / "events.parquet")
     entity_table(model).to_parquet(out_dir / "entities.parquet", index=False)
     model.lineages.polity_tree(model).to_parquet(out_dir / "polity_tree.parquet", index=False)
+    (out_dir / "brains").mkdir(exist_ok=True)
+    archive_frame(model).to_parquet(out_dir / "brains" / "brains.parquet", index=False)
+    (out_dir / "brains" / "layout.json").write_text(json.dumps(model.brain_layout.to_dict(), indent=1),
+                                                    encoding="utf-8")
     meta = {
         "run_id": run_id,
         "world_seed": cfg.run.world_seed,

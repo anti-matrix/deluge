@@ -3,10 +3,12 @@
 - Secession: each member settlement but the capital secedes with probability
   ``secession_base`` x (hex steps to the capital / reference) ** exponent x (1 - cohesion)
   x (1 + ``secession_pressure_weight`` x pressure) x (1 + ``secession_grievance_weight`` x
-  the settlement's grievance from conquest, ``systems/war.py``), capped. Seceding settlements of one
-  polity that are in contact with each other (``contact_radius``, transitively) form one
-  new polity. The weight the polity's culture gives to cultural, dialect and appearance
-  distance from the core is zero until perception is wired (Round 7).
+  the settlement's grievance from conquest, ``systems/war.py``) x the marker factor, capped.
+  Marker factor: 1 + the polity's secession marker parameters . the settlement's perceived
+  appearance and dialect distance and culture distance from the core, clipped to [0,
+  ``marker_factor_max``] (1 in the founders, whose parameters are zero). Seceding
+  settlements of one polity that are in contact with each other (``contact_radius``,
+  transitively) form one new polity.
 - Fragmentation: a polity whose cohesion is below ``fragment_cohesion`` while its pressure
   is above ``fragment_pressure`` breaks, with chance ``fragment_rate`` a year, into its
   regions: regional seats are its largest settlements at least ``region_spacing`` steps
@@ -14,15 +16,18 @@
   a new polity; the old one ends (``fragmented``).
 - Every new polity keeps the parent's lineage, inherits its intermarriage rate and its
   members' own culture (the parent's, except in conquered members that kept theirs) with
-  Gaussian mutation (``culture_mutation``), starts at ``child_cohesion`` and the
-  initial elite ratio, and records its parent, so the polity tree stays complete. (Brains
-  and memory copies join in Rounds 7 and 8.)
+  Gaussian mutation (``culture_mutation``), the parent's marker parameters with Gaussian
+  mutation (``marker_mutation``, bounded by ``marker_effect_max``) and a mutated copy of
+  the parent's brain (``model.found_polity``, ``brains/evolution.py``), starts at
+  ``child_cohesion`` and the initial elite ratio, and records its parent, so the polity
+  tree stays complete. (Memory copies join in Round 8.)
 - Mergers: two polities in contact merge with chance ``merge_rate`` x affinity x common
   threat; affinity is their shared-memory overlap (Round 8) and the threat a common enemy.
   Mergers stay inactive until shared memory exists (Round 8): no merger happens yet, and
   the common enemy is not computed. ``merge`` does the union:
-  the larger partner absorbs the smaller, keeps its culture (uniform crossover with the
-  smaller one's with chance ``merge_crossover_chance``), and the smaller ends (``merged``).
+  the larger partner absorbs the smaller, keeps its culture and brain (each a uniform
+  crossover with the smaller one's with chance ``merge_crossover_chance``), and the smaller
+  ends (``merged``).
 - Culture drift: culture moves toward the mean culture of the polities in contact.
 - Territory: the cells of the members and those within ``territory_radius`` of them; a
   deposit there gives every member access (spec section 5).
@@ -32,15 +37,22 @@ from __future__ import annotations
 
 import numpy as np
 
-from deluge.systems.cohesion import settlement_contacts
+from deluge.agents.polity import marker_index
+from deluge.brains import evolution
+from deluge.systems import identity
+from deluge.systems.cohesion import culture_distance, settlement_contacts
 
 
-def mutated(model, culture: np.ndarray, intermarriage: float) -> tuple[np.ndarray, float]:
-    sd = model.config.polities.culture_mutation
+def mutated(model, culture: np.ndarray, intermarriage: float, marker: np.ndarray
+            ) -> tuple[np.ndarray, float, np.ndarray]:
+    pc = model.config.polities
+    sd = pc.culture_mutation
     rng = model.streams["politics"]
     c = np.clip(culture + rng.normal(0.0, sd, size=culture.shape), 0.0, 1.0)
     im = float(np.clip(intermarriage + rng.normal(0.0, sd), 0.0, 1.0))
-    return c, im
+    mk = np.clip(marker + rng.normal(0.0, pc.marker_mutation, size=marker.shape),
+                 -pc.marker_effect_max, pc.marker_effect_max)
+    return c, im, mk
 
 
 def spin_off(model, parent: int, members: list[int]) -> int:
@@ -52,9 +64,9 @@ def spin_off(model, parent: int, members: list[int]) -> int:
     capital = int(members_arr[np.argmax(t.population[members_arr])])
     w = np.maximum(t.population[members_arr], 1e-12)
     own = (w @ t.culture[members_arr]) / w.sum()
-    culture, im = mutated(model, own, float(P.intermarriage[parent]))
+    culture, im, marker = mutated(model, own, float(P.intermarriage[parent]), P.marker[parent])
     pid = model.found_polity(int(P.lineage[parent]), parent, capital, culture, im,
-                             model.config.polities.cohesion.child_cohesion)
+                             model.config.polities.cohesion.child_cohesion, marker)
     t.polity[members_arr] = pid
     t.culture[members_arr] = culture
     t.subject_of[members_arr] = -1
@@ -98,9 +110,13 @@ def secession(model) -> None:
     pol = t.polity[ids]
     capital = P.capital[pol]
     steps = model.geom.hex_distance(t.cell[ids], t.cell[capital]).astype(float)
+    app, dia = identity.core_distances(model, ids)
+    e = P.marker[pol][:, marker_index("secession_appearance", "secession_dialect", "secession_culture")]
+    gap = culture_distance(t.culture[ids], P.culture[pol])
+    factor = np.clip(1.0 + e[:, 0] * app + e[:, 1] * dia + e[:, 2] * gap, 0.0, pc.marker_factor_max)
     p = (pc.secession_base * (steps / pc.secession_distance_reference) ** pc.secession_distance_exponent
          * (1.0 - P.cohesion[pol]) * (1.0 + pc.secession_pressure_weight * P.pressure[pol])
-         * (1.0 + pc.secession_grievance_weight * t.grievance[ids]))
+         * (1.0 + pc.secession_grievance_weight * t.grievance[ids]) * factor)
     p = np.where(ids == capital, 0.0, np.minimum(p, pc.secession_max))
     leaving = model.streams["politics"].random(len(ids)) < p
     if not leaving.any():
@@ -184,6 +200,9 @@ def merge(model, a: int, b: int) -> int:
     if rng.random() < model.config.polities.merge_crossover_chance:
         take = rng.random(P.culture.shape[1]) < 0.5
         P.culture[big] = np.where(take, P.culture[small], P.culture[big])
+    if rng.random() < model.config.polities.merge_crossover_chance:
+        B = model.brains
+        B.replace(big, evolution.crossover(B.genome[big], B.genome[small], model.streams["brains"]), model.year)
     wb, ws = max(float(P.population[big]), 1.0), max(float(P.population[small]), 1.0)
     for col in (P.cohesion, P.elite_ratio):
         col[big] = (wb * col[big] + ws * col[small]) / (wb + ws)

@@ -3,18 +3,16 @@
 Each year, first the conquered settlements assimilate (``assimilate``), then, with
 ``war.enabled``, the polities choose and fight their battles (``fight``).
 
-Choice (rule-based placeholder until the brains, Round 7). The candidate targets of a
-polity are the foreign settlements in contact (``polities.contact_radius``) with one of its
-own. Each candidate's score is attractiveness x the estimated win chance, attractiveness
-the weighted mean of its stores (years of food per head, s / (s + ``store_half_years``)),
-the fertility of its cell and the attacker's edge (R / (R + 1), R the estimated strength
-ratio). Each polity takes its best-scoring target and attacks it with chance
-``attack_rate`` x militarism x score x min(food per head, 1) (its surplus capacity to fight);
-a campaign rather than a raid with chance ``campaign_share`` x the estimated win chance. A
-polity already at war with ``max_wars`` polities only attacks those. Appearance and dialect
-are not perceived (Round 7 wires them into the brain's target head), and the teachers are
-not chosen as a target: they hold no stores or land (``TeachersState.attacked`` is there
-for the brains).
+Choice (the polity brains, Round 7). The candidate targets of a polity are the foreign
+settlements in contact (``polities.contact_radius``) with one of its own. The polity's
+per-neighbour head scores each candidate from its target features
+(``brains/features.py``: estimated win chance, stores, fertility, culture distance,
+perceived appearance and dialect distance, already at war, a capital). Each polity takes
+its best-scoring target and attacks it with chance ``attack_rate`` x its aggression output
+x score x min(food per head, 1) (its surplus capacity to fight); a campaign rather than a
+raid with chance = its campaign output. A polity already at war with ``max_wars`` polities
+only attacks those. The teachers are not chosen as a target: they hold no stores or land
+(``TeachersState.attacked`` stays for a later round).
 
 Strength S = P x mobilization x M_tech x (0.5 + cohesion) x D. Mobilization rises with
 militarism and hierarchy; M_tech is the product of the capital's military multipliers
@@ -40,8 +38,11 @@ at ``assimilation_rate`` x the ruler's openness (x (1 + memory weight x shared-m
 overlap; zero until Round 8)), its techniques pass to the ruler's capital at
 ``subject_diffusion_rate``, and its grievance decays; once grievance is low and its culture
 close to its ruler's it is assimilated. Grievance raises secession and lowers cohesion
-(``politics``, ``cohesion``); each battle counts as recent war in frontier pressure.
-Members that are not subjects hold their polity's culture.
+(``politics``, ``cohesion``); each battle counts as recent war in frontier pressure, and
+as a win or a loss in the brain inputs. Members that are not subjects hold their polity's
+culture. Every member's grievance also moves by ``polities.marker_grievance_rate`` x its
+polity's grievance marker parameters . its perceived appearance and dialect distance from
+the capital (zero in the founders; floored at 0).
 
 Events (raw): ``fought`` (attacker polity, defender polity, target settlement; dead) for
 battles with at least ``battle_log_min_losses`` dead; ``won`` (attacker, defender, target;
@@ -56,6 +57,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from deluge.agents.polity import marker_index
+from deluge.brains.features import target_features
+from deluge.brains.network import OUT, target_scores
 from deluge.systems import identity, knowledge
 from deluge.systems.cohesion import culture_distance, settlement_contacts, trait_index
 from deluge.world.worlddata import terrain_table
@@ -102,6 +106,10 @@ def assimilate(model) -> None:
             for i, j in zip(*np.nonzero(offer & draw)):
                 knowledge.grant(model, int(capital[i]), int(j), int(subjects[i]))
     t.grievance[ids] *= 1.0 - w.grievance_decay
+    app, dia = identity.core_distances(model, ids)
+    e = P.marker[pol][:, marker_index("grievance_appearance", "grievance_dialect")]
+    rate = model.config.polities.marker_grievance_rate
+    t.grievance[ids] = np.maximum(t.grievance[ids] + rate * (e[:, 0] * app + e[:, 1] * dia), 0.0)
     gap = culture_distance(t.culture[ids], P.culture[pol])
     done = subject & (t.grievance[ids] < w.grievance_floor) & (gap < w.assimilated_distance)
     t.subject_of[ids[done]] = -1
@@ -110,23 +118,43 @@ def assimilate(model) -> None:
 # --- strength ---------------------------------------------------------------------------------
 
 
+def _mobilization_and_tech(model, ids: np.ndarray, pol: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per polity id: mobilization share and military multiplier (capital's techniques,
+    teachers' weapons)."""
+    w, cfg = model.config.war, model.config
+    t, P, g = model.settlements, model.polities, model.knowledge
+    n = P.n
+    culture = P.culture[:n]
+    mob = np.clip(w.mobilization_base + w.mobilization_militarism * culture[:, trait_index(model, "militarism")]
+                  + w.mobilization_hierarchy * culture[:, trait_index(model, "hierarchy")], 0.0, w.mobilization_max)
+    tech = g.multiplier(t.knows[P.capital[:n]], "military")
+    armed = np.zeros(n, dtype=bool)
+    armed[pol[model.teachers_state.weapons_holders(ids)]] = True
+    return mob, np.where(armed, tech * cfg.teachers.weapons_military, tech)
+
+
+def polity_strength(model) -> np.ndarray:
+    """Per polity id: people x mobilization x M_tech x (0.5 + cohesion), before distance and
+    terrain (the brains' strength-ratio inputs)."""
+    t, P = model.settlements, model.polities
+    ids = t.alive_ids()
+    pol = t.polity[ids]
+    people = np.bincount(pol, weights=t.population[ids], minlength=P.n)
+    mob, tech = _mobilization_and_tech(model, ids, pol)
+    return people * mob * tech * (0.5 + P.cohesion[: P.n])
+
+
 def forces(model) -> SimpleNamespace:
     """Per-polity numbers (indexed by polity id) that strength is built from, this year."""
-    w, cfg = model.config.war, model.config
+    w = model.config.war
     t, P, g = model.settlements, model.polities, model.knowledge
     ids = t.alive_ids()
     pol = t.polity[ids]
     n = P.n
     people = np.bincount(pol, weights=t.population[ids], minlength=n)
     fed = np.bincount(pol, weights=t.population[ids] * t.food_ratio[ids], minlength=n) / np.maximum(people, 1.0)
-    culture = P.culture[:n]
-    mob = np.clip(w.mobilization_base + w.mobilization_militarism * culture[:, trait_index(model, "militarism")]
-                  + w.mobilization_hierarchy * culture[:, trait_index(model, "hierarchy")], 0.0, w.mobilization_max)
+    mob, tech = _mobilization_and_tech(model, ids, pol)
     capital = P.capital[:n]
-    tech = g.multiplier(t.knows[capital], "military")
-    armed = np.zeros(n, dtype=bool)
-    armed[pol[model.teachers_state.weapons_holders(ids)]] = True
-    tech = np.where(armed, tech * cfg.teachers.weapons_military, tech)
     reach = w.logistics_km * g.multiplier(t.knows[capital], "raid_range")
     members: dict[int, list[int]] = {}
     for sid, p in zip(ids.tolist(), pol.tolist()):
@@ -189,18 +217,14 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool]]:
             return []
     sa, sd = strengths(model, F, a, b, x)
     p_win = win_chance(sa, sd, w.win_steepness)
-    years = t.store[x] / np.maximum(t.population[x], 1.0)
-    ratio = sa / np.maximum(sd, WIN_EPS)
-    attract = (w.weight_stores * years / (years + w.store_half_years)
-               + w.weight_land * model.world.fertility.ravel()[t.cell[x]]
-               + w.weight_weakness * ratio / (ratio + 1.0)) / (w.weight_stores + w.weight_land + w.weight_weakness)
-    score = attract * p_win
+    brains = model.brains
+    score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a])
     order = np.lexsort((-score, a))
     best = order[np.r_[True, a[order][1:] != a[order][:-1]]]  # top score per attacker, attacker id order
-    militarism = P.culture[a[best], trait_index(model, "militarism")]
-    p_attack = w.attack_rate * militarism * score[best] * np.clip(F.fed[a[best]], 0.0, 1.0)
+    out = brains.output[a[best]]
+    p_attack = w.attack_rate * out[:, OUT["aggression"]] * score[best] * np.clip(F.fed[a[best]], 0.0, 1.0)
     attack = rng.random(len(best)) < p_attack
-    campaign = rng.random(len(best)) < w.campaign_share * p_win[best]
+    campaign = rng.random(len(best)) < out[:, OUT["campaign"]]
     return [(int(a[j]), int(b[j]), int(src[j]), int(x[j]), bool(c))
             for j, go, c in zip(best.tolist(), attack.tolist(), campaign.tolist()) if go]
 
@@ -292,6 +316,8 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool) -> bool:
     model.stats["war_deaths"] += loss_a + loss_d
     P.war_recent[a] += 1.0
     P.war_recent[b] += 1.0
+    P.wins_recent[a if won else b] += 1.0
+    P.losses_recent[b if won else a] += 1.0
     model.wars[(min(a, b), max(a, b))] = model.year
     cell = int(t.cell[x])
     if loss_a + loss_d >= w.battle_log_min_losses:
@@ -323,6 +349,9 @@ def run(model) -> None:
     assimilate(model)
     P = model.polities
     P.war_recent[: P.n] *= 1.0 - w.war_recent_decay
+    keep = 1.0 - model.config.brains.features.war_record_decay
+    P.wins_recent[: P.n] *= keep
+    P.losses_recent[: P.n] *= keep
     if w.enabled:
         fight(model)
     year = model.year

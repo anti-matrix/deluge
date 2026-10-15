@@ -1,11 +1,17 @@
-"""Appearance and dialect: drift and mixing (spec "Ancestry, appearance and identity").
+"""Appearance and dialect: perception, drift and mixing (spec "Ancestry, appearance and identity").
 
 Markers only. This module is the only code that reads or writes the settlement table's
 ``appearance_mean``, ``appearance_var`` and ``dialect`` columns (a test enforces it);
 nothing here feeds back into production, fertility, health, strength or any other
-capability. Perception (polity brains reading appearance and dialect distance) is wired
-in Round 7; until then the inside-polity effects are zero by construction, because no
-other system reads these fields.
+capability.
+
+- Perception (``pair_distances``, ``core_distances``): the perceived appearance and
+  dialect distance between two settlements, tanh(euclidean distance / reference), 0..1.
+  Every other system sees the markers only through these two functions, and only two kinds
+  of reader use them: the polity brains (inputs and the per-neighbour target head, whose
+  marker weights start at zero, ``brains``) and the marker-effect culture parameters of
+  each polity (zero in the founders, ``agents/polity.py``). With ``blind_perception`` every
+  perceived distance is zero (the control condition).
 
 - Year 0 (``draw_founders``): each founding people gets its own mean per appearance trait
   (uniform in [founder_mean_min, founder_mean_max], redrawn until every two peoples are at
@@ -63,6 +69,24 @@ def draw_founders(model, founder_sids: list[int]) -> None:
         model.teachers_appearance = np.array(a.teachers_appearance, dtype=float)
     else:
         model.teachers_appearance = rng.uniform(a.founder_mean_min, a.founder_mean_max, size=k)
+
+
+def pair_distances(model, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Perceived (appearance, dialect) distance between settlements ``a`` and ``b`` (arrays
+    of ids, paired), each 0..1; zeros with ``blind_perception``."""
+    a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
+    cfg: AncestryConfig = model.config.ancestry
+    if cfg.blind_perception:
+        return np.zeros(len(a)), np.zeros(len(a))
+    t = model.settlements
+    app = np.linalg.norm(t.appearance_mean[a] - t.appearance_mean[b], axis=1)
+    dia = np.linalg.norm(t.dialect[a] - t.dialect[b], axis=1)
+    return np.tanh(app / cfg.perceived_appearance_reference), np.tanh(dia / cfg.perceived_dialect_reference)
+
+
+def core_distances(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Perceived (appearance, dialect) distance of each settlement from its polity's capital."""
+    return pair_distances(model, ids, model.polities.capital[model.settlements.polity[ids]])
 
 
 def inherit(model, child: int, parent: int) -> None:

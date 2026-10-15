@@ -150,9 +150,17 @@ class Chronicle:
     def __len__(self) -> int:
         return len(self.model.events)
 
-    def _sync(self) -> None:
+    def _snapshot(self) -> int:
+        """Number of events complete in every column right now. The model may append
+        events while the browser renders (each column is appended in turn), so a render
+        reads this once and slices every column to it."""
         log = self.model.events
-        for i in range(len(self._groups), len(log)):
+        return min(len(log.year), len(log.action), len(log.actors), len(log.place), len(log.magnitude))
+
+    def _sync(self, n: int | None = None) -> None:
+        log = self.model.events
+        n = self._snapshot() if n is None else n
+        for i in range(len(self._groups), n):
             mask = 0
             for a in log.actors[i]:
                 g = self.name.lineage_of(a)
@@ -170,16 +178,18 @@ class Chronicle:
     def select(self, groups: set[int] | None = None, actions: set[str] | None = None,
                year_min: int | None = None, year_max: int | None = None, text: str = "") -> np.ndarray:
         """Indices of the matching events, newest first. ``text`` matches the formatted
-        line, case-insensitively."""
-        self._sync()
+        line, case-insensitively. Every column is read up to one snapshot length, so events
+        appended meanwhile wait for the next call."""
+        n = self._snapshot()
+        self._sync(n)
         log = self.model.events
-        keep = np.ones(len(log), dtype=bool)
+        keep = np.ones(n, dtype=bool)
         if actions is not None:
-            keep &= np.isin(np.asarray(log.action, dtype=np.int64), [ACTION_CODE[a] for a in actions])
+            keep &= np.isin(np.asarray(log.action[:n], dtype=np.int64), [ACTION_CODE[a] for a in actions])
         if groups is not None:
             want = sum(1 << g for g in groups)
-            keep &= (np.asarray(self._groups, dtype=np.int64) & want) != 0
-        years = np.asarray(log.year, dtype=np.int64)
+            keep &= (np.asarray(self._groups[:n], dtype=np.int64) & want) != 0
+        years = np.asarray(log.year[:n], dtype=np.int64)
         if year_min is not None:
             keep &= years >= year_min
         if year_max is not None:
@@ -200,8 +210,9 @@ class Chronicle:
 
     def text(self, indices: np.ndarray | None = None) -> str:
         """The chronicle as plain text, oldest first: every event, or ``indices``."""
-        self._sync()
-        order = range(len(self)) if indices is None else sorted(int(i) for i in indices)
+        n = self._snapshot()
+        self._sync(n)
+        order = range(n) if indices is None else sorted(int(i) for i in indices)
         return "\n".join(self.line(i) for i in order) + "\n"
 
 

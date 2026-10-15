@@ -10,6 +10,7 @@ from functools import partial
 import mesa
 
 from deluge.agents.settlement import MODES
+from deluge.brains.network import OUTPUTS
 
 MODEL_REPORTERS = (
     "year",
@@ -50,12 +51,19 @@ def mode_population(index: int, model) -> float:
     return float(model.mode_population[index])
 
 
+def brain_output_mean(index: int, model) -> float:
+    return float(model.brain_output_mean[index])
+
+
 def make_datacollector(lineage_names: tuple[str, ...] = ()) -> mesa.DataCollector:
     """Reporters are module-level functions (bound with partial), not lambdas, so the
-    model stays picklable for checkpoints."""
+    model stays picklable for checkpoints. ``brain_<output>``: the mean of each brain
+    output over the living polities at this year's decision."""
     reporters: dict = {name: name for name in MODEL_REPORTERS}
     for name in YEAR_STAT_REPORTERS:
         reporters[name] = partial(year_stat, name)
+    for i, name in enumerate(OUTPUTS):
+        reporters[f"brain_{name}"] = partial(brain_output_mean, i)
     for i, mode in enumerate(MODES):
         reporters[f"pop_{mode}"] = partial(mode_population, i)
     for i, name in enumerate(lineage_names):

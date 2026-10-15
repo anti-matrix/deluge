@@ -5,11 +5,13 @@ Per living polity, each year, in this order:
 
 1. Membership: a polity with no settlements left ends (``extinct``); a polity whose
    capital ended or left takes its largest settlement as the new capital.
-2. Tribute: each member gives ``tribute_max_rate`` x hierarchy of its store to the
-   treasury, which spoils at ``treasury_spoilage``. (Rule-based placeholder for the brain
-   output of Round 7.)
+2. Tribute: each member gives ``tribute_max_rate`` x its polity brain's tribute output x
+   its marker factor of its store to the treasury (at most all of it), which spoils at
+   ``treasury_spoilage``. Marker factor: 1 + the polity's tribute marker parameters . the
+   member's perceived appearance and dialect distance from the capital, clipped to [0,
+   ``marker_factor_max``] (1 in the founders, whose parameters are zero).
 3. Monuments: once the capital holds megalithic construction, ``monument_max_share`` x
-   ritual_investment of the treasury goes to a monument fund; each ``monument_cost``
+   the brain's monument output of the treasury goes to a monument fund; each ``monument_cost``
    saved builds a monument at the capital (a ``built`` event). Every monument standing in
    the polity's settlements costs ``monument_upkeep`` x its cost a year; those the
    treasury can pay are maintained this year (oldest first), the rest are not. Maintained
@@ -29,14 +31,22 @@ Per living polity, each year, in this order:
 7. Cohesion: C' = C + r0 f C (1 - C) - delta C + monuments, with delta rising with size
    (scaled down by hierarchy and administration techniques), mean distance from the
    capital, inequality of food per head between members, elite pressure, pressure and the
-   members' grievance from conquest (population-weighted mean).
+   members' grievance from conquest (population-weighted mean), plus
+   ``marker_cohesion_decay`` x the cohesion marker parameters . the members' mean perceived
+   appearance and dialect distance from the capital (delta floored at 0).
    The shared-memory term joins in Round 8.
+
+The load (people over the capacity of the members' cells) is kept for the brains' headroom
+input.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
+from deluge.agents.polity import marker_index
+from deluge.brains.network import OUT
+from deluge.systems import identity
 from deluge.systems.subsistence import fed_capacity, mode_capacity
 
 TRAIT_DIST_EPS = 1e-12
@@ -91,7 +101,9 @@ def run(model) -> None:
     npol = P.n
     culture = P.culture
     hierarchy = culture[:, trait_index(model, "hierarchy")]
-    ritual = culture[:, trait_index(model, "ritual_investment")]
+    brain = model.brains.output
+    app, dia = identity.core_distances(model, ids)
+    marker = P.marker[pol]
 
     n_set = np.bincount(pol, minlength=npol).astype(float)
     people = np.bincount(pol, weights=pop, minlength=npol)
@@ -102,7 +114,9 @@ def run(model) -> None:
     safe_people = np.maximum(people, 1.0)
 
     # Tribute.
-    take = pc.tribute_max_rate * hierarchy[pol] * t.store[ids]
+    e = marker[:, marker_index("tribute_appearance", "tribute_dialect")]
+    factor = np.clip(1.0 + e[:, 0] * app + e[:, 1] * dia, 0.0, pc.marker_factor_max)
+    take = np.minimum(pc.tribute_max_rate * brain[pol, OUT["tribute"]] * factor, 1.0) * t.store[ids]
     t.store[ids] -= take
     tribute = np.bincount(pol, weights=take, minlength=npol)
     P.tribute[pids] = tribute[pids]
@@ -112,7 +126,7 @@ def run(model) -> None:
     spending = np.zeros(npol)
     capital = P.capital[pids]
     can_build = t.knows[capital, g.index("megalithic_construction")]
-    put = np.where(can_build, pc.monument_max_share * ritual[pids] * P.treasury[pids], 0.0)
+    put = np.where(can_build, pc.monument_max_share * brain[pids, OUT["monuments"]] * P.treasury[pids], 0.0)
     P.treasury[pids] -= put
     P.monument_fund[pids] += put
     spending[pids] += put
@@ -161,6 +175,7 @@ def run(model) -> None:
     k = fed_capacity(t.shares[ids], mode_capacity(model, t.knows[ids], t.cell[ids]), model.config.demography)
     capacity = np.bincount(pol, weights=k, minlength=npol)
     load = people[pids] / np.maximum(capacity[pids], 1.0)
+    P.load[pids] = load
     pop_pressure = np.clip((load - pp.population_reference) / (1.0 - pp.population_reference), 0.0, 1.0)
     strength = np.clip((tribute[pids] - spending[pids]) / safe_people[pids] / pp.state_reference, -1.0, 1.0)
     pressure = np.maximum(pp.population_weight * pop_pressure + pp.elite_weight * elite_pressure
@@ -192,9 +207,13 @@ def run(model) -> None:
     inequality = np.sqrt(np.maximum(np.bincount(pol, weights=pop * (logf - mu[pol]) ** 2, minlength=npol)
                                     / safe_people, 0.0))[pids]
     grievance = np.bincount(pol, weights=pop * t.grievance[ids], minlength=npol)[pids] / safe_people[pids]
+    e = P.marker[pids][:, marker_index("cohesion_appearance", "cohesion_dialect")]
+    mean_app = np.bincount(pol, weights=pop * app, minlength=npol)[pids] / safe_people[pids]
+    mean_dia = np.bincount(pol, weights=pop * dia, minlength=npol)[pids] / safe_people[pids]
     delta = (cc.base_decay + cc.size_decay * size + cc.distance_decay * mean_steps / cc.distance_reference
              + cc.inequality_decay * inequality + cc.elite_decay * elite_pressure + cc.pressure_decay * pressure
-             + cc.grievance_decay * grievance)
+             + cc.grievance_decay * grievance + pc.marker_cohesion_decay * (e[:, 0] * mean_app + e[:, 1] * mean_dia))
+    delta = np.maximum(delta, 0.0)
     c = P.cohesion[pids]
     m = maintained[pids]
     c = c + cc.growth_rate * f * c * (1.0 - c) - delta * c + cc.monument_cohesion * m / (m + cc.monument_half) * (1 - c)
