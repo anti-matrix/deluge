@@ -30,7 +30,8 @@
 #   spoilage                       multiplier on spoilage
 #   drought_loss                   multiplier on the share of rain a drought takes from farming
 #   migration_radius               hex steps added to the migration search radius
-#   sea_steps                      sea cells a migration may cross
+#   sea_steps                      sea cells a path (migration, war) may cross; not summed: a
+#                                  settlement's sea reach is the highest of its techniques' (sea tiers)
 #   diffusion                      multiplier on the chance of adopting techniques from neighbours
 #   famine_mortality               multiplier on famine deaths
 #   admin_cap                      multiplier on the polity size cohesion tolerates (Round 5)
@@ -182,16 +183,28 @@ techniques:
     used_with: size
     unlocks: ""
     effects: {production: 1.05, production_min_population: 0, military: 1.5}
+  # Sea tiers: sailing (3 sea cells), open-sea voyaging (8), ocean navigation (60, effectively
+  # unlimited on the map). A settlement's sea reach is its highest tier, not a sum.
+  open_sea_voyaging:
+    label: open-sea voyaging
+    late: false
+    resources: []
+    category: other
+    prerequisites: [sailing, sky_calendar]
+    invention_rate: 0.4
+    used_with: coast
+    unlocks: ""
+    effects: {sea_steps: 8}
   ocean_navigation:
     label: ocean navigation
     late: false
     resources: []
     category: other
-    prerequisites: [sailing, writing, sky_calendar]
+    prerequisites: [open_sea_voyaging, writing, iron]
     invention_rate: 0.3
     used_with: coast
     unlocks: ""
-    effects: {sea_steps: 20, migration_radius: 1, trade_range: 3.0}
+    effects: {sea_steps: 60, migration_radius: 1, trade_range: 3.0}
   printing:
     label: printing
     late: true

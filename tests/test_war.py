@@ -64,9 +64,10 @@ def win_rate(m, a, sa, b, sb, trials=400, campaign=False):
 # --- reach over sea -----------------------------------------------------------------------------
 
 
-def strait(width, sailing):
+def strait(width, sailing, techniques=()):
     """Attacker and defender settlements with only sea between them: every cell around them is
-    flooded, so any path crosses ``width`` sea cells at least (the attacker on the coast)."""
+    flooded, so any path crosses ``width`` sea cells at least (the attacker on the coast).
+    ``techniques``: further techniques the attacker holds."""
     m = held()
     origin = interior_cell(m, 6)
     target = int(free_land(m, origin, width + 1)[0])
@@ -78,6 +79,8 @@ def strait(width, sailing):
     m.is_coast[:] = ~m.is_sea & m.geom.neighbor_any(m.is_sea)
     if sailing:
         m.settlements.knows[sa, m.knowledge.index("sailing")] = True
+    for name in techniques:
+        m.settlements.knows[sa, m.knowledge.index(name)] = True
     return m, a, sa, b, sb
 
 
@@ -106,6 +109,35 @@ def test_strait_needs_sailing_and_a_crossing_within_sea_reach():
     _, s2 = lone_polity(m, free_land(m, origin, m.config.polities.contact_radius)[0], lineage=1)
     _, s3 = lone_polity(m, free_land(m, origin, m.config.polities.contact_radius + 1, exclude=[])[0], lineage=2)
     assert reach_of(m, s1, s2) == 0 and reach_of(m, s1, s3) is None
+
+
+def tier_steps():
+    from deluge.config import load_config
+    from deluge.systems.knowledge import KnowledgeGraph
+    g = KnowledgeGraph.from_config(load_config().knowledge)
+    return [int(g.effect["sea_steps"][g.index(n)]) for n in ("sailing", "open_sea_voyaging", "ocean_navigation")]
+
+
+def test_sea_reach_is_the_highest_tier_not_a_sum():
+    """Sailing 3, open-sea voyaging 8, ocean navigation far beyond: the reach is the highest
+    tier held, and the attack weakens with distance (logistics decay) however far it reaches."""
+    from deluge.systems import demography
+
+    sail, voyage, ocean = tier_steps()
+    assert sail < voyage < ocean
+    m, a, sa, b, sb = strait(voyage, sailing=True, techniques=["open_sea_voyaging"])
+    assert reach_of(m, sa, sb) == voyage
+    assert int(m.knowledge.highest(m.settlements.knows[sa], "sea_steps")) == voyage
+    m, a, sa, b, sb = strait(voyage + 1, sailing=True, techniques=["open_sea_voyaging"])
+    assert reach_of(m, sa, sb) is None  # not sail + voyage
+    assert sb not in [int(m.occupant[c]) for c in demography.reach(m, sa)[0]]
+    wide = voyage + 4
+    m, a, sa, b, sb = strait(wide, sailing=True, techniques=["open_sea_voyaging", "ocean_navigation"])
+    assert reach_of(m, sa, sb) == wide
+    far = war.strengths(m, war.forces(m), np.array([a]), np.array([b]), np.array([sb]))[0][0]
+    m, a, sa, b, sb = strait(2, sailing=True, techniques=["open_sea_voyaging", "ocean_navigation"])
+    near = war.strengths(m, war.forces(m), np.array([a]), np.array([b]), np.array([sb]))[0][0]
+    assert far < near
 
 
 def test_migration_counts_sea_cells_apart_from_the_land_radius():

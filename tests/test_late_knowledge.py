@@ -77,12 +77,14 @@ def events(m, action: str):
 
 def test_late_graph_follows_the_spec(small_cfg):
     g = KnowledgeGraph.from_config(small_cfg.knowledge)
-    assert set(LATE) <= set(g.names) and len(g.names) == 28
+    assert set(LATE) <= set(g.names) and len(g.names) == 29
 
     def prereqs(n):
         return {g.names[p] for p in np.flatnonzero(g.prereq[g.index(n)])}
 
-    assert prereqs("ocean_navigation") == {"sailing", "writing", "sky_calendar"}
+    assert prereqs("open_sea_voyaging") == {"sailing", "sky_calendar"}
+    assert prereqs("ocean_navigation") == {"open_sea_voyaging", "writing", "iron"}
+    assert not g.late[g.index("open_sea_voyaging")] and not g.late[g.index("ocean_navigation")]
     assert prereqs("coal_mining") == {"iron", "mechanical_power"}
     assert prereqs("steam_power") == {"coal_mining", "steel", "printing"}
     assert prereqs("synthetic_fertilizers") == {"chemistry", "steam_power"}

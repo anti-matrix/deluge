@@ -20,8 +20,9 @@
   brain's expand output) of the cell's capacity.
 
 Reach is ``search_radius`` land cells entered, plus technique bonuses; with sailing a
-path may also cross up to the band's sea_steps sea cells, counted apart from the land
-radius, as war counts them (``war.sea_reach``). A move,
+path may also cross up to the band's sea reach in sea cells (the highest sea_steps of its
+techniques, its sea tier: sailing, open-sea voyaging, ocean navigation), counted apart from
+the land radius, as war counts them (``war.sea_reach``). A move,
 a founding or a join that needs such a path (``sea_cells_crossed``) is logged as
 ``crossed`` with the fewest sea cells crossed, right after its own event; for the core's
 migration the band's polity is the second actor. A cell's appeal is a utility over expected food per head
@@ -93,7 +94,7 @@ def _reach_field(model, sid: int, origin: int) -> tuple[np.ndarray, np.ndarray]:
     m, g, t = model.config.migration, model.knowledge, model.settlements
     knows = t.knows[sid]
     radius = m.search_radius + int(g.total(knows, "migration_radius"))
-    sea_steps = int(g.total(knows, "sea_steps"))
+    sea_steps = int(g.highest(knows, "sea_steps"))
     return reach_lists(model, np.array([origin]), radius, np.array([sea_steps]))[0]
 
 
@@ -255,7 +256,7 @@ def may_find_free(model, near_free: np.ndarray, sid: int) -> bool:
     """Whether band ``sid``'s search for a free cell can succeed: free land in land reach,
     or it holds sea_steps (its reach over sea is not bounded by ``free_land_nearby``)."""
     t = model.settlements
-    return bool(near_free[t.cell[sid]]) or model.knowledge.total(t.knows[sid], "sea_steps") > 0
+    return bool(near_free[t.cell[sid]]) or model.knowledge.highest(t.knows[sid], "sea_steps") > 0
 
 
 def move_cores(model, near_free: np.ndarray) -> None:

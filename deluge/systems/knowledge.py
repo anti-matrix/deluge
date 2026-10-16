@@ -66,7 +66,8 @@ class KnowledgeGraph:
     MULTIPLIERS = ("farm_yield", "herd_yield", "river_farm_yield", "production", "spoilage", "drought_loss",
                    "diffusion", "famine_mortality", "admin_cap", "military", "defense", "raid_range",
                    "memory_capacity")
-    ADDITIVE = ("migration_radius", "sea_steps", "production_min_population")
+    ADDITIVE = ("migration_radius", "production_min_population")
+    HIGHEST = ("sea_steps",)  # the highest over the techniques held counts (sea tiers), default 0
 
     @classmethod
     def from_config(cls, cfg: KnowledgeConfig) -> KnowledgeGraph:
@@ -98,7 +99,7 @@ class KnowledgeGraph:
         effect = {}
         for name in cls.MULTIPLIERS:
             effect[name] = np.array([cfg.techniques[n].effects.get(name, 1.0) for n in names])
-        for name in cls.ADDITIVE:
+        for name in cls.ADDITIVE + cls.HIGHEST:
             effect[name] = np.array([cfg.techniques[n].effects.get(name, 0.0) for n in names])
         effect["store_cap_years"] = np.array([cfg.techniques[n].effects.get("store_cap_years", np.nan) for n in names])
         late = np.array([cfg.techniques[n].late for n in names], dtype=bool)
@@ -128,6 +129,10 @@ class KnowledgeGraph:
 
     def total(self, knows: np.ndarray, name: str) -> np.ndarray:
         return knows @ self.effect[name]
+
+    def highest(self, knows: np.ndarray, name: str) -> np.ndarray:
+        """Highest value of effect ``name`` over the techniques each row holds (0 for none)."""
+        return np.where(knows, self.effect[name], 0.0).max(axis=-1)
 
     def mode_available(self, knows: np.ndarray) -> np.ndarray:
         """(S, modes) bool: foraging always, other modes once a technique unlocks them."""

@@ -7,8 +7,9 @@ Choice (the polity brains, Round 7). The candidate targets of a polity are the f
 settlements within reach of one of its own (``war_contacts``): over land, a path of at most
 ``polities.contact_radius`` steps over land cells; from a settlement practising sailing
 (holding a technique with ``sea_steps`` it can use where it is, on the coast), also a path
-entering at most that many land cells and at most its sea_steps sea cells, the same
-sea_steps that migration uses (so reach over sea grows with sea_steps). Polities separated
+entering at most that many land cells and at most its sea reach in sea cells: the highest
+sea_steps it practises (its sea tier: sailing, open-sea voyaging, ocean navigation), the same
+tiers migration uses. Distance from the capital still weakens the attack. Polities separated
 only by sea cannot fight otherwise. Where a target is within reach of several of the
 polity's settlements, one over land attacks, else the one with the shortest crossing; an
 attack across sea is logged as ``crossed`` (sea cells) after the battle's event. The polity's
@@ -326,8 +327,10 @@ def _layer_graph(model, land_steps: int):
 
 
 def sea_budget(model, ids: np.ndarray) -> np.ndarray:
-    """Sea cells each settlement's attack can cross: the sea_steps of the techniques it holds
-    and can use where it is (sailing: on the coast), the same sea_steps migration uses."""
+    """Sea cells each settlement's attack can cross: the highest sea_steps (sea tier) of the
+    techniques it holds and can use where it is (on the coast), the same tiers migration uses.
+    Strength still decays with distance from the capital (``strengths``), so long crossings
+    are possible but weak."""
     g, t = model.knowledge, model.settlements
     out = np.zeros(len(ids), dtype=np.int64)
     holds = (t.knows[ids] & (g.effect["sea_steps"] > 0)[None, :]).any(axis=1)
@@ -335,7 +338,7 @@ def sea_budget(model, ids: np.ndarray) -> np.ndarray:
         from deluge.systems.knowledge import usable_mask
 
         h = ids[holds]
-        out[holds] = np.rint(g.total(t.knows[h] & usable_mask(model, h), "sea_steps")).astype(np.int64)
+        out[holds] = np.rint(g.highest(t.knows[h] & usable_mask(model, h), "sea_steps")).astype(np.int64)
     return out
 
 

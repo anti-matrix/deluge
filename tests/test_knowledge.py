@@ -33,7 +33,7 @@ def early(cfg):
 
 def test_graph_compiles_in_prerequisite_order(cfg):
     g = KnowledgeGraph.from_config(cfg.knowledge)
-    assert len(g.names) == 28
+    assert len(g.names) == 29
     pos = {t: i for i, t in enumerate(g.order)}
     for t, p in zip(*np.nonzero(g.prereq)):
         assert pos[p] < pos[t]
