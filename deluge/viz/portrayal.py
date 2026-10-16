@@ -5,10 +5,13 @@ property layer of the HexGrid as a PolyCollection on its hex mesh. Its mesh shif
 rows right, like Mesa's connectivity and ``deluge.world.grid``; it does not use
 ``cell.position`` (see docs/MESA_API_NOTES.md). Three layers are drawn, in the order
 the model added them: terrain, the year's sea over it, and one overlay on top (people per
-cell, the polity of each settlement (its founding group's colour, one shade per polity),
-techniques usable per cell, latent techniques per cell: held where they cannot be used,
-the founding group of each settlement, or mineral deposits). Everything here only reads
-model state.
+cell, techniques usable per cell, latent techniques per cell: held where they cannot be
+used, the founding group of each settlement, or mineral deposits). The polity overlay is
+drawn here instead (``draw_polities``): every claimed cell in its founding group's hue,
+darker with more people per km² (log scale; the "shade by" variable, ``SHADE_BY``), with
+thick borders between polities of different founding groups and thin ones between polities
+of one group, each over a light outline. One lineage palette (``lineage_palette``) serves
+every lineage-coloured element. Everything here only reads model state.
 """
 
 from __future__ import annotations
@@ -45,6 +48,12 @@ def resource_colors(vcfg: VizConfig) -> list[str]:
     return [vcfg.resource_colors[m] for m in MINERALS] + [vcfg.resource_colors["several"]]
 
 
+def lineage_palette(vcfg: VizConfig) -> tuple[str, ...]:
+    """The one lineage palette (``viz.lineage_colors``): every lineage-coloured element of the
+    UI (lineage and polity overlays, the population-per-group plot, legends) reads it here."""
+    return tuple(vcfg.lineage_colors)
+
+
 def shade(color: str, factor: float) -> tuple[float, float, float, float]:
     """``color`` darkened toward black (factor < 0) or lightened toward white (factor > 0)."""
     rgb = np.array(to_rgb(color))
@@ -52,26 +61,101 @@ def shade(color: str, factor: float) -> tuple[float, float, float, float]:
     return (*rgb.tolist(), 1.0)
 
 
-def polity_colors(vcfg: VizConfig) -> list[tuple]:
-    """Polity overlay colours in code order (code 1 + lineage x shades + shade): each
-    founding group's colour in ``polity_shades`` shades."""
-    n, r = vcfg.polity_shades, vcfg.polity_shade_range
-    factors = np.linspace(-r, r, n) if n > 1 else np.zeros(1)
-    return [shade(c, float(f)) for c in vcfg.lineage_colors for f in factors]
+# --- polity overlay ---------------------------------------------------------------------------
+
+
+def density_share(model, vcfg: VizConfig) -> np.ndarray:
+    """Per cell: population density on a log scale, 0 at ``polity_density_min`` people / km2
+    (and below), 1 at ``polity_density_max`` (and above)."""
+    dens = model.cell_population() / model.cell_area_km2
+    lo, hi = np.log10(vcfg.polity_density_min), np.log10(vcfg.polity_density_max)
+    with np.errstate(divide="ignore"):
+        x = (np.log10(dens) - lo) / (hi - lo)
+    return np.clip(np.nan_to_num(x, neginf=0.0), 0.0, 1.0)
+
+
+# "Shade by" options: name -> per-cell value in 0..1 (1 drawn darkest). Add variables here.
+SHADE_BY = {"population density": density_share}
+
+
+def polity_shades(vcfg: VizConfig) -> list[list[tuple]]:
+    """Per founding group, its hue in ``polity_shade_levels`` brightness steps, lightest first."""
+    n = vcfg.polity_shade_levels
+    factors = np.linspace(vcfg.polity_light, -vcfg.polity_dark, n) if n > 1 else np.zeros(1)
+    return [[shade(c, float(f)) for f in factors] for c in lineage_palette(vcfg)]
+
+
+def polity_fill(model, vcfg: VizConfig, shade_by: str = "population density") -> tuple[np.ndarray, np.ndarray]:
+    """(cells, RGBA) of the claimed cells: the claiming polity's founding-group hue, darker the
+    higher the ``shade_by`` value."""
+    claimed = model.polity_layer.data.ravel().astype(np.int64) - 1
+    cells = np.flatnonzero(claimed >= 0)
+    lineage = model.polities.lineage[claimed[cells]]
+    value = SHADE_BY[shade_by](model, vcfg)[cells]
+    level = np.rint(value * (vcfg.polity_shade_levels - 1)).astype(np.int64)
+    table = np.array(polity_shades(vcfg))  # (groups, levels, 4)
+    return cells, table[lineage, level]
+
+
+def polity_borders(model) -> tuple[np.ndarray, np.ndarray]:
+    """Shared hex edges between cells claimed by different polities, as (n, 2, 2) segments in
+    map units: (between founding groups, between polities of one group)."""
+    claimed = model.polity_layer.data.ravel().astype(np.int64) - 1
+    nb = model.geom.neighbors
+    c, k = np.nonzero(nb >= 0)
+    n = nb[c, k]
+    keep = (c < n) & (claimed[c] >= 0) & (claimed[n] >= 0) & (claimed[c] != claimed[n])
+    c, n = c[keep], n[keep]
+    pos = model.geom.positions
+    mid = 0.5 * (pos[c] + pos[n])
+    d = pos[n] - pos[c]
+    perp = np.column_stack([-d[:, 1], d[:, 0]]) / np.linalg.norm(d, axis=1)[:, None]
+    seg = np.stack([mid - 0.5 * perp, mid + 0.5 * perp], axis=1)  # hex side length 1
+    lin = model.polities.lineage
+    apart = lin[claimed[c]] != lin[claimed[n]]
+    return seg[apart], seg[~apart]
+
+
+def draw_polities(ax, model, vcfg: VizConfig, shade_by: str = "population density") -> None:
+    """The polity overlay over the drawn map: filled claimed cells, then the borders, each over
+    a light outline."""
+    from matplotlib.collections import LineCollection, PolyCollection
+
+    cells, colors = polity_fill(model, vcfg, shade_by)
+    if len(cells):
+        ax.add_collection(PolyCollection(model.geom.hex_vertices()[cells], facecolors=colors, edgecolors="none",
+                                         zorder=3, gid="polity_fill"))
+    peoples, polities = polity_borders(model)
+    for seg, width, gid in ((polities, vcfg.border_polities_width, "polity_borders"),
+                            (peoples, vcfg.border_peoples_width, "people_borders")):
+        if len(seg):
+            ax.add_collection(LineCollection(seg, colors=vcfg.border_outline_color,
+                                             linewidths=width + vcfg.border_outline_width, zorder=4,
+                                             capstyle="round", gid=gid + "_outline"))
+            ax.add_collection(LineCollection(seg, colors=vcfg.border_color, linewidths=width, zorder=5,
+                                             capstyle="round", gid=gid))
 
 
 def legend_html(vcfg: VizConfig, overlay: str, group_names) -> str:
-    """Colour key for the categorical overlays ('' for the others)."""
+    """Colour key for the categorical overlays ('' for the others): one row per entry, its
+    swatch followed by its own label on the same line."""
+    palette = lineage_palette(vcfg)
     if overlay == "lineage":
-        items = [(f"group {n}", c) for n, c in zip(group_names, vcfg.lineage_colors)]
+        items = [(f"group {n}", c) for n, c in zip(group_names, palette)]
     elif overlay == "polity":
-        items = [(f"polities of group {n} (shades: one per polity)", c) for n, c in zip(group_names, vcfg.lineage_colors)]
+        items = [(f"polities of group {n}", c) for n, c in zip(group_names, palette)]
     elif overlay == "resources":
         items = list(zip([m.replace("_", " ") for m in MINERALS] + ["several"], resource_colors(vcfg)))
     else:
         return ""
-    return " ".join(f'<span style="display:inline-block;width:0.9em;height:0.9em;background:{c};'
-                    f'border:1px solid #555;vertical-align:middle"></span> {label}' for label, c in items)
+    rows = "".join(f'<div style="display:flex;align-items:center;gap:0.4em;white-space:nowrap">'
+                   f'<span style="flex:none;display:inline-block;width:0.9em;height:0.9em;background:{c};'
+                   f'border:1px solid #555"></span><span>{label}</span></div>' for label, c in items)
+    note = ""
+    if overlay == "polity":
+        note = ('<div style="margin-top:0.3em">Darker: more people per km² (log scale). Thick lines: borders '
+                'between founding groups; thin lines: between polities of one group.</div>')
+    return f'<div class="legend">{rows}{note}</div>'
 
 
 def make_layer_style(vcfg: VizConfig, overlay: str = "population"):
@@ -87,10 +171,9 @@ def make_layer_style(vcfg: VizConfig, overlay: str = "population"):
         "latent_knowledge": PropertyLayerStyle(colormap=alpha_cmap(vcfg.latent_color, 0.0), alpha=1.0,
                                                colorbar=False, vmin=0.0, vmax=vcfg.latent_vmax),
         # Categorical: code k spans [k - 0.5, k + 0.5).
-        "lineage": PropertyLayerStyle(colormap=categorical_cmap(vcfg.lineage_colors), alpha=1.0, colorbar=False,
-                                      vmin=-0.5, vmax=len(vcfg.lineage_colors) + 0.5),
-        "polity": PropertyLayerStyle(colormap=categorical_cmap(polity_colors(vcfg)), alpha=1.0, colorbar=False,
-                                     vmin=-0.5, vmax=len(polity_colors(vcfg)) + 0.5),
+        "lineage": PropertyLayerStyle(colormap=categorical_cmap(lineage_palette(vcfg)), alpha=1.0, colorbar=False,
+                                      vmin=-0.5, vmax=len(lineage_palette(vcfg)) + 0.5),
+        "polity": None,  # drawn by draw_polities (fill and borders), not as a Mesa layer
         "resources": PropertyLayerStyle(colormap=categorical_cmap(resource_colors(vcfg)), alpha=1.0,
                                         colorbar=False, vmin=-0.5, vmax=len(MINERALS) + 1.5),
     }[overlay]

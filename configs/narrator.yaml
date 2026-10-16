@@ -1,0 +1,135 @@
+# Deterministic narrator (analysis/narrator.py): data only, read by the analysis, never by the
+# simulation. Plain language: what the sim did, said in ordinary words.
+
+names:
+  # A name is drawn from this inventory by a pure function of (entity, people's dialect, seeds):
+  # the entity and the seeds fix the uniform draws; the people's dialect vector sets the weights,
+  # weight = exp(dialect_scale x (dialect . direction of the item)), each item's direction a fixed
+  # unit vector hashed from its spelling. Peoples whose dialects differ favour different pieces,
+  # and drift apart as their dialects do.
+  dialect_scale: 0.7
+  syllables: [[2, 0.55], [3, 0.35], [4, 0.10]]   # [syllables, chance]
+  coda_chance: 0.3            # per syllable: it closes with a coda
+  ending_chance: 0.55         # the name ends with one of the endings (then the last syllable keeps no coda)
+  max_letters: 14             # longer draws are cut at a syllable boundary
+  # Pieces inspired by the sound of Hebrew/biblical, Greek, Avestan and Sanskrit names.
+  # Quoted: YAML would read some bare pieces (y, n, on, ...) as booleans.
+  onsets: ["b", "d", "g", "h", "k", "l", "m", "n", "r", "s", "t", "v", "y", "z", "sh", "ch", "ts", "ph", "th", "kh",
+           "ps", "kr", "pr", "st", "x", "zh", "fr", "sp", "dr", "thr", "hv", "bh", "dh", "gh", "jh", "sv", "sr", "j",
+           "p", "", ""]
+  vowels: ["a", "e", "i", "o", "u", "a", "i", "ai", "eu", "oi", "y", "ao", "ae", "au", "aa", "ii", "ei"]
+  codas: ["n", "m", "r", "l", "s", "sh", "th", "k", "t", "z", "x", "sp", "rd", "st", "nt"]
+  endings: ["on", "ah", "im", "ai", "eth", "ar", "os", "es", "ia", "as", "ides", "ope", "aspa", "ama", "ant", "ush",
+            "ra", "tra", "esh", "an", "ita", "ika", "aka", "ath", "or", "ur", "ima", "avi", "ona", "ys"]
+
+# Techniques, minerals and what the groups could witness, in plain words.
+techniques:
+  animal_domestication: the keeping of herds
+  agriculture: the sowing of fields
+  storage: the storing of grain
+  sedentary_building: the building of lasting houses
+  division_of_labor: the dividing of work
+  sky_calendar: the reckoning of seasons by the sky
+  megalithic_construction: the raising of great stones
+  irrigation: the leading of water to the fields
+  sailing: the sailing of boats
+  copper_bronze: the working of copper and bronze
+  writing: the writing of signs
+  plough: the ploughing of land
+  horse_riding: the riding of horses
+  iron: the working of iron
+  ocean_navigation: the crossing of open seas
+  printing: the printing of signs
+  mechanical_power: the turning of mills by water and wind
+  chemistry: the mixing of substances
+  gunpowder: the making of blasting powder
+  steel: the making of steel
+  coal_mining: the digging of coal
+  steam_power: the driving of engines by steam
+  railways_steamships: the running of rails and steam ships
+  synthetic_fertilizers: the making of fertilizers
+  modern_medicine: the practice of modern medicine
+  electricity: the harnessing of electricity
+  telecommunication: the sending of messages over wires
+  oil_combustion: the burning of oil in engines
+minerals:
+  copper: copper
+  tin: tin
+  iron_ore: iron ore
+  coal: coal
+  oil: oil
+technologies:
+  flight: flying craft
+  weapons: weapons
+  tools: tools
+  medicine: medicine
+
+# How each kind of entity is spoken of; {name} is its generated name, {phrase} its plain phrase.
+forms:
+  settlement: "{name}"
+  polity: "the {name} people"
+  lineage: "the {name}"
+  first_kind: "the {name}"    # the entity kind listed first in the event log's kinds
+  technique: "{phrase}"
+  technology: "{phrase}"
+  artifact: "a gift of {phrase}"
+  deposit: "the {phrase} of {place}"
+  monument: "a monument"
+places:
+  cell: "{name}"
+  region: "the country of {name}"
+  none: "a place no longer named"
+times:
+  year: "in year {year}"
+  span: "in the years {year} to {last}"
+  first_age: "in the first age"
+someone: someone
+nothing: nothing             # {rest} when the verb has no third actor
+with_others: ", with {others}"
+joiner: " and "
+
+# One sentence shape per verb: {0}, {1}, ... are the actors in order, {rest} the actors from the
+# third on, {from_} " from" the third actor when there is one, {place} and {time} as above.
+templates:
+  arrived: "{time}, {0} came to {1} at {place}, by {2}"
+  taught: "{time}, {0} taught {1} {rest}"
+  displayed: "{time}, {0} showed {1} {2}"
+  departed: "{time}, {0} left {1} at {place}, by {2}"
+  gave: "{time}, {0} gave {1} {rest}"
+  used: "{time}, {1} made use of {0}"
+  broke: "{time}, {0} held by {1} broke"
+  fought: "{time}, {0} fought {1} at {place}"
+  won: "{time}, {0} raided {1} at {place}"
+  lost: "{time}, {0} lost {1} to {2}"
+  moved: "{time}, {0} moved to {place}"
+  founded: "{time}, {0} was founded from {1} at {place}"
+  built: "{time}, {0} built {1} at {place}"
+  starved: "{time}, {0} went hungry"
+  died: "{time}, {0} came to an end"
+  joined: "{time}, {0} joined {1}"
+  learned: "{time}, {0} learned {1}{from_}"
+  forgot: "{time}, {0} forgot {1}"
+  depleted: "{time}, {0} was used up"
+  took: "{time}, {0} took {1} from {2}"
+  crossed: "{time}, {0} crossed the sea to {place}"
+# Sizes of what happened (event log magnitudes), only in "What happened".
+amounts:
+  arrived: "{m} people there"
+  fought: "{m} dead"
+  starved: "{m} dead"
+  moved: "{m} people"
+  founded: "{m} people"
+  joined: "{m} people"
+  took: "{m} people"
+  died: "{m} people left"
+  crossed: "{m} sea cells"
+# "What memory changed".
+changes:
+  substituted: "{new} took the place of {old} (year {year})"
+  fused: "{n} other events fused into it"
+  actors_lost: "no longer remembered among its actors: {names}"
+  year_lost: "the exact year, now a span of {span} years"
+  place_region: "the exact place, now a region"
+  place_none: "the place"
+  size_lost: "the exact size"
+  none: "nothing"

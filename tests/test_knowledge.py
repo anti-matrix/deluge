@@ -249,7 +249,7 @@ def test_every_event_is_complete_and_the_chronicle_renders(early, tmp_path):
     assert only_taught and all(" taught " in s for s in only_taught)
     log.write(tmp_path / "events.parquet")
     df = pd.read_parquet(tmp_path / "events.parquet")
-    assert list(df.columns) == ["year", "action", "actors", "place", "magnitude"]
+    assert list(df.columns) == ["year", "action", "actors", "place", "magnitude", "link", "people"]
     assert len(df) == len(log)
 
 

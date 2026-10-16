@@ -1,4 +1,4 @@
-﻿"""Round 8: memory records, transmission, symbols, consequences and the control (spec section 11)."""
+"""Round 8: memory records, transmission, symbols, consequences and the control (spec section 11)."""
 
 import re
 import sys
@@ -96,13 +96,21 @@ def test_signatures_are_recorded_for_people():
                 assert sig is not None and len(sig) == n
 
 
-def _two_records(m, pid, sid):
-    """Two memories of ``pid`` with a shared actor, written straight into its store."""
+def log_people(m, action, actors, place, magnitude, year=None):
+    """Log an event as ``model.log_event`` does: each settlement actor's people noted with it."""
+    pop = [float(m.settlements.population[i]) if kind == "settlement" else np.nan for kind, i in actors]
+    assert m.events.log(m.year if year is None else year, action, [entity(kind, i) for kind, i in actors], place,
+                        magnitude, people=pop)
+    return len(m.events) - 1
+
+
+def _two_records(m, pid, sid, years=None):
+    """Two memories of ``pid`` with a shared actor, written straight into its store (by
+    default in touching years)."""
     st = m.memory
     out = []
-    for k, year in enumerate((m.year, m.year + 3)):
-        m.events.log(year, "starved", [entity("settlement", sid)], int(m.settlements.cell[sid]), 5000.0 + k)
-        out.append(len(m.events) - 1)
+    for k, year in enumerate(years or (m.year, m.year + 1)):
+        out.append(log_people(m, "starved", [("settlement", sid)], int(m.settlements.cell[sid]), 5000.0 + k, year))
     memory._record_events(m)
     return [mid for mid in st.stores[pid] if st.records[mid].provenance[0] in out]
 
@@ -119,6 +127,70 @@ def test_merge_unions_provenance_and_is_logged():
     assert len(left) == 1
     assert set(m.memory.records[left[0]].provenance) == prov
     assert any(memory.OPS[r[1]] == "merged" for r in m.memory.ops)
+
+
+def test_merge_needs_meeting_year_spans_and_respects_the_provenance_cap():
+    over = {"memory": {"merge_chance": 1.0, "detail_loss_chance": 0.0, "substitution_chance": 0.0,
+                       "repeat_gain": 0.0}}
+    m = held(years=10, more=over)
+    origin = interior_cell(m, 3)
+    pid, sid = lone_polity(m, origin)
+    a, b = _two_records(m, pid, sid, years=(m.year, m.year + 3))  # [y, y+1) and [y+3, y+4): apart
+    memory._merge(m.memory, pid, a, m.year)
+    assert a in m.memory.records and b in m.memory.records
+    m.memory.records[b].year_span = 25  # now [y, y+25) holds both
+    m.memory.records[b].year = m.year
+    cap = m.config.memory.max_provenance
+    m.memory.records[a].provenance = tuple(range(100, 100 + cap))  # the union would be cap + 1
+    memory._merge(m.memory, pid, a, m.year)
+    assert a in m.memory.records and b in m.memory.records
+    m.memory.records[a].provenance = tuple(range(100, 99 + cap))
+    memory._merge(m.memory, pid, a, m.year)
+    left = [x for x in (a, b) if x in m.memory.records]
+    assert len(left) == 1 and len(m.memory.records[left[0]].provenance) == cap
+
+
+def test_vividness_comes_from_the_share_of_people_affected_and_novelty():
+    """One rule for every verb: the share of the holder's people affected, log-scaled, plus a
+    bonus the first time a verb or an actor enters the store."""
+    m = held(years=10)
+    cfg = m.config.memory
+    origin = interior_cell(m, 3)
+    pid, sid = lone_polity(m, origin, pop=3000.0)
+    other = place(m, free_land(m, origin, 1)[0], pid, pop=1000.0)
+    # No place: no shared symbol, so no amplification between them.
+    i = log_people(m, "starved", [("settlement", sid)], -1, 5000.0)
+    j = log_people(m, "starved", [("settlement", other)], -1, 5000.0)
+    k = log_people(m, "moved", [("settlement", other)], -1, 1e6)
+    q = log_people(m, "starved", [("polity", pid)], -1, 5000.0)
+    memory._record_events(m)
+    v = {m.memory.records[x].provenance[0]: m.memory.records[x].vividness for x in m.memory.stores[pid]}
+    b = cfg.novelty_bonus
+    assert v[i] == pytest.approx(memory.salience(cfg, 0.75) + 2 * b)  # new verb, new actor
+    assert v[j] == pytest.approx(memory.salience(cfg, 0.25) + b)  # new actor
+    assert v[k] == pytest.approx(memory.salience(cfg, 0.25) + b)  # new verb; the magnitude plays no part
+    assert v[q] == pytest.approx(cfg.vividness_scale + b)  # the polity itself: everyone; new actor
+    assert memory.salience(cfg, 0.01) < memory.salience(cfg, 0.1) < memory.salience(cfg, 1.0) == cfg.vividness_scale
+    assert not hasattr(cfg, "magnitude_reference")
+
+
+def test_amplification_diminishes_with_repetition():
+    m = held(years=10, more={"memory": {"repeat_gain": 0.5}})
+    origin = interior_cell(m, 3)
+    pid, sid = lone_polity(m, origin)
+    st = m.memory
+    first = log_people(m, "starved", [("settlement", sid)], origin, 5000.0)
+    memory._record_events(m)
+    mid = next(x for x in st.stores[pid] if st.records[x].provenance == (first,))
+    gains = []
+    for _ in range(30):
+        before = st.records[mid].vividness
+        log_people(m, "starved", [("settlement", sid)], origin, 5000.0)
+        memory._record_events(m)
+        gains.append(st.records[mid].vividness - before)
+    assert all(g2 < g1 for g1, g2 in zip(gains, gains[1:]))
+    v = m.config.memory.vividness_scale  # each repeat: share 1, nothing new
+    assert sum(gains) == pytest.approx(0.5 * v * np.log(31))
 
 
 def test_detail_loss_coarsens_one_field_at_a_time():
@@ -139,8 +211,7 @@ def test_substitution_draws_an_entity_of_the_store():
     origin = interior_cell(m, 3)
     pid, sid = lone_polity(m, origin)
     other = place(m, free_land(m, origin, 1)[0], pid)
-    m.events.log(m.year, "founded", [entity("settlement", other), entity("settlement", sid)],
-                 int(m.settlements.cell[other]), 5000.0)
+    log_people(m, "founded", [("settlement", other), ("settlement", sid)], int(m.settlements.cell[other]), 5000.0)
     memory._record_events(m)
     mid = _two_records(m, pid, sid)[0]
     memory._substitute(m.memory, pid, mid, m.year)
@@ -221,9 +292,16 @@ def test_invocation_amplifies_the_related_records():
     memory._record_events(m)
     memory.derive(m)
     mid = m.memory.stores[a][0]
-    v0 = m.memory.records[mid].vividness
-    memory.invoke(m, a, (entity("polity", b),))
-    assert m.memory.records[mid].vividness == pytest.approx(v0 * (1 + m.config.memory.consequences.invocation_gain))
+    rec = m.memory.records[mid]
+    gain = m.config.memory.consequences.invocation_gain
+    steps = []
+    for _ in range(5):
+        v0 = rec.vividness
+        memory.invoke(m, a, (entity("polity", b),))
+        steps.append(rec.vividness - v0)
+    assert steps[0] == pytest.approx(gain * rec.base * np.log(2))  # less each time: log((k + 1) / k)
+    assert all(s2 < s1 for s1, s2 in zip(steps, steps[1:]))
+    assert sum(steps) == pytest.approx(gain * rec.base * np.log(6))
 
 
 def test_control_matches_a_run_without_memory():

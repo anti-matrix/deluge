@@ -3,7 +3,10 @@
     from analysis.myths import report
     text = report(model)                       # markdown, from a model at any year
 
-For each founding lineage, then for each living polity: the heaviest symbols of its memory
+First "Origins": per founding lineage, every surviving record whose provenance includes an
+event of years 0 to ``reports.origins_until_year``, with its actors, full provenance and
+actor substitutions in order (``analysis/provenance.py``). Then, for each founding lineage,
+then for each living polity: the heaviest symbols of its memory
 store, the records attached to each, and for every record the original events it descends
 from (years, actors, places, from the raw event log) and the transformations it went
 through (``model.memory.ops``, its own and those of the records it was copied from or fused
@@ -20,44 +23,10 @@ from collections import defaultdict
 
 import numpy as np
 
+from analysis.provenance import History, origin_records, substituted_actors, substitutions  # noqa: F401
 from deluge.data.chronicle import Namer, line
 from deluge.data.events import ACTIONS, decode
 from deluge.systems.memory import FIELDS, OPS, PLACE_CELL, PLACE_REGION
-
-
-class History:
-    """Index over the transformation log: the rows of each record and where it came from."""
-
-    def __init__(self, model) -> None:
-        self.rows = defaultdict(list)
-        self.source: dict[int, int] = {}  # record -> the record it was copied or borrowed from
-        self.fused = defaultdict(list)  # record -> records fused into it
-        for row in model.memory.ops:
-            year, op, store, mem, other, a, b, value = row
-            self.rows[mem].append(row)
-            name = OPS[op]
-            if name in ("copied", "borrowed"):
-                self.source[mem] = other
-            elif name == "merged":
-                self.fused[mem].append(other)
-
-    def lineage_of(self, mem: int) -> list[int]:
-        """The record, the records it descends from by copying, and those fused into any of them."""
-        out, todo, seen = [], [mem], set()
-        while todo:
-            m = todo.pop()
-            if m in seen:
-                continue
-            seen.add(m)
-            out.append(m)
-            if m in self.source:
-                todo.append(self.source[m])
-            todo.extend(self.fused.get(m, ()))
-        return out
-
-    def transformations(self, mem: int) -> list[tuple]:
-        rows = [r for m in self.lineage_of(mem) for r in self.rows.get(m, ())]
-        return sorted(rows, key=lambda r: (r[0], r[3], r[1]))
 
 
 def _place(model, rec) -> str:
@@ -112,12 +81,6 @@ def _op_text(model, name: Namer, row) -> str:
     if op == "repeated":
         return f"{year}: vividness +{value:.2f} from similar events"
     return f"{year}: vividness +{value:.2f} from use"
-
-
-def substituted_actors(model, rec) -> list[int]:
-    """Actors of a record that took part in none of its original events."""
-    original = {a for i in rec.provenance for a in model.events.actors[i]}
-    return [a for a in rec.actors if a not in original]
 
 
 def _record(model, name: Namer, hist: History, rec, max_events: int = 6, max_ops: int = 12) -> list[str]:
@@ -236,6 +199,38 @@ def lineage_section(model, g: int, name: Namer, hist: History, n_symbols: int = 
     return out
 
 
+def origins_section(model, name: Namer, hist: History) -> list[str]:
+    until = model.config.reports.origins_until_year
+    out = ["## Origins", "",
+           f"Per founding group: every surviving record whose provenance includes an event of years 0 to {until}, "
+           "with its current actors, its full provenance and the actor substitutions it went through, in order. "
+           "Copies alike in every field (in sibling stores) are listed once.", ""]
+    for g in range(len(model.lineages.founders)):
+        entries = origin_records(model, g, hist, until)
+        out += [f"### Origins of group {model.lineages.names[g]}", ""]
+        if not entries:
+            out += [f"No surviving record descends from years 0 to {until}.", ""]
+            continue
+        for e in entries:
+            rec = e["record"]
+            actors = ", ".join(name(a) for a in rec.actors) or "no actors"
+            out.append(f"- **#{rec.mem_id}** `{ACTIONS[rec.action]}`: {actors}; {_place(model, rec)}; {_year(rec)}; "
+                       f"vividness {rec.vividness:.2f}; in {e['copies']} record{'s' if e['copies'] != 1 else ''} "
+                       f"of polities {', '.join(str(p) for p in sorted(e['stores']))}")
+            prov = list(rec.provenance)
+            out.append(f"  - provenance, {len(prov)} original event{'s' if len(prov) != 1 else ''}:")
+            for i in prov:
+                out.append(f"    - [{i}] {line(model.events.record(i), name)} ({_place_of_event(model, i)})")
+            subs = e["substitutions"]
+            if subs:
+                out.append("  - actor substitutions, in order: " + "; ".join(
+                    f"{k + 1}. year {y}: {name(a)} replaced by {name(b)}" for k, (y, a, b) in enumerate(subs)))
+            else:
+                out.append("  - actor substitutions: none")
+        out.append("")
+    return out
+
+
 def report(model, polities: bool = True, title: str | None = None) -> str:
     st = model.memory
     name = Namer(model)
@@ -250,6 +245,7 @@ def report(model, polities: bool = True, title: str | None = None) -> str:
            "Symbols are integer handles for an entity, a cell or an event; a symbol's weight is the summed "
            "vividness of the records attached to it. Every record lists the original events it descends from "
            "(index in the event log) and the transformations it went through.", ""]
+    out += origins_section(model, name, hist)
     for g in range(len(model.lineages.founders)):
         out += lineage_section(model, g, name, hist)
     if polities:

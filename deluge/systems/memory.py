@@ -5,13 +5,17 @@ never looks at what an event was about: every verb, entity kind and place is han
 and nothing here names a kind of event, actor or outcome (a test checks the vocabulary).
 
 Records (``Memory``) are built from the raw event log. Each year the events logged since
-the last memory phase are read; an event's vividness is its magnitude over
-``magnitude_reference[action]`` (a unit conversion per verb), capped at ``vividness_max``;
-events at least ``record_min_vividness`` are written to the store of every living polity
-that took part (as a polity actor, or through one of its settlements). Each record keeps
+the last memory phase are read and offered to the store of every living polity that took
+part (as a polity actor, or through one of its settlements). One rule sets a record's
+starting vividness for every verb alike (no per-verb weights): the share of the holder's
+people the event affected (all of them when the polity is an actor itself, else the people
+its settlement actors had when the event was logged, over the polity's people), log-scaled:
+``vividness_scale`` x log(1 + share / ``share_reference``) / log(1 + 1 / share_reference),
+plus ``novelty_bonus`` if the verb has never been recorded in that store and again if some
+actor never has. Records at least ``record_min_vividness`` are written. Each record keeps
 the event's actors, verb, place, year and magnitude, the appearance and dialect signature
 of every actor at the time (``identity.actor_signatures``) and its provenance: the indices
-of the original events in the log.
+of the original events in the log. ``vividness_max`` caps vividness as a safety bound.
 
 Holders: the settlements whose people carry a record. A new record is held by the
 settlement actors of its polity (else by the capital); daughters inherit their parent's,
@@ -26,13 +30,18 @@ vividness of the store's records attached to it.
 
 Transmission, every ``generation_years`` years, per store: decay; detail loss (the year to
 a broader span, the place to its region and then to none, the magnitude to one significant
-figure); merge of two records sharing an actor, the place or a symbol (provenance the
-union; the fused record keeps the more vivid one's actors and symbols, then the other's up
-to ``max_actors`` and ``max_symbols``); actor substitution by an entity of the store drawn by its total vividness; the
+figure); merge of two records sharing an actor, the place or a symbol whose year spans
+overlap or touch, unless the union of their provenance would exceed ``max_provenance``
+original events (provenance the union; the fused record keeps the more vivid one's actors
+and symbols, then the other's up to ``max_actors`` and ``max_symbols``); actor
+substitution by an entity of the store drawn by its total vividness; the
 floor and the capacity (``capacity`` x the capital's ``memory_capacity`` multipliers);
 borrowing between polities in contact and from subject settlements to their rulers, with
-detail loss applied to the copy. Amplification: a new record sharing the verb and a symbol
-with a held one adds ``repeat_gain`` x its vividness to it; invocation (below) multiplies.
+detail loss applied to the copy. Amplification diminishes with its count: the k-th new
+record sharing the verb and a symbol with a held one adds ``repeat_gain`` x its vividness x
+log((k + 1) / k) to it, and the k-th invocation (below) adds ``invocation_gain`` x the
+record's starting vividness x log((k + 1) / k), so n of them add in all a multiple of
+log(n + 1).
 Splits copy the parent's store to the child (new ids, the child's members carry the copies
 over); a union adds the smaller partner's store to the larger's.
 
@@ -50,7 +59,8 @@ Consequences, each weighted by ``consequences`` (all zero with ``control``):
 - affinity: the overlap of two stores' heaviest symbols drives mergers (with a common
   enemy, ``politics``) and speeds a subject's assimilation (``subject_affinity``);
 - invocation: before a battle, a monument or a union the polity's heaviest symbols among
-  its records involving the other party are used: their records gain (``invoke``);
+  its records involving the other party are used: their records gain, less each time
+  (``invoke``);
 - brain input: ``SUMMARY`` (``summary``).
 
 Derived values (symbol weights, the shared term, legitimacy, the summary, subject
@@ -94,6 +104,9 @@ class Memory:
     repeated: float = 0.0       # vividness gained since the last transmission
     invoked: float = 0.0
     holders: set = field(default_factory=set)
+    base: float = 0.0           # starting vividness
+    repeats: int = 0            # repetitions and invocations so far (amplification diminishes with them)
+    invocations: int = 0
 
 
 class MemoryState:
@@ -103,10 +116,6 @@ class MemoryState:
         cfg = model.config.memory
         if cfg.enabled and model.config.brains.memory_inputs != len(SUMMARY):
             raise ValueError(f"brains.memory_inputs must be {len(SUMMARY)} (memory SUMMARY)")
-        missing = set(ACTIONS) - set(cfg.magnitude_reference)
-        unknown = set(cfg.magnitude_reference) - set(ACTIONS)
-        if missing or unknown:
-            raise KeyError(f"memory.magnitude_reference: unknown {sorted(unknown)}, missing {sorted(missing)}")
         self.cfg = cfg
         self.enabled = cfg.enabled
         w = cfg.consequences
@@ -114,10 +123,10 @@ class MemoryState:
         self.w = {name: 0.0 if zero else float(getattr(w, name))
                   for name in ("cohesion_weight", "legitimacy_weight", "merger_weight", "assimilation_weight",
                                "invocation_gain", "brain_input_weight")}
-        self.reference = np.array([cfg.magnitude_reference[a] for a in ACTIONS])
         self.rng = model.streams["memory"]
         self.records: dict[int, Memory] = {}
         self.stores: dict[int, list[int]] = {}
+        self.seen: dict[int, tuple[set, set]] = {}  # per store: verbs and actors ever recorded in it (novelty)
         self.held: dict[int, set[int]] = {}
         self.next_id = 0
         self.cursor = 0
@@ -213,6 +222,12 @@ def _insert(model, state: MemoryState, pid: int, rec: Memory, cap: int) -> bool:
 # --- recording ---------------------------------------------------------------------------------
 
 
+def salience(cfg, share: float) -> float:
+    """Starting vividness from the share of the holder's people affected (log-scaled)."""
+    share = min(max(share, 0.0), 1.0)
+    return cfg.vividness_scale * np.log1p(share / cfg.share_reference) / np.log1p(1.0 / cfg.share_reference)
+
+
 def _record_events(model) -> None:
     state: MemoryState = model.memory
     cfg = state.cfg
@@ -220,24 +235,32 @@ def _record_events(model) -> None:
     t, P = model.settlements, model.polities
     n = len(log)
     start, state.cursor = state.cursor, n
+    if start == n:
+        return
     vmax = cfg.vividness_max
     caps: dict[int, int] = {}
+    ids = t.alive_ids()
+    people = np.bincount(t.polity[ids], weights=t.population[ids], minlength=P.n)
     for i in range(start, n):
         code = log.action[i]
-        v = min(log.magnitude[i] / state.reference[code], vmax)
-        if v < cfg.record_min_vividness:
-            continue
         actors = log.actors[i]
+        counts = log.people[i]
         pols: list[int] = []
         members: dict[int, list[int]] = {}
-        for a in actors:
+        affected: dict[int, float] = {}
+        whole: set[int] = set()
+        for a, k in zip(actors, counts):
             kind, local = decode(a)
             if kind == "polity":
                 p = local
+                whole.add(p)
             elif kind == "settlement":
                 p = int(t.polity[local])
-                if p >= 0 and t.ended[local] < 0:
-                    members.setdefault(p, []).append(local)
+                if p >= 0:
+                    if t.ended[local] < 0:
+                        members.setdefault(p, []).append(local)
+                    if np.isfinite(k):
+                        affected[p] = affected.get(p, 0.0) + k
             else:
                 continue
             if p >= 0 and P.ended[p] < 0 and p not in pols:
@@ -245,25 +268,37 @@ def _record_events(model) -> None:
         if not pols:
             continue
         place = log.place[i]
-        strong = v >= cfg.symbol_min_vividness
         keys = [("entity", a) for a in actors] + ([("cell", place)] if place >= 0 else []) + [("event", i)]
-        symbols = tuple(s for s in (state.symbol(k, strong) for k in keys) if s >= 0)
-        signatures = identity.actor_signatures(model, actors)
+        signatures = None
         for p in pols:
-            # Amplification by repetition: held records sharing the verb and a symbol.
+            total = float(people[p]) if p < len(people) else 0.0
+            share = 1.0 if p in whole else (affected.get(p, 0.0) / total if total > 0 else 1.0)
+            verbs, seen = state.seen.setdefault(p, (set(), set()))
+            novel = (code not in verbs) + any(a not in seen for a in actors)
+            v = min(salience(cfg, share) + cfg.novelty_bonus * novel, vmax)
+            if v < cfg.record_min_vividness:
+                continue
+            strong = v >= cfg.symbol_min_vividness
+            symbols = tuple(s for s in (state.symbol(k, strong) for k in keys) if s >= 0)
+            if signatures is None:
+                signatures = identity.actor_signatures(model, actors)
+            # Amplification by repetition, diminishing: held records sharing the verb and a symbol.
             if symbols:
                 sym = set(symbols)
                 for mid in state.stores.get(p, ()):
                     r = state.records[mid]
                     if r.action == code and sym.intersection(r.symbols):
-                        gain = min(r.vividness + cfg.repeat_gain * v, vmax) - r.vividness
+                        r.repeats += 1
+                        gain = min(r.vividness + cfg.repeat_gain * v * np.log1p(1.0 / r.repeats), vmax) - r.vividness
                         r.vividness += gain
                         r.repeated += gain
             rec = Memory(state._new_id(), tuple(actors), code, place, log.year[i], log.magnitude[i], v, symbols,
-                         (i,), signatures)
+                         (i,), signatures, base=v)
             if p not in caps:
                 caps[p] = int(capacity(model, [p])[0])
             state.created += 1
+            verbs.add(code)
+            seen.update(actors)
             if _insert(model, state, p, rec, caps[p]):
                 for s in members.get(p) or [int(P.capital[p])]:
                     state._hold(s, rec.mem_id)
@@ -319,10 +354,20 @@ def _common_span(spans, y1: int, y2: int) -> tuple[int, int]:
     return s, (min(y1, y2) // s) * s
 
 
+def _spans_meet(a: Memory, b: Memory) -> bool:
+    """The year spans [year, year + span) overlap or touch."""
+    return a.year <= b.year + b.year_span and b.year <= a.year + a.year_span
+
+
+def _mergeable(state: MemoryState, a: Memory, b: Memory) -> bool:
+    return (_shares_detail(a, b) and _spans_meet(a, b)
+            and len(set(a.provenance) | set(b.provenance)) <= state.cfg.max_provenance)
+
+
 def _merge(state: MemoryState, pid: int, mid: int, year: int) -> None:
     rec = state.records[mid]
     store = state.stores[pid]
-    others = [m for m in store if m != mid and _shares_detail(rec, state.records[m])]
+    others = [m for m in store if m != mid and _mergeable(state, rec, state.records[m])]
     if not others:
         return
     w = np.array([state.records[m].vividness for m in others])
@@ -346,6 +391,9 @@ def _merge(state: MemoryState, pid: int, mid: int, year: int) -> None:
     a.provenance = tuple(sorted(set(a.provenance) | set(b.provenance)))
     a.repeated += b.repeated
     a.invoked += b.invoked
+    a.repeats += b.repeats
+    a.invocations += b.invocations
+    a.base = max(a.base, b.base)
     for s in list(b.holders):
         state._hold(s, a.mem_id)
     state.log(year, "merged", pid, a.mem_id, other=b.mem_id)
@@ -387,7 +435,11 @@ def _copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, op: s
     """A copy of ``rec`` into ``pid``'s store (-1 if it did not fit)."""
     new = Memory(state._new_id(), rec.actors, rec.action, rec.place, rec.year, rec.magnitude,
                  rec.vividness * factor, rec.symbols, rec.provenance, rec.signatures, rec.year_span,
-                 rec.place_level, rec.magnitude_rounded, parent=rec.mem_id)
+                 rec.place_level, rec.magnitude_rounded, parent=rec.mem_id, base=rec.base * factor,
+                 repeats=rec.repeats, invocations=rec.invocations)
+    verbs, seen = state.seen.setdefault(pid, (set(), set()))
+    verbs.add(rec.action)
+    seen.update(rec.actors)
     state.log(model.year, op, pid, new.mem_id, other=rec.mem_id, a=rec.store)
     if not _insert(model, state, pid, new, cap):
         return -1
@@ -544,6 +596,8 @@ def copy_store(model, parent: int, child: int, members) -> None:
     cap = int(capacity(model, [child])[0])
     mine = set(int(s) for s in members)
     state.stores.setdefault(child, [])
+    verbs, seen = state.seen.get(parent, (set(), set()))
+    state.seen[child] = (set(verbs), set(seen))
     for mid in list(state.stores.get(parent, ())):
         rec = state.records[mid]
         moving = sorted(rec.holders & mine)
@@ -564,6 +618,10 @@ def absorb(model, big: int, small: int) -> None:
     if not state.enabled:
         return
     store = state.stores.setdefault(big, [])
+    verbs, seen = state.seen.setdefault(big, (set(), set()))
+    v2, s2 = state.seen.pop(small, (set(), set()))
+    verbs.update(v2)
+    seen.update(s2)
     for mid in state.stores.pop(small, []):
         state.records[mid].store = big
         store.append(mid)
@@ -577,6 +635,7 @@ def polity_ended(model, pid: int) -> None:
     if not state.enabled:
         return
     t = model.settlements
+    state.seen.pop(pid, None)
     for mid in state.stores.pop(pid, []):
         rec = state.records[mid]
         rec.holders = {s for s in rec.holders if t.ended[s] < 0}
@@ -766,7 +825,8 @@ def invoke(model, pid: int, related) -> None:
     for m in mids:
         r = state.records[m]
         if used.intersection(r.symbols):
-            new = min(r.vividness * (1.0 + gain), vmax)
+            r.invocations += 1
+            new = min(r.vividness + gain * r.base * np.log1p(1.0 / r.invocations), vmax)
             r.invoked += new - r.vividness
             r.vividness = new
 

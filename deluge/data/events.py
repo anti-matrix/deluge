@@ -16,9 +16,17 @@ Every record is (year, action, actors, place, magnitude):
   target settlement; dead), ``won`` (a raid won; rations taken), ``took`` (conqueror,
   settlement, former polity; people), ``lost`` (a polity losing its capital to the third
   actor).
+- ``crossed`` is a sea crossing: a band reaching its new cell over sea (migration, a
+  daughter founding, joining kin, migration of the core) or a polity's settlement attacking
+  over sea. Its magnitude is the number of sea cells crossed (the fewest any path within
+  the reach takes), its place the cell reached, and it is logged right after the event it is
+  part of (``link``).
 - ``place`` is a cell id (-1 when the event has no place).
 - ``magnitude`` is the size of the effect (people, deaths, techniques, ...). An event is
   logged only when its magnitude is at least ``events.min_magnitude[action]``.
+- ``link`` is the index of the event this one is part of (-1 for none).
+- ``people`` is, per actor, how many people it had when the event was logged (settlements
+  and polities; NaN for other entities). The memory system reads it for salience.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ import pandas as pd
 ACTIONS = (
     "arrived", "taught", "displayed", "departed", "gave", "used", "broke", "fought", "won",
     "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot", "depleted", "took",
+    "crossed",
 )
 ACTION_CODE = {name: i for i, name in enumerate(ACTIONS)}
 ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit", "polity",
@@ -61,24 +70,31 @@ class EventLog:
         self.actors: list[tuple[int, ...]] = []
         self.place: list[int] = []
         self.magnitude: list[float] = []
+        self.link: list[int] = []
+        self.people: list[tuple[float, ...]] = []
 
     def __len__(self) -> int:
         return len(self.year)
 
-    def log(self, year: int, action: str, actors, place: int, magnitude: float) -> bool:
+    def log(self, year: int, action: str, actors, place: int, magnitude: float, link: int = -1,
+            people=None) -> bool:
         code = ACTION_CODE[action]
         if magnitude < self.min_magnitude[code]:
             return False
+        actors = tuple(int(a) for a in actors)
+        # The columns the chronicle reads first are appended last (``Chronicle._snapshot``).
+        self.link.append(int(link))
+        self.people.append(tuple(float(p) for p in people) if people is not None else (np.nan,) * len(actors))
         self.year.append(int(year))
         self.action.append(code)
-        self.actors.append(tuple(int(a) for a in actors))
+        self.actors.append(actors)
         self.place.append(int(place))
         self.magnitude.append(float(magnitude))
         return True
 
     def record(self, i: int) -> dict:
         return {"year": self.year[i], "action": ACTIONS[self.action[i]], "actors": self.actors[i],
-                "place": self.place[i], "magnitude": self.magnitude[i]}
+                "place": self.place[i], "magnitude": self.magnitude[i], "link": self.link[i]}
 
     def to_frame(self) -> pd.DataFrame:
         return pd.DataFrame({
@@ -87,6 +103,8 @@ class EventLog:
             "actors": [list(a) for a in self.actors],
             "place": np.asarray(self.place, dtype=np.int64),
             "magnitude": np.asarray(self.magnitude, dtype=float),
+            "link": np.asarray(self.link, dtype=np.int64),
+            "people": [list(p) for p in self.people],
         })
 
     def write(self, path: Path) -> None:

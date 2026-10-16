@@ -726,7 +726,9 @@ class MemoryConfig:
     control: bool
     generation_years: int
     capacity: int
-    magnitude_reference: Mapping[str, float]
+    vividness_scale: float
+    share_reference: float
+    novelty_bonus: float
     record_min_vividness: float
     vividness_max: float
     symbol_min_vividness: float
@@ -737,6 +739,7 @@ class MemoryConfig:
     region_cells: int
     merge_chance: float
     merge_carry: float
+    max_provenance: int
     max_actors: int
     max_symbols: int
     substitution_chance: float
@@ -770,8 +773,17 @@ class VizConfig:
     step_buttons: tuple[int, ...]
     chronicle_lines: int
     lineage_colors: tuple[str, ...]
-    polity_shades: int
-    polity_shade_range: float
+    polity_shade_by: tuple[str, ...]
+    polity_density_min: float
+    polity_density_max: float
+    polity_shade_levels: int
+    polity_light: float
+    polity_dark: float
+    border_peoples_width: float
+    border_polities_width: float
+    border_outline_width: float
+    border_color: str
+    border_outline_color: str
     resource_colors: Mapping[str, str]
     knowledge_color: str
     knowledge_vmax: float
@@ -804,6 +816,12 @@ class RenderConfig:
 
 
 @dataclass(frozen=True)
+class ReportsConfig:
+    origins_until_year: int
+    narrator_file: str
+
+
+@dataclass(frozen=True)
 class Config:
     run: RunConfig
     rng: RngConfig
@@ -825,6 +843,7 @@ class Config:
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig
+    reports: ReportsConfig
 
     def to_dict(self) -> dict[str, Any]:
         return _to_plain(self)

@@ -4,7 +4,14 @@ Each year, first the conquered settlements assimilate (``assimilate``), then, wi
 ``war.enabled``, the polities choose and fight their battles (``fight``).
 
 Choice (the polity brains, Round 7). The candidate targets of a polity are the foreign
-settlements in contact (``polities.contact_radius``) with one of its own. The polity's
+settlements within reach of one of its own (``war_contacts``): over land, a path of at most
+``polities.contact_radius`` steps over land cells; from a settlement practising sailing
+(holding a technique with ``sea_steps`` it can use where it is, on the coast), also a path
+entering at most that many land cells and at most its sea_steps sea cells, the same
+sea_steps that migration uses (so reach over sea grows with sea_steps). Polities separated
+only by sea cannot fight otherwise. Where a target is within reach of several of the
+polity's settlements, one over land attacks, else the one with the shortest crossing; an
+attack across sea is logged as ``crossed`` (sea cells) after the battle's event. The polity's
 per-neighbour head scores each candidate from its target features
 (``brains/features.py``: estimated win chance, stores, fertility, culture distance,
 perceived appearance and dialect distance, already at war, a capital). Each polity takes
@@ -62,7 +69,7 @@ from deluge.brains.features import target_features
 from deluge.brains.network import OUT, target_scores
 from deluge.data.events import entity
 from deluge.systems import identity, knowledge, memory
-from deluge.systems.cohesion import culture_distance, settlement_contacts, trait_index
+from deluge.systems.cohesion import culture_distance, trait_index
 from deluge.world.worlddata import terrain_table
 
 WIN_EPS = 1e-12
@@ -180,6 +187,104 @@ def strengths(model, F, a: np.ndarray, b: np.ndarray, x: np.ndarray) -> tuple[np
     return sa, sd
 
 
+# --- reach over land and sea ---------------------------------------------------------------------
+
+AXIAL_STEPS = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1))
+_BALLS: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _ball(radius: int) -> tuple[np.ndarray, np.ndarray]:
+    """Axial offsets within ``radius`` hex steps (the centre first) and, per offset, the
+    index of each of its six neighbours in that list (len(offsets) where outside)."""
+    if radius not in _BALLS:
+        offs = [(0, 0)] + [(dq, dr) for dq in range(-radius, radius + 1) for dr in range(-radius, radius + 1)
+                           if 0 < (abs(dq) + abs(dr) + abs(dq + dr)) // 2 <= radius]
+        index = {o: j for j, o in enumerate(offs)}
+        nb = np.array([[index.get((q + a, r + b), len(offs)) for a, b in AXIAL_STEPS] for q, r in offs])
+        _BALLS[radius] = (np.array(offs, dtype=np.int64), nb)
+    return _BALLS[radius]
+
+
+def sea_reach(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """From each of ``cells``: (targets, sea) over the hex ball of ``land_steps`` + max
+    ``sea_steps`` steps; ``sea`` is the fewest sea cells crossed on a path entering at most
+    ``land_steps`` land cells and at most that origin's ``sea_steps`` sea cells (a large
+    number where none does), targets -1 off the map."""
+    geom = model.geom
+    budget = np.asarray(sea_steps, dtype=np.int64)
+    radius = land_steps + (int(budget.max()) if len(budget) else 0)
+    offs, nb = _ball(radius)
+    q, r = geom.axial
+    Q = q[cells][:, None] + offs[None, :, 0]
+    R = r[cells][:, None] + offs[None, :, 1]
+    X = Q + (R + (R & 1)) // 2
+    valid = (R >= 0) & (R < geom.height) & (X >= 0) & (X < geom.width)
+    targets = np.where(valid, X * geom.height + R, -1)
+    wet = valid & model.is_sea[np.maximum(targets, 0)]
+    dry = valid & ~wet
+    big = np.int64(1 << 30)
+    f = np.full((len(cells), len(offs) + 1), big, dtype=np.int64)  # the last column: outside the ball
+    f[:, 0] = 0
+    limit = budget[:, None]
+
+    def over_sea():
+        for _ in range(int(budget.max()) if len(budget) else 0):
+            g = f[:, nb].min(axis=2) + 1
+            better = wet & (g < f[:, :-1]) & (g <= limit)
+            if not better.any():
+                return
+            f[:, :-1] = np.where(better, g, f[:, :-1])
+
+    over_sea()
+    for _ in range(land_steps):
+        g = f[:, nb].min(axis=2)
+        better = dry & (g < f[:, :-1])
+        f[:, :-1] = np.where(better, g, f[:, :-1])
+        over_sea()
+    return targets, f[:, :-1]
+
+
+def sea_budget(model, ids: np.ndarray) -> np.ndarray:
+    """Sea cells each settlement's attack can cross: the sea_steps of the techniques it holds
+    and can use where it is (sailing: on the coast), the same sea_steps migration uses."""
+    g, t = model.knowledge, model.settlements
+    out = np.zeros(len(ids), dtype=np.int64)
+    holds = (t.knows[ids] & (g.effect["sea_steps"] > 0)[None, :]).any(axis=1)
+    if holds.any():
+        from deluge.systems.knowledge import usable_mask
+
+        h = ids[holds]
+        out[holds] = np.rint(g.total(t.knows[h] & usable_mask(model, h), "sea_steps")).astype(np.int64)
+    return out
+
+
+def war_contacts(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(rows, targets, sea): each settlement of ``ids`` (by row) that another settlement is
+    within reach of for war: over land within ``polities.contact_radius`` hex steps of land,
+    or, from a settlement practising sailing, also across at most its ``sea_budget`` sea cells;
+    ``sea`` is the fewest sea cells crossed (0 over land)."""
+    t = model.settlements
+    reach = model.config.polities.contact_radius
+    budget = sea_budget(model, ids)
+    rows, xs, seas = [], [], []
+    for group in (np.flatnonzero(budget == 0), np.flatnonzero(budget > 0)):
+        if len(group) == 0:
+            continue
+        targets, sea = sea_reach(model, t.cell[ids[group]], reach, budget[group])
+        occ = np.append(model.occupant, -1)[targets]  # -1 off the map reads the padding
+        i, k = np.nonzero((sea <= budget[group][:, None]) & (occ >= 0))
+        keep = occ[i, k] != ids[group][i]
+        rows.append(group[i[keep]])
+        xs.append(occ[i, k][keep])
+        seas.append(sea[i, k][keep])
+    if not rows:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, empty
+    rows, xs, seas = np.concatenate(rows), np.concatenate(xs), np.concatenate(seas)
+    order = np.lexsort((xs, rows))
+    return rows[order], xs[order], seas[order]
+
+
 # --- choice -----------------------------------------------------------------------------------
 
 
@@ -191,29 +296,32 @@ def at_war_counts(model) -> np.ndarray:
     return counts
 
 
-def choose(model, F) -> list[tuple[int, int, int, int, bool]]:
-    """This year's attacks: (attacker, defender, attacking settlement, target, campaign),
-    in attacker id order."""
+def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
+    """This year's attacks: (attacker, defender, attacking settlement, target, campaign, sea
+    cells crossed), in attacker id order."""
     w = model.config.war
     t, P = model.settlements, model.polities
     rng = model.streams["war"]
     ids = t.alive_ids()
     if len(ids) == 0:
         return []
-    contacts = settlement_contacts(model, ids)
+    rows, x, sea = war_contacts(model, ids)
     pol = t.polity[ids]
-    other = np.where(contacts >= 0, t.polity[np.maximum(contacts, 0)], -1)
-    i, k = np.nonzero((other >= 0) & (other != pol[:, None]))
-    if len(i) == 0:
+    foreign = t.polity[x] != pol[rows]
+    rows, x, sea = rows[foreign], x[foreign], sea[foreign]
+    if len(rows) == 0:
         return []
-    src, x, a = ids[i], contacts[i, k], pol[i]
-    _, first = np.unique(a * (t.n + 1) + x, return_index=True)  # one attacking settlement per (polity, target)
-    src, x, a = src[first], x[first], a[first]
+    src, a = ids[rows], pol[rows]
+    # One attacking settlement per (polity, target): over land if one is, else the shortest crossing.
+    key = a * (t.n + 1) + x
+    order = np.lexsort((src, sea, key))
+    first = order[np.r_[True, key[order][1:] != key[order][:-1]]]
+    src, x, a, sea = src[first], x[first], a[first], sea[first]
     b = t.polity[x]
     busy = at_war_counts(model) >= w.max_wars
     if busy[a].any():
         allowed = ~busy[a] | np.array([(min(p, q), max(p, q)) in model.wars for p, q in zip(a.tolist(), b.tolist())])
-        src, x, a, b = src[allowed], x[allowed], a[allowed], b[allowed]
+        src, x, a, b, sea = src[allowed], x[allowed], a[allowed], b[allowed], sea[allowed]
         if len(a) == 0:
             return []
     sa, sd = strengths(model, F, a, b, x)
@@ -226,7 +334,7 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool]]:
     p_attack = w.attack_rate * out[:, OUT["aggression"]] * score[best] * np.clip(F.fed[a[best]], 0.0, 1.0)
     attack = rng.random(len(best)) < p_attack
     campaign = rng.random(len(best)) < out[:, OUT["campaign"]]
-    return [(int(a[j]), int(b[j]), int(src[j]), int(x[j]), bool(c))
+    return [(int(a[j]), int(b[j]), int(src[j]), int(x[j]), bool(c), int(sea[j]))
             for j, go, c in zip(best.tolist(), attack.tolist(), campaign.tolist()) if go]
 
 
@@ -294,8 +402,9 @@ def exchange_military(model, s1: int, s2: int) -> None:
                 knowledge.grant(model, taker, j, giver)
 
 
-def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool) -> bool:
-    """Resolve one raid or campaign; returns whether the attacker won."""
+def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int = 0) -> bool:
+    """Resolve one raid or campaign, launched from ``src`` across ``sea`` sea cells;
+    returns whether the attacker won."""
     w = model.config.war
     t, P = model.settlements, model.polities
     rng = model.streams["war"]
@@ -322,10 +431,12 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool) -> bool:
     P.losses_recent[b if won else a] += 1.0
     model.wars[(min(a, b), max(a, b))] = model.year
     cell = int(t.cell[x])
+    link = -1  # the battle's event: fought, else what the win took (won, took)
     if loss_a + loss_d >= w.battle_log_min_losses:
-        model.log_event("fought", [("polity", a), ("polity", b), ("settlement", x)], cell, loss_a + loss_d)
+        link = model.log_event("fought", [("polity", a), ("polity", b), ("settlement", x)], cell, loss_a + loss_d)
     exchange_military(model, src, x)
     if won:
+        before = len(model.events)
         if campaign:
             campaign_won(model, F, a, b, src, x)
         else:
@@ -333,17 +444,22 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool) -> bool:
             t.store[x] -= loot
             t.store[src] += loot
             model.log_event("won", [("polity", a), ("polity", b), ("settlement", x)], cell, loot)
+        if link < 0 and len(model.events) > before:
+            link = before
+    if sea > 0:
+        model.stats["sea_battles"] += 1
+        model.log_crossing(sea, [("polity", a), ("settlement", src), ("settlement", x), ("polity", b)], cell, link)
     return won
 
 
 def fight(model) -> None:
     F = forces(model)
     t, P = model.settlements, model.polities
-    for a, b, src, x, campaign in choose(model, F):
+    for a, b, src, x, campaign, sea in choose(model, F):
         # Skip what this year's earlier battles changed: a polity gone, a target taken.
         if P.ended[a] >= 0 or P.ended[b] >= 0 or t.polity[x] != b or t.polity[src] != a:
             continue
-        battle(model, F, a, b, src, x, campaign)
+        battle(model, F, a, b, src, x, campaign, sea)
 
 
 def run(model) -> None:

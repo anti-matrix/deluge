@@ -20,7 +20,10 @@
   brain's expand output) of the cell's capacity.
 
 Reach is ``search_radius`` hex steps over land, plus technique bonuses; with sailing a
-path may cross a few sea cells. A cell's appeal is a utility over expected food per head
+path may cross a few sea cells (sea cells count toward the search radius too). A move,
+a founding or a join that needs such a path (``sea_cells_crossed``) is logged as
+``crossed`` with the fewest sea cells crossed, right after its own event; for the core's
+migration the band's polity is the second actor. A cell's appeal is a utility over expected food per head
 there (for the settlement's own modes and techniques), distance and crowding. War
 danger enters in Round 6.
 """
@@ -113,6 +116,28 @@ def reach(model, sid: int, origin: int | None = None) -> tuple[np.ndarray, np.nd
             np.fromiter(land_steps.values(), dtype=np.int64, count=len(land_steps)))
 
 
+def sea_cells_crossed(model, sid: int, origin: int, dest: int) -> int:
+    """The fewest sea cells a path from ``origin`` to ``dest`` within band ``sid``'s search
+    radius crosses (0 when a path over land alone reaches it; the origin itself not
+    counted). Used to log the band's sea crossings."""
+    m, g, t = model.config.migration, model.knowledge, model.settlements
+    radius = m.search_radius + int(g.total(t.knows[sid], "migration_radius"))
+    sea = model.is_sea
+    nbrs = model.geom.neighbor_lists
+    best = {origin: 0}
+    frontier = {origin: 0}
+    for _ in range(radius):
+        nxt = {}
+        for c, w in frontier.items():
+            for n in nbrs[c]:
+                v = w + int(sea[n])
+                if v < best.get(n, radius + 1):
+                    best[n] = v
+                    nxt[n] = v
+        frontier = nxt
+    return int(best.get(dest, 0))
+
+
 def expected_food(model, sid: int, cells: np.ndarray, people: float) -> np.ndarray:
     """Food per head ``people`` of settlement ``sid`` could expect on each cell, with its
     own modes and techniques."""
@@ -188,6 +213,7 @@ def join_kin(model, sid: int, host: int) -> None:
     polity (it may be another polity of the same founding group)."""
     t = model.settlements
     pop = float(t.population[sid])
+    crossed = sea_cells_crossed(model, sid, int(t.cell[sid]), int(t.cell[host]))
     identity.blend(model, host, sid)
     t.population[host] += pop
     t.peak_population[host] = max(t.peak_population[host], t.population[host])
@@ -195,15 +221,21 @@ def join_kin(model, sid: int, host: int) -> None:
     t.strength[host] = np.maximum(t.strength[host], t.strength[sid])
     t.knows[host] |= t.knows[sid]
     t.practised[host] |= t.practised[sid]
-    model.log_event("joined", [("settlement", sid), ("settlement", host)], int(t.cell[host]), pop)
+    i = model.log_event("joined", [("settlement", sid), ("settlement", host)], int(t.cell[host]), pop)
+    model.log_crossing(crossed, [("settlement", sid), ("settlement", host)], int(t.cell[host]), i)
     model.end_settlement(sid, "joined", host=host)
 
 
-def move(model, sid: int, cell: int) -> None:
-    pop = float(model.settlements.population[sid])
+def move(model, sid: int, cell: int, core: int = -1) -> None:
+    """Band ``sid`` moves whole to ``cell`` (``core``: the polity whose capital band it is,
+    when the core migrates)."""
+    t = model.settlements
+    pop = float(t.population[sid])
+    crossed = sea_cells_crossed(model, sid, int(t.cell[sid]), cell)
     model.move_settlement(sid, cell)
     model.stats["moves"] += 1
-    model.log_event("moved", [("settlement", sid)], cell, pop)
+    i = model.log_event("moved", [("settlement", sid)], cell, pop)
+    model.log_crossing(crossed, [("settlement", sid)] + ([("polity", core)] if core >= 0 else []), cell, i)
 
 
 def relocate_drowned(model) -> None:
@@ -261,7 +293,7 @@ def move_cores(model, near_free: np.ndarray) -> None:
         here = cell_utility(model, cap, np.array([origin]), np.zeros(1, dtype=np.int64), pop)[0]
         cell, util = best_free_cell(model, cap, pop, 0.0)
         if cell >= 0 and util > here:
-            move(model, cap, cell)
+            move(model, cap, cell, core=pid)
             near_free = free_land_nearby(model)
 
 
@@ -312,6 +344,7 @@ def migrate(model) -> None:
         if cell < 0 or leaving < d.min_population:
             t.next_split_year[sid] = year + m.split_retry_years
             continue
+        crossed = sea_cells_crossed(model, sid, int(t.cell[sid]), cell)
         share = leaving / float(t.population[sid])
         store = share * float(t.store[sid])
         t.population[sid] -= leaving
@@ -320,4 +353,5 @@ def migrate(model) -> None:
                                        knows=t.knows[sid].copy(), strength=t.strength[sid].copy(),
                                        shares=t.shares[sid].copy(), practised=t.practised[sid].copy())
         model.stats["foundings"] += 1
-        model.log_event("founded", [("settlement", child), ("settlement", sid)], cell, leaving)
+        i = model.log_event("founded", [("settlement", child), ("settlement", sid)], cell, leaving)
+        model.log_crossing(crossed, [("settlement", child), ("settlement", sid)], cell, i)

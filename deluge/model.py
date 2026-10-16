@@ -72,7 +72,8 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
 YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost", "techniques_learned",
               "techniques_lost", "losses_after_crash", "latent_expired", "polities_founded", "secessions",
               "fragmentations", "mergers", "polity_extinctions", "monuments_built", "battles", "raids",
-              "campaigns", "conquests", "capitals_taken", "polities_destroyed", "war_deaths")
+              "campaigns", "conquests", "capitals_taken", "polities_destroyed", "war_deaths", "sea_crossings",
+              "sea_battles")
 
 
 class DelugeModel(mesa.Model):
@@ -335,6 +336,30 @@ class DelugeModel(mesa.Model):
         t.store[sid] = 0.0
         self.settlement_agents.pop(sid).remove()
 
+    def claimed_cells(self, ids: np.ndarray | None = None) -> np.ndarray:
+        """Per cell: the polity claiming it, -1 for none. A polity claims its members' cells and
+        the land within ``polities.territory_radius`` of them (``politics``: its territory); a
+        cell in reach of several members goes to the nearest (then the lowest settlement id)."""
+        t = self.settlements
+        ids = t.alive_ids() if ids is None else ids
+        out = np.full(self.geom.n_cells, -1, dtype=np.int64)
+        if len(ids) == 0:
+            return out
+        own = t.cell[ids]
+        ring = self.territory_cells[own]  # (S, k), -1 padding
+        cells = np.concatenate([own, ring.ravel()])
+        sids = np.concatenate([ids, np.repeat(ids, ring.shape[1])])
+        ok = cells >= 0
+        cells, sids = cells[ok], sids[ok]
+        ok = ~self.is_sea[cells]
+        cells, sids = cells[ok], sids[ok]
+        d = self.geom.hex_distance(cells, t.cell[sids])
+        order = np.lexsort((sids, d, cells))
+        cells, sids = cells[order], sids[order]
+        first = np.r_[True, cells[1:] != cells[:-1]]
+        out[cells[first]] = t.polity[sids[first]]
+        return out
+
     def cell_population(self) -> np.ndarray:
         """People per cell (flat)."""
         t = self.settlements
@@ -364,9 +389,20 @@ class DelugeModel(mesa.Model):
             politics.update_territory(self)
     # --- events and knowledge bookkeeping ---------------------------------------------------
 
-    def log_event(self, action: str, actors, place: int, magnitude: float) -> bool:
-        """Log a raw event; ``actors`` are (kind, local id) pairs."""
-        return self.events.log(self.year, action, [entity(kind, i) for kind, i in actors], place, magnitude)
+    def log_event(self, action: str, actors, place: int, magnitude: float, link: int = -1) -> int:
+        """Log a raw event; ``actors`` are (kind, local id) pairs; each settlement actor's
+        people are noted with it. Returns the event's index, -1 if it was not logged."""
+        pop = self.settlements.population
+        people = [float(pop[i]) if kind == "settlement" else np.nan for kind, i in actors]
+        ok = self.events.log(self.year, action, [entity(kind, i) for kind, i in actors], place, magnitude, link,
+                             people)
+        return len(self.events) - 1 if ok else -1
+
+    def log_crossing(self, sea_cells: int, actors, place: int, link: int) -> None:
+        """A sea crossing that is part of event ``link`` (``crossed``: sea cells crossed)."""
+        if sea_cells > 0:
+            self.stats["sea_crossings"] += 1
+            self.log_event("crossed", actors, place, float(sea_cells), link)
 
     def note_technique_gained(self, technique: int, year: int, invented: bool) -> None:
         self.stats["techniques_learned"] += 1
@@ -398,13 +434,10 @@ class DelugeModel(mesa.Model):
         lineage = np.zeros(self.geom.n_cells)  # founding group + 1 per settled cell, 0 = nobody
         lineage[t.cell[ids]] = t.lineage[ids] + 1
         self.lineage_layer.data[...] = as_field(self.geom, lineage)
-        # Polity layer: 1 + polity lineage x shades + shade, 0 = nobody (viz/portrayal.py).
+        # Polity layer: 1 + the polity claiming the cell, 0 = unclaimed (viz/portrayal.py draws it).
         P = self.polities
-        shades = self.config.viz.polity_shades
         pol = t.polity[ids]
-        code = np.zeros(self.geom.n_cells)
-        code[t.cell[ids]] = 1 + P.lineage[pol] * shades + pol % shades
-        self.polity_layer.data[...] = as_field(self.geom, code)
+        self.polity_layer.data[...] = as_field(self.geom, self.claimed_cells(ids) + 1.0)
         pids = P.alive_ids()
         self.n_polities = len(pids)
         self.mean_cohesion = float(P.cohesion[pids].mean()) if len(pids) else 0.0

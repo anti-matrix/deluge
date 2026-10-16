@@ -61,6 +61,75 @@ def win_rate(m, a, sa, b, sb, trials=400, campaign=False):
     return wins / trials
 
 
+# --- reach over sea -----------------------------------------------------------------------------
+
+
+def strait(width, sailing):
+    """Attacker and defender settlements with only sea between them: every cell around them is
+    flooded, so any path crosses ``width`` sea cells at least (the attacker on the coast)."""
+    m = held()
+    origin = interior_cell(m, 6)
+    target = int(free_land(m, origin, width + 1)[0])
+    a, sa = lone_polity(m, origin, pop=20000.0)
+    b, sb = lone_polity(m, target, lineage=1, pop=1000.0)
+    cells = np.arange(m.geom.n_cells)
+    near = m.geom.hex_distance(cells, origin) <= width + 4
+    m.is_sea[near & (cells != origin) & (cells != target)] = True
+    m.is_coast[:] = ~m.is_sea & m.geom.neighbor_any(m.is_sea)
+    if sailing:
+        m.settlements.knows[sa, m.knowledge.index("sailing")] = True
+    return m, a, sa, b, sb
+
+
+def reach_of(m, sa, sb):
+    rows, xs, sea = war.war_contacts(m, np.array([sa]))
+    hit = xs == sb
+    return int(sea[hit][0]) if hit.any() else None
+
+
+def test_strait_needs_sailing_and_a_crossing_within_sea_reach():
+    steps = int(load_sea_steps())
+    m, a, sa, b, sb = strait(1, sailing=False)
+    assert m.geom.hex_distance(int(m.settlements.cell[sa]), int(m.settlements.cell[sb])) <= \
+        m.config.polities.contact_radius  # close enough for land contact, but only sea between
+    assert reach_of(m, sa, sb) is None  # no sailing: no war across the strait
+    m, a, sa, b, sb = strait(1, sailing=True)
+    assert reach_of(m, sa, sb) == 1
+    m, a, sa, b, sb = strait(steps, sailing=True)
+    assert reach_of(m, sa, sb) == steps  # the widest strait its sea_steps cross
+    m, a, sa, b, sb = strait(steps + 1, sailing=True)
+    assert reach_of(m, sa, sb) is None  # wider than its sea reach
+    # Over land, contact stays at contact_radius.
+    m = held()
+    origin = interior_cell(m, 4)
+    _, s1 = lone_polity(m, origin)
+    _, s2 = lone_polity(m, free_land(m, origin, m.config.polities.contact_radius)[0], lineage=1)
+    _, s3 = lone_polity(m, free_land(m, origin, m.config.polities.contact_radius + 1, exclude=[])[0], lineage=2)
+    assert reach_of(m, s1, s2) == 0 and reach_of(m, s1, s3) is None
+
+
+def load_sea_steps():
+    from deluge.config import load_config
+    from deluge.systems.knowledge import KnowledgeGraph
+    g = KnowledgeGraph.from_config(load_config().knowledge)
+    return g.effect["sea_steps"][g.index("sailing")]
+
+
+def test_battle_across_sea_is_logged_as_a_crossing():
+    m, a, sa, b, sb = strait(2, sailing=True)
+    n = len(m.events)
+    war.battle(m, war.forces(m), a, b, sa, sb, True, sea=2)
+    crossed = [i for i in range(n, len(m.events)) if m.events.record(i)["action"] == "crossed"]
+    assert len(crossed) == 1
+    r = m.events.record(crossed[0])
+    assert r["magnitude"] == 2 and r["actors"][:3] == (entity("polity", a), entity("settlement", sa),
+                                                       entity("settlement", sb))
+    assert r["link"] == -1 or r["link"] >= n
+    text = chronicle.line(r, chronicle.Namer(m))
+    assert "crossed 2 sea cells" in text and "to attack" in text
+    assert m.stats["sea_battles"] == 1
+
+
 # --- strength -----------------------------------------------------------------------------------
 
 

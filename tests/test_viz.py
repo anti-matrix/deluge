@@ -75,7 +75,8 @@ def test_only_map_layers_and_the_chosen_overlay_are_drawn(model):
         style = portrayal.make_layer_style(app.VIZ, overlay)
         drawn = {name for name, layer in model.grid._mesa_property_layers.items()
                  if name != "empty" and style(layer) is not None}
-        assert drawn == set(portrayal.MAP_LAYERS) | {overlay}
+        # The polity overlay is drawn by portrayal.draw_polities, not as a Mesa layer.
+        assert drawn == set(portrayal.MAP_LAYERS) | ({overlay} if overlay != "polity" else set())
 
 
 @pytest.mark.slow
@@ -157,27 +158,102 @@ def test_lineage_overlay_colors_each_settlement_by_group(model):
     assert "group A" in portrayal.legend_html(app.VIZ, "lineage", app.CONFIG.founders.names)
 
 
-def test_polity_overlay_shades_each_polity_by_its_group(model):
-    """Polity code 1 + lineage x shades + shade: drawn in a shade of the group's colour;
-    polities of one group differ in shade, never in hue family."""
+@pytest.fixture(scope="module")
+def grown():
+    """A small-world run with several polities of several groups."""
+    m = small_model({"polities": {"secession_base": 0.05}}, years=250)
+    m.run()
+    return m
+
+
+def _gid(ax, gid):
+    return [c for c in ax.collections if c.get_gid() == gid]
+
+
+def test_polity_overlay_fills_claimed_cells_by_group_and_density(grown):
+    """Each claimed cell in its founding group's hue; brighter or darker by population
+    density on a log scale (darker: more people); unclaimed cells unfilled."""
+    m, vcfg = grown, app.VIZ
+    renderer = app.make_renderer(m, overlay="polity")
+    fig = app.draw_map(m, renderer, "polity", "population density")
+    (fill,) = _gid(fig.axes[0], "polity_fill")
+    cells, colors = portrayal.polity_fill(m, vcfg)
+    claimed = np.flatnonzero(m.polity_layer.data.ravel() > 0)
+    np.testing.assert_array_equal(cells, claimed)
+    np.testing.assert_allclose(fill.get_facecolor(), colors, atol=1e-6)
+    lineage = m.polities.lineage[m.polity_layer.data.ravel().astype(int)[cells] - 1]
+    shades = portrayal.polity_shades(vcfg)
+    for g in np.unique(lineage).tolist():  # every colour of a group is one of its own shades
+        own = {tuple(np.round(s, 6)) for s in shades[g]}
+        assert all(tuple(np.round(c, 6)) in own for c in colors[lineage == g])
+    # Darker with more people: brightness falls with the density share.
+    share = portrayal.density_share(m, vcfg)[cells]
+    bright = colors[:, :3].sum(axis=1)
+    g0 = lineage == lineage[0]
+    order = np.argsort(share[g0], kind="stable")
+    assert (np.diff(bright[g0][order]) <= 1e-9).all()  # never brighter with more people
+    ramp = np.array(shades[0])[:, :3].sum(axis=1)
+    assert (np.diff(ramp) < 0).all()  # the steps themselves darken strictly
+    assert list(portrayal.SHADE_BY) == list(vcfg.polity_shade_by) == ["population density"]
+    # The Mesa layer for polities is not drawn: the fill above replaces it.
+    style = portrayal.make_layer_style(vcfg, "polity")
+    assert style(m.polity_layer) is None
+
+
+def test_polity_borders_thick_between_groups_thin_within(grown):
+    m, vcfg = grown, app.VIZ
+    peoples, polities = portrayal.polity_borders(m)
+    assert len(peoples) + len(polities) > 0
+    claimed = m.polity_layer.data.ravel().astype(int) - 1
+    pos = m.geom.positions
+    # Each segment is a shared hex side (length 1) between two claimed cells of different polities.
+    for seg in np.concatenate([peoples, polities])[:100]:
+        assert np.linalg.norm(seg[1] - seg[0]) == pytest.approx(1.0)
+        mid = seg.mean(axis=0)
+        near = np.argsort(np.linalg.norm(pos - mid, axis=1))[:2]
+        assert claimed[near[0]] != claimed[near[1]] and (claimed[near] >= 0).all()
+    fig = app.draw_map(m, app.make_renderer(m, overlay="polity"), "polity", "population density")
+    ax = fig.axes[0]
+    for gid, width, seg in (("people_borders", vcfg.border_peoples_width, peoples),
+                            ("polity_borders", vcfg.border_polities_width, polities)):
+        if len(seg):
+            (line,) = _gid(ax, gid)
+            (outline,) = _gid(ax, gid + "_outline")
+            assert line.get_linewidth()[0] == pytest.approx(width)
+            assert outline.get_linewidth()[0] == pytest.approx(width + vcfg.border_outline_width)
+            assert outline.get_zorder() < line.get_zorder()
+    assert vcfg.border_peoples_width > vcfg.border_polities_width
+
+
+def test_map_plot_and_legend_use_one_lineage_palette(grown):
     vcfg = app.VIZ
-    colors = portrayal.polity_colors(vcfg)
-    assert len(colors) == len(vcfg.lineage_colors) * vcfg.polity_shades
-    renderer = app.make_renderer(model, overlay="polity")
-    face = renderer.canvas.collections[-1].get_facecolor()
-    cid = mesh_order_to_cid(model.geom)
-    code = model.polity_layer.data.ravel()[cid]
-    assert (face[code == 0, 3] == 0).all()
-    for c in np.unique(code[code > 0]).astype(int):
-        np.testing.assert_allclose(face[code == c][0], colors[c - 1], atol=1e-6)
-    mid = vcfg.polity_shades // 2
-    base = np.array(to_rgba(vcfg.lineage_colors[0])[:3])
-    shades = np.array([c[:3] for c in colors[: vcfg.polity_shades]])
-    assert len({tuple(s.round(6)) for s in shades}) == vcfg.polity_shades
-    assert np.abs(shades - base).max(axis=1)[mid - 1:mid + 1].min() < 0.3
-    assert "polities of group A" in portrayal.legend_html(vcfg, "polity", app.CONFIG.founders.names)
-    assert "Polities: 5" in portrayal.status_text(model)
-    assert "iron ore" in portrayal.legend_html(app.VIZ, "resources", app.CONFIG.founders.names)
+    palette = portrayal.lineage_palette(vcfg)
+    assert palette == ("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00")  # A red, B blue, C green, D purple, E orange
+    names = app.CONFIG.founders.names
+    # The population-per-group plot.
+    assert app.GROUP_PLOT_COLORS == {f"pop_{n}": c for n, c in zip(names, palette)}
+    # The legends: each row its swatch then its own label, in palette order.
+    for overlay, label in (("lineage", "group {}"), ("polity", "polities of group {}")):
+        html = portrayal.legend_html(vcfg, overlay, names)
+        rows = html.split('<div style="display:flex')[1:]
+        assert len(rows) == len(names)
+        for row, n, c in zip(rows, names, palette):
+            assert f"background:{c}" in row and row.index(f"background:{c}") < row.index(label.format(n))
+    assert "one per polity" not in portrayal.legend_html(vcfg, "polity", names)
+    # The map: the lineage overlay draws group k in palette[k]; the polity fill in shades of it.
+    m = grown
+    face = app.make_renderer(m, overlay="lineage").canvas.collections[-1].get_facecolor()
+    lin = m.lineage_layer.data.ravel()[mesh_order_to_cid(m.geom)]
+    for k, c in enumerate(palette):
+        if (lin == k + 1).any():
+            np.testing.assert_allclose(face[lin == k + 1][0], to_rgba(c), atol=1e-6)
+    shades = portrayal.polity_shades(vcfg)
+    for k, c in enumerate(palette):
+        base = np.array(to_rgba(c)[:3])
+        # The shade ramp runs from lighter to darker through the palette colour itself.
+        assert np.abs(np.array(shades[k])[:, :3] - base).sum(axis=1).min() < 0.15
+    assert "Polities:" in portrayal.status_text(m)
+    assert "iron ore" in portrayal.legend_html(vcfg, "resources", names)
 
 
 def test_chronicle_filter_reads_one_snapshot_while_events_are_appended():

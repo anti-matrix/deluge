@@ -40,6 +40,15 @@ TEMPLATES = {
     "forgot": "{0} forgot {1}",
     "depleted": "{0} was used up",
     "took": "{0} took {1} from {2}",
+    "crossed": "{0} crossed {sea} to {place}",
+}
+# Sea crossings, by the event they are part of (``link``) and the actors' kinds.
+CROSSING = {
+    "moved": "{0} crossed {sea} to {place}",
+    "moved+core": "{0}, capital of {1}, crossed {sea} to {place}",
+    "founded": "settlers from {1} crossed {sea} to found {0} at {place}",
+    "joined": "{0} crossed {sea} to join {1}",
+    "war": "{0} crossed {sea} from {1} to attack {2} of {3}",
 }
 # Templates by action, the kind of the first actor and the number of actors, then by
 # action and kind, where they differ from TEMPLATES (war events between polities).
@@ -119,10 +128,29 @@ class Namer:
         return f"{kind} {i}"
 
 
+def crossing_kind(model, record: dict) -> str:
+    """What a sea crossing was part of: a band's move, the core's migration, a founding, a
+    join, or war (a key of ``CROSSING``)."""
+    kinds = [decode(a)[0] for a in record["actors"]]
+    if kinds and kinds[0] == "polity":
+        return "war"
+    link = record.get("link", -1)
+    linked = ACTIONS[model.events.action[link]] if link >= 0 else "moved"
+    if linked == "moved" and len(kinds) > 1:
+        return "moved+core"
+    return linked if linked in CROSSING else "moved"
+
+
 def line(record: dict, name: Namer) -> str:
     action = record["action"]
     actors = record["actors"]
     names = [name(a) for a in actors]
+    if action == "crossed":
+        n = int(round(record["magnitude"]))
+        x, y = name.model.geom.xy(record["place"]) if record["place"] >= 0 else (-1, -1)
+        text = CROSSING[crossing_kind(name.model, record)].format(
+            *(names + [""] * 4), sea=f"{n} sea cell{'s' if n != 1 else ''}", place=f"cell ({x}, {y})")
+        return f"Year {record['year']}: {text}."
     padded = names + [""] * 3
     kind = decode(actors[0])[0] if actors else ""
     template = (TEMPLATES_BY_KIND.get((action, kind, len(actors))) or TEMPLATES_BY_KIND.get((action, kind))

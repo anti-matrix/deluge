@@ -348,10 +348,15 @@ def test_polity_layer_and_chronicle():
     m.run()
     t, P = m.settlements, m.polities
     ids = t.alive_ids()
-    code = m.polity_layer.data.ravel()[t.cell[ids]]
-    shades = m.config.viz.polity_shades
-    np.testing.assert_array_equal(code, 1 + P.lineage[t.polity[ids]] * shades + t.polity[ids] % shades)
-    assert (m.polity_layer.data > 0).sum() == len(ids)
+    layer = m.polity_layer.data.ravel()
+    np.testing.assert_array_equal(layer[t.cell[ids]], 1 + t.polity[ids])  # a member's cell is its polity's
+    claimed = np.flatnonzero(layer > 0)
+    assert len(claimed) > len(ids) and not m.is_sea[claimed].any()
+    # Every claimed cell lies within the territory radius of a settlement of the claiming polity.
+    r = m.config.polities.territory_radius
+    for c in claimed[:200].tolist():
+        members = ids[t.polity[ids] == layer[c] - 1]
+        assert m.geom.hex_distance(t.cell[members], c).min() <= r
     text = chronicle.Chronicle(m).text()
     assert "was founded from polity" in text
     sel = chronicle.Chronicle(m).select(groups={0})

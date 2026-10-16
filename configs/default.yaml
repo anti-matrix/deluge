@@ -517,6 +517,7 @@ events:                       # raw event log (spec sections 11 and 12); logged 
     forgot: 0.0               # people in a settlement that lost a technique
     depleted: 0.0             # a mineral deposit used up (only with world.minerals.depletion on)
     took: 0.0                 # a settlement taken by conquest (people); battles are filtered by war.battle_log_min_losses
+    crossed: 0.0              # a sea crossing (sea cells crossed)
 
 polities:                     # spec section 8; one polity per founding group at year 0
   contact_radius: 2           # settlements within this many hex steps are in contact (frontier, secession groups, culture drift)
@@ -721,32 +722,17 @@ memory:                       # spec section 11: generic substrate, copying erro
   generation_years: 25        # transmission runs once per generation
   capacity: 40                # K, memories per polity store, x the capital's memory_capacity multipliers (writing, printing)
   # Recording: each year's logged events, written to the store of every living polity taking part (as a
-  # polity actor, or through a settlement actor). Vividness = magnitude / magnitude_reference[action]
-  # (a unit conversion per verb: people and deaths per 1,000, rations per 10,000 or 100,000, counts per 1),
-  # capped at vividness_max (also after amplification); events below record_min_vividness are not recorded.
-  magnitude_reference:
-    arrived: 1000.0           # people at the band
-    taught: 1.0               # techniques passed on
-    displayed: 1000.0         # people at the band
-    departed: 1.0             # groups visited
-    gave: 1.0                 # artifacts
-    used: 1000.0              # famine deaths spared; people working a deposit
-    broke: 1.0
-    fought: 1000.0            # dead
-    won: 10000.0              # rations taken
-    lost: 1000.0              # people
-    moved: 1000.0
-    founded: 1000.0
-    built: 100000.0           # rations of labour (one monument)
-    starved: 1000.0           # deaths
-    died: 1000.0              # people left
-    joined: 1000.0
-    learned: 1000.0
-    forgot: 1000.0
-    depleted: 1.0
-    took: 1000.0
+  # polity actor, or through a settlement actor). One rule for every verb (no per-verb weights):
+  #   share = people of the holder affected / the holder's people (the whole polity when it is an actor itself,
+  #           else its settlement actors' people when the event was logged), at most 1
+  #   vividness = vividness_scale x log(1 + share / share_reference) / log(1 + 1 / share_reference)
+  #               + novelty_bonus x (the verb is new to the store) + novelty_bonus x (some actor is new to it)
+  # Events below record_min_vividness are not recorded.
+  vividness_scale: 1.0        # vividness of an event affecting the whole holder
+  share_reference: 0.01       # the log scale's knee: a share this small gets ~15% of the scale
+  novelty_bonus: 0.5          # per novelty: the first record of a verb, the first record of an actor, in a store
   record_min_vividness: 0.1
-  vividness_max: 10000.0      # high enough that records rarely tie at the cap (ties drop the older record)
+  vividness_max: 10000.0      # safety bound only (amplification is logarithmic in its count)
   symbol_min_vividness: 1.0   # an entity, place or event gets a symbol when it first enters memory at least this vivid
   # Transmission, per generation, per polity store (probabilities per memory):
   decay: 0.1                  # vividness x (1 - decay)
@@ -754,13 +740,16 @@ memory:                       # spec section 11: generic substrate, copying erro
   detail_loss_chance: 0.1     # one field coarsens: the year to the next span, the place to its region and then to
   year_spans: [1, 25, 100, 500, 2500]  # none, the magnitude to one significant figure
   region_cells: 8             # a region is a block of region_cells x region_cells cells
-  merge_chance: 0.05          # fuse with another memory of the store sharing an actor, the place or a symbol
+  merge_chance: 0.05          # fuse with another memory of the store sharing an actor, the place or a symbol,
+                              # whose year span overlaps or touches its own
   merge_carry: 0.5            # the fused memory's vividness: the larger + merge_carry x the smaller
+  max_provenance: 30          # a merge that would give a record more original events than this does not happen
   max_actors: 6               # the fused memory keeps the more vivid one's actors and symbols, then the other's,
   max_symbols: 12             # up to these many
   substitution_chance: 0.03   # one actor is replaced by an entity of the store, drawn by its total vividness
-  repeat_gain: 0.1            # when a new memory shares the action and a symbol with one held, that one gains
-                              # repeat_gain x the new vividness (amplification by repetition)
+  repeat_gain: 0.1            # when a new memory shares the action and a symbol with one held, that one gains:
+                              # the k-th time, repeat_gain x the new vividness x log((k + 1) / k) (amplification by
+                              # repetition; n repetitions of equal events add repeat_gain x v x log(n + 1) in all)
   borrow_contact_rate: 0.1    # per polity pair in contact, x the receiver's openness: one memory is copied over
   borrow_conquest_rate: 0.2   # per subject settlement: one memory it holds from another store is copied to its ruler's
   borrow_vividness: 0.5       # a copied memory's vividness x this
@@ -777,7 +766,8 @@ memory:                       # spec section 11: generic substrate, copying erro
     legitimacy_half: 1000.0   # the capital, the polity, its parent polities and its founding lineage
     merger_weight: 1.0        # merger odds = polities.merge_rate x min(1, weight x heavy-symbol overlap) x common enemy
     assimilation_weight: 1.0  # assimilation rate x (1 + weight x overlap of the subject's memories with its ruler's)
-    invocation_gain: 0.05     # before a battle, a monument or a union: the heaviest related symbols' memories x (1 + gain)
+    invocation_gain: 0.05     # before a battle, a monument or a union: each memory of the heaviest related symbols
+                              # gains, the k-th time, gain x its starting vividness x log((k + 1) / k)
     invocation_symbols: 3
     brain_input_weight: 1.0   # the memory summary inputs x weight
 
@@ -791,9 +781,22 @@ viz:                          # browser UI only; no effect on the simulation
   render_interval_max: 100    # slider range
   step_buttons: [1, 10, 100]  # years per click of the step buttons
   chronicle_lines: 100        # chronicle lines per page (the log itself keeps every event)
-  lineage_colors: ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]  # lineage overlay: one per founding group, in founders.names order
-  polity_shades: 6            # polity overlay: polities of one founding group get this many shades of its colour
-  polity_shade_range: 0.6     # shades run from the colour darkened by this share to the colour lightened by it
+  # The one lineage palette: one colour per founding group, in founders.names order, used by every
+  # lineage-coloured element (lineage and polity overlays, the population-per-group plot, legends).
+  lineage_colors: ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]
+  # Polity overlay: each claimed cell (a member's cell and land within polities.territory_radius of it, given
+  # to the nearest member) in its founding group's hue; brightness from the chosen "shade by" variable.
+  polity_shade_by: [population density]  # options of the "shade by" selector (viz/portrayal.py SHADE_BY)
+  polity_density_min: 0.01    # people / km2 at the lightest shade (log scale; less is drawn as this)
+  polity_density_max: 10.0    # people / km2 at the darkest shade
+  polity_shade_levels: 12     # brightness steps per group
+  polity_light: 0.6           # lightest: the colour lightened by this share toward white
+  polity_dark: 0.6            # darkest: the colour darkened by this share toward black
+  border_peoples_width: 2.4   # line between polities of different founding groups
+  border_polities_width: 0.8  # line between polities of the same founding group
+  border_outline_width: 1.6   # each border is drawn over a light outline this much wider
+  border_color: "#202020"
+  border_outline_color: "#f4f4f4"
   resource_colors:            # resources overlay: one per mineral, and cells with several
     copper: "#d95f02"
     tin: "#7f7f7f"
@@ -827,3 +830,7 @@ render:                       # static PNG maps only; no effect on the simulatio
   population_density_min: 0.001  # people / km2, colour scale
   population_density_max: 0.2
   knowledge_years: [50, 500, 2000, 5000]   # technique maps (scripts/render_knowledge.py)
+
+reports:                      # analysis reports only (analysis/); no effect on the simulation
+  origins_until_year: 100     # myths report "Origins" and the narrator: records descending from events in years 0 to this
+  narrator_file: narrator.yaml  # analysis/narrator.py: name syllables, technique phrases, templates (relative to this file)

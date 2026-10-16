@@ -3,8 +3,9 @@
     solara run deluge/viz/app.py
 
 Shows the hex map (terrain, with the year's sea drawn over it, and a chosen overlay:
-people or techniques known per cell, the polity or founding group of each settlement, or
-mineral deposits, with a colour key), Mesa's play / pause / step / reset controls,
+people or techniques known per cell, the founding group of each settlement, mineral
+deposits, or the polities: claimed cells in their founding group's hue shaded by a chosen
+variable, with borders; with a colour key), Mesa's play / pause / step / reset controls,
 buttons that step 1, 10 or 100 years, a year counter, plots of sea level, population per
 founding group and per subsistence mode, and the number of polities, and a chronicle of the whole event log (a page
 at a time, newest first; filtered by group, event type, year range and text; downloadable
@@ -25,7 +26,7 @@ from __future__ import annotations
 
 import solara
 from mesa.visualization import SpaceRenderer, make_plot_component
-from mesa.visualization.solara_viz import ModelController, SpaceRendererComponent
+from mesa.visualization.solara_viz import ModelController
 from mesa.visualization.utils import force_update, update_counter
 
 from deluge.agents.settlement import MODES
@@ -60,7 +61,11 @@ def make_renderer(model: DelugeModel, overlay: str = "population") -> SpaceRende
 
 
 _sea_level_plot, _ = make_plot_component("sea_level")
-_group_plot, _ = make_plot_component([f"pop_{name}" for name in CONFIG.founders.names])
+# Population per founding group, in the lineage palette (the map and legends use the same).
+GROUP_PLOT_COLORS = {f"pop_{name}": color for name, color in zip(CONFIG.founders.names, portrayal.lineage_palette(VIZ))}
+_group_plot, _ = make_plot_component(GROUP_PLOT_COLORS)
+if set(VIZ.polity_shade_by) - set(portrayal.SHADE_BY):
+    raise KeyError(f"viz.polity_shade_by: unknown {sorted(set(VIZ.polity_shade_by) - set(portrayal.SHADE_BY))}")
 _mode_plot, _ = make_plot_component([f"pop_{mode}" for mode in MODES])
 _polity_plot, _ = make_plot_component("n_polities")
 
@@ -106,16 +111,51 @@ def SeedInputs(model_parameters):
 
 
 @solara.component
-def OverlaySelect(renderer, overlay):
+def OverlaySelect(renderer, overlay, shade_by):
     def on_value(value: str):
         overlay.set(value)
         renderer.value.propertylayer_portrayal = portrayal.make_layer_style(VIZ, value)
         force_update()
 
     solara.Select("Map overlay", values=list(portrayal.OVERLAYS), value=overlay.value, on_value=on_value)
+    if overlay.value == "polity":
+        def on_shade(value: str):
+            shade_by.set(value)
+            force_update()
+
+        solara.Select("Shade by", values=list(VIZ.polity_shade_by), value=shade_by.value, on_value=on_shade)
     legend = portrayal.legend_html(VIZ, overlay.value, CONFIG.founders.names)
     if legend:
         solara.HTML(tag="div", unsafe_innerHTML=legend)
+
+
+def draw_map(model: DelugeModel, renderer: SpaceRenderer, overlay: str, shade_by: str):
+    """One frame of the map, as Mesa's SpaceRendererComponent draws it (matplotlib), plus the
+    polity overlay: clear the artists, draw the property layers, style the axes once, then the
+    polity fill and borders. Returns the figure."""
+    ax = renderer.canvas
+    for artist in [*ax.lines, *ax.collections, *ax.patches, *ax.images, *ax.artists]:
+        artist.remove()
+    for cbar in renderer.backend_renderer._active_colorbars:
+        cbar.remove()
+    renderer.backend_renderer._active_colorbars.clear()
+    if renderer.propertylayer_mesh:
+        renderer.draw_propertylayer()
+    if renderer.post_process and not renderer._post_process_applied:
+        renderer.post_process(ax)
+        renderer._post_process_applied = True
+    if overlay == "polity":
+        portrayal.draw_polities(ax, model, VIZ, shade_by)
+    return ax.get_figure()
+
+
+@solara.component
+def MapView(model: DelugeModel, renderer: SpaceRenderer, overlay: str, shade_by: str):
+    update_counter.get()
+    renderer.space = model.grid
+    fig = draw_map(model, renderer, overlay, shade_by)
+    solara.FigureMatplotlib(fig, format="png", bbox_inches="tight",
+                            dependencies=[update_counter.value, overlay, shade_by])
 
 
 @solara.component
@@ -191,6 +231,7 @@ def Page():
     renderer = solara.use_reactive(initial_renderer)
     model_parameters = solara.use_reactive({name: getattr(CONFIG.run, name) for name in SEEDS})
     overlay = solara.use_reactive("population")
+    shade_by = solara.use_reactive(VIZ.polity_shade_by[0])
     play_interval = solara.use_reactive(VIZ.play_interval_ms)
     render_interval = solara.use_reactive(VIZ.render_interval)
     use_threads = solara.use_reactive(False)
@@ -212,11 +253,11 @@ def Page():
             with solara.Card("Model parameters"):
                 SeedInputs(model_parameters)
             with solara.Card("Map"):
-                OverlaySelect(renderer, overlay)
+                OverlaySelect(renderer, overlay, shade_by)
             with solara.Card("Year"):
                 Status(model.value)
         with solara.Column():
-            SpaceRendererComponent(model.value, renderer.value)
+            MapView(model.value, renderer.value, overlay.value, shade_by.value)
             Plots(model.value)
             with solara.Card("Chronicle"):
                 Chronicle(model.value)
