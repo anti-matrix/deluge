@@ -792,9 +792,29 @@ class VizConfig:
     population_color: str
     population_vmax: float
     population_alpha_curve: float
-    figure_width_in: float
-    figure_height_in: float
-    figure_dpi: int
+    polity_output_min: float
+    polity_output_max: float
+    mode_colors: Mapping[str, str]
+    cohesion_cmap: str
+    capital_px: float
+    monument_px: float
+    monument_color: str
+    war_color: str
+    war_px: float
+    teachers_color: str
+    teachers_px: float
+    map_height_px: int
+    max_zoom: float
+    panel_interval: int
+    chart_points: int
+    chart_width_px: int
+    chart_height_px: int
+    tree_width_px: int
+    tree_row_px: float
+    tree_max_height_px: int
+    inspector_symbols: int
+    inspector_events: int
+    inspector_origins: int
 
 
 @dataclass(frozen=True)

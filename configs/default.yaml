@@ -781,9 +781,9 @@ output:
   runs_dir: runs
 
 viz:                          # browser UI only; no effect on the simulation
-  play_interval_ms: 50        # pause between frames while playing
+  play_interval_ms: 0         # pause between frames while playing
   play_interval_max_ms: 500   # slider range
-  render_interval: 10         # years stepped per frame while playing, and per click of Step
+  render_interval: 25         # years stepped per frame while playing, and per click of Step
   render_interval_max: 100    # slider range
   step_buttons: [1, 10, 100]  # years per click of the step buttons
   chronicle_lines: 100        # chronicle lines per page (the log itself keeps every event)
@@ -792,7 +792,7 @@ viz:                          # browser UI only; no effect on the simulation
   lineage_colors: ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]
   # Polity overlay: each claimed cell (a member's cell and land within polities.territory_radius of it, given
   # to the nearest member) in its founding group's hue; brightness from the chosen "shade by" variable.
-  polity_shade_by: [population density]  # options of the "shade by" selector (viz/portrayal.py SHADE_BY)
+  polity_shade_by: [population density, technology level, subsistence output]  # options of the "shade by" selector (viz/portrayal.py SHADE_BY)
   polity_density_min: 0.01    # people / km2 at the lightest shade (log scale; less is drawn as this)
   polity_density_max: 10.0    # people / km2 at the darkest shade
   polity_shade_levels: 12     # brightness steps per group
@@ -817,9 +817,29 @@ viz:                          # browser UI only; no effect on the simulation
   population_color: "#b2182b" # population overlay
   population_vmax: 2000.0     # people per cell at full opacity
   population_alpha_curve: 30.0  # opacity = log(1 + c x) / log(1 + c), x = people / vmax: small bands stay visible
-  figure_width_in: 12.0
-  figure_height_in: 7.0
-  figure_dpi: 80
+  polity_output_min: 0.01     # "shade by" subsistence output: rations available per km2, lightest (log scale)
+  polity_output_max: 10.0     # ... darkest
+  mode_colors: {forage: "#8c510a", herd: "#d6b23a", farm: "#1b7837"}  # subsistence layer: shares mix these
+  cohesion_cmap: viridis      # cohesion layer: matplotlib colour map over 0..1
+  capital_px: 4.0             # overlays (sizes in screen pixels, at any zoom)
+  monument_px: 2.5
+  monument_color: "#000000"
+  war_color: "#d00000"        # active wars: arrows from the attacker's capital to the defender's
+  war_px: 1.8
+  teachers_color: "#ff00ff"   # the teachers' path and position during the contact phase
+  teachers_px: 2.0
+  map_height_px: 620
+  max_zoom: 40.0              # zoom in at most this far (the whole map at 1)
+  panel_interval: 5           # frames between refreshes of the charts and the lineage tree while playing
+  chart_points: 400           # points per series drawn in the charts
+  chart_width_px: 330
+  chart_height_px: 150
+  tree_width_px: 680
+  tree_row_px: 3.0            # rows of the lineage tree, px each (capped by tree_max_height_px)
+  tree_max_height_px: 700
+  inspector_symbols: 5        # polity inspector: heaviest symbols shown, events per record, origin records
+  inspector_events: 4
+  inspector_origins: 12
 
 render:                       # static PNG maps only; no effect on the simulation
   dpi: 110
