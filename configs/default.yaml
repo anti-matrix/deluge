@@ -546,8 +546,8 @@ polities:                     # spec section 8; one polity per founding group at
   fragment_pressure: 0.3
   fragment_rate: 0.005       # Round 6 tuning: 0.02 -> 0.01 -> 0.005
   region_spacing: 4           # regional seats (largest settlements first) are at least this many hex steps apart
-  # Mergers (spec: high shared memory and a common enemy). Both inputs are zero until memory (Round 8)
-  # and war (Round 6) exist, so no merger happens yet; the mechanism is in place.
+  # Mergers (spec: high shared memory and a common enemy): odds = merge_rate x min(1, memory.consequences.
+  # merger_weight x the overlap of the two stores' heaviest symbols) x (1 if both are at war with one third polity).
   merge_rate: 0.01            # chance per year per pair in contact at full affinity and full common threat
   merge_crossover_chance: 0.5 # chance that the merged culture is a uniform crossover (each trait from either partner)
                               # instead of the larger partner's (and the same for its brain's weights)
@@ -683,18 +683,17 @@ war:                          # spec section 9; the choice follows the polity br
   subject_diffusion_rate: 0.1     # per year, each technique a subject settlement holds passes to its ruler's capital
   # After conquest (spec section 9): a conquered settlement keeps its own culture, gets grievance, and is a
   # subject until assimilated. Its culture moves toward its ruler's at assimilation_rate x the ruler's
-  # openness x (1 + memory_weight x shared-memory overlap; overlap is zero until memory, Round 8).
+  # openness x (1 + memory.consequences.assimilation_weight x shared-memory overlap, Round 8).
   grievance_conquest: 1.0
   grievance_decay: 0.01       # per year
   grievance_floor: 0.05       # a subject is assimilated once grievance is below this
   assimilation_rate: 0.01
-  assimilation_memory_weight: 1.0
   assimilated_distance: 0.02  # and its culture is this close to its ruler's (euclidean / sqrt(traits))
 
 brains:                       # spec section 10: a fixed-topology MLP per polity, all evaluated in one batch a year
   hidden: 16                  # tanh units; inputs and outputs are listed in brains/features.py and brains/network.py
   recurrent_units: 0          # hidden units fed back as inputs the next year; 0 = off (spec default)
-  memory_inputs: 3            # slots for the memory summary; zero until memory exists (Round 8)
+  memory_inputs: 3            # the memory summary (systems/memory.py SUMMARY): must match its length
   init_sigma: 2.0             # founding brains: every weight and bias ~ N(0, init_sigma / sqrt(fan in)) (history_seed);
                               # 2.0 spreads the founders' outputs about as widely as uniform 0..1 traits (sd ~0.26)
   marker_init_sigma: 0.0      # the same for weights that read appearance or dialect: they start at zero (spec hard rule)
@@ -715,6 +714,72 @@ brains:                       # spec section 10: a fixed-topology MLP per polity
     war_record_reference: 3.0 # tanh(recent battles won (lost) / reference)
     war_record_decay: 0.05    # per year the counts of battles won and lost decay by this share
     temp_anomaly_scale: 3.0   # tanh(climate anomaly degC / scale)
+
+memory:                       # spec section 11: generic substrate, copying errors and consequences; no content
+  enabled: true               # false: no memory at all (the reference for the control condition)
+  control: false              # true: memory is recorded and transmitted but every consequence weight reads as zero
+  generation_years: 25        # transmission runs once per generation
+  capacity: 40                # K, memories per polity store, x the capital's memory_capacity multipliers (writing, printing)
+  # Recording: each year's logged events, written to the store of every living polity taking part (as a
+  # polity actor, or through a settlement actor). Vividness = magnitude / magnitude_reference[action]
+  # (a unit conversion per verb: people and deaths per 1,000, rations per 10,000 or 100,000, counts per 1),
+  # capped at vividness_max (also after amplification); events below record_min_vividness are not recorded.
+  magnitude_reference:
+    arrived: 1000.0           # people at the band
+    taught: 1.0               # techniques passed on
+    displayed: 1000.0         # people at the band
+    departed: 1.0             # groups visited
+    gave: 1.0                 # artifacts
+    used: 1000.0              # famine deaths spared; people working a deposit
+    broke: 1.0
+    fought: 1000.0            # dead
+    won: 10000.0              # rations taken
+    lost: 1000.0              # people
+    moved: 1000.0
+    founded: 1000.0
+    built: 100000.0           # rations of labour (one monument)
+    starved: 1000.0           # deaths
+    died: 1000.0              # people left
+    joined: 1000.0
+    learned: 1000.0
+    forgot: 1000.0
+    depleted: 1.0
+    took: 1000.0
+  record_min_vividness: 0.1
+  vividness_max: 10000.0      # high enough that records rarely tie at the cap (ties drop the older record)
+  symbol_min_vividness: 1.0   # an entity, place or event gets a symbol when it first enters memory at least this vivid
+  # Transmission, per generation, per polity store (probabilities per memory):
+  decay: 0.1                  # vividness x (1 - decay)
+  floor: 0.05                 # when the store is full, memories below this vividness drop out
+  detail_loss_chance: 0.1     # one field coarsens: the year to the next span, the place to its region and then to
+  year_spans: [1, 25, 100, 500, 2500]  # none, the magnitude to one significant figure
+  region_cells: 8             # a region is a block of region_cells x region_cells cells
+  merge_chance: 0.05          # fuse with another memory of the store sharing an actor, the place or a symbol
+  merge_carry: 0.5            # the fused memory's vividness: the larger + merge_carry x the smaller
+  max_actors: 6               # the fused memory keeps the more vivid one's actors and symbols, then the other's,
+  max_symbols: 12             # up to these many
+  substitution_chance: 0.03   # one actor is replaced by an entity of the store, drawn by its total vividness
+  repeat_gain: 0.1            # when a new memory shares the action and a symbol with one held, that one gains
+                              # repeat_gain x the new vividness (amplification by repetition)
+  borrow_contact_rate: 0.1    # per polity pair in contact, x the receiver's openness: one memory is copied over
+  borrow_conquest_rate: 0.2   # per subject settlement: one memory it holds from another store is copied to its ruler's
+  borrow_vividness: 0.5       # a copied memory's vividness x this
+  spread_rate: 0.5            # per member settlement, per memory held by a member in contact: chance it is taken up
+  holding_loss: 0.05          # per settlement, per memory it holds: chance it is lost
+  shared_majority: 0.5        # a memory counts as shared when held by at least this share of the polity's people
+  heavy_symbols: 10           # the heaviest symbols of a store used for affinity, legitimacy and invocation
+  summary_weight_reference: 5000.0 # brain input: tanh(heaviest symbol weight / reference)
+  summary_age_reference: 500.0    # brain input: tanh(mean age of memories in years / reference)
+  consequences:               # every weight reads as zero with control: true
+    cohesion_weight: 0.01     # cohesion + weight x S / (S + half) x (1 - C), S = vividness of the shared memories
+    cohesion_half: 1000.0
+    legitimacy_weight: 0.5    # secession odds x (1 - weight x L), L = w / (w + half), w = weight of the symbols of
+    legitimacy_half: 1000.0   # the capital, the polity, its parent polities and its founding lineage
+    merger_weight: 1.0        # merger odds = polities.merge_rate x min(1, weight x heavy-symbol overlap) x common enemy
+    assimilation_weight: 1.0  # assimilation rate x (1 + weight x overlap of the subject's memories with its ruler's)
+    invocation_gain: 0.05     # before a battle, a monument or a union: the heaviest related symbols' memories x (1 + gain)
+    invocation_symbols: 3
+    brain_input_weight: 1.0   # the memory summary inputs x weight
 
 output:
   runs_dir: runs

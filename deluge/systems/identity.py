@@ -36,7 +36,7 @@ capability.
 - Optional environmental selection (off by default): one trait is pulled toward a
   latitude-dependent optimum.
 
-Unions mix through mergers (inactive until memory, Round 8).
+A union (merger, `politics.merge`) mixes its people through the absorbing polity's intermarriage.
 """
 
 from __future__ import annotations
@@ -87,6 +87,29 @@ def pair_distances(model, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.
 def core_distances(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Perceived (appearance, dialect) distance of each settlement from its polity's capital."""
     return pair_distances(model, ids, model.polities.capital[model.settlements.polity[ids]])
+
+
+def actor_signatures(model, actors) -> tuple:
+    """Appearance and dialect signature of each event actor now, for the memory records
+    (spec "In memory"): a settlement's appearance means then its dialect, a polity's those of
+    its capital, the teachers' appearance (they have no dialect: NaN); None for entities
+    that are not people and for a lineage. Stored only; nothing reads them back."""
+    from deluge.data.events import decode
+
+    t = model.settlements
+    n_dia = t.dialect.shape[1]
+    out = []
+    for a in actors:
+        kind, local = decode(a)
+        if kind == "polity":
+            kind, local = "settlement", int(model.polities.capital[local])
+        if kind == "settlement":
+            out.append(tuple(np.r_[t.appearance_mean[local], t.dialect[local]].round(4).tolist()))
+        elif kind == "teachers":
+            out.append(tuple(np.r_[model.teachers_appearance, np.full(n_dia, np.nan)].round(4).tolist()))
+        else:
+            out.append(None)
+    return tuple(out)
 
 
 def inherit(model, child: int, parent: int) -> None:

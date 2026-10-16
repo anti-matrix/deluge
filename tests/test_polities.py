@@ -26,10 +26,11 @@ HELD = {
 }
 
 
-def held(polities=None, years=100, **kw):
+def held(polities=None, years=100, more=None, **kw):
     over = dict(HELD)
     if polities:
         over["polities"] = polities
+    over.update(more or {})
     m = small_model(over, years=years, **kw)
     m.step()
     return m
@@ -218,8 +219,9 @@ def test_empty_polity_goes_extinct():
 # --- mergers -----------------------------------------------------------------------------------
 
 
-def test_mergers_are_inactive_until_memory_and_war_exist():
-    m = held({"merge_rate": 1.0}, years=60)
+def test_no_mergers_with_the_memory_consequences_off():
+    """Mergers need shared-memory affinity (Round 8); the control switch zeroes it."""
+    m = held({"merge_rate": 1.0}, years=60, more={"memory": {"control": True}})
     origin = interior_cell(m, 4)
     lone_polity(m, origin)
     lone_polity(m, free_land(m, origin, 1)[0], lineage=1)

@@ -35,7 +35,7 @@ people left, is destroyed and the conqueror takes everything it had.
 After conquest a settlement keeps its own culture and techniques, gets ``grievance`` and is
 a subject (``subject_of``) of its conqueror. Each year its culture moves toward its ruler's
 at ``assimilation_rate`` x the ruler's openness (x (1 + memory weight x shared-memory
-overlap; zero until Round 8)), its techniques pass to the ruler's capital at
+overlap, ``memory.subject_affinity``)), its techniques pass to the ruler's capital at
 ``subject_diffusion_rate``, and its grievance decays; once grievance is low and its culture
 close to its ruler's it is assimilated. Grievance raises secession and lowers cohesion
 (``politics``, ``cohesion``); each battle counts as recent war in frontier pressure, and
@@ -60,7 +60,8 @@ import numpy as np
 from deluge.agents.polity import marker_index
 from deluge.brains.features import target_features
 from deluge.brains.network import OUT, target_scores
-from deluge.systems import identity, knowledge
+from deluge.data.events import entity
+from deluge.systems import identity, knowledge, memory
 from deluge.systems.cohesion import culture_distance, settlement_contacts, trait_index
 from deluge.world.worlddata import terrain_table
 
@@ -68,9 +69,9 @@ WIN_EPS = 1e-12
 
 
 def subject_memory_overlap(model, sids: np.ndarray) -> np.ndarray:
-    """Shared-memory overlap between subject settlements and their rulers: zero until
-    memory exists (Round 8)."""
-    return np.zeros(len(sids))
+    """Weighted shared-memory overlap between subject settlements and their rulers
+    (``memory.subject_affinity``: zero with the memory consequences off)."""
+    return memory.subject_affinity(model, sids)
 
 
 def win_chance(sa, sd, steepness: float):
@@ -96,7 +97,7 @@ def assimilate(model) -> None:
     if len(subjects):
         ruler = t.polity[subjects]
         rate = (w.assimilation_rate * model.openness_of(subjects)
-                * (1.0 + w.assimilation_memory_weight * subject_memory_overlap(model, subjects)))
+                * (1.0 + subject_memory_overlap(model, subjects)))
         t.culture[subjects] += rate[:, None] * (P.culture[ruler] - t.culture[subjects])
         # Techniques the conquered hold pass to the ruler's capital.
         capital = P.capital[ruler]
@@ -298,6 +299,7 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool) -> bool:
     w = model.config.war
     t, P = model.settlements, model.polities
     rng = model.streams["war"]
+    memory.invoke(model, a, (entity("polity", b), entity("settlement", x)))
     sa, sd = (float(v[0]) for v in strengths(model, F, np.array([a]), np.array([b]), np.array([x])))
     won = bool(rng.random() < win_chance(sa, sd, w.win_steepness))
     loss_a = min(w.casualty_rate * sd * (1.0 if won else w.loser_casualty_factor),

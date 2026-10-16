@@ -15,7 +15,10 @@ Inputs per polity (``FEATURES``, then ``brains.memory_inputs`` memory slots and
   recent battles won and lost.
 - Environment: the year's climate anomaly, share of its people in drought, capacity
   headroom (1 - people / capacity, last counted by the cohesion phase).
-- Memory: zeros until memory exists (Round 8).
+- Memory: the store summary (``systems/memory.py`` ``SUMMARY``: heaviest symbol weight,
+  vividness share of records with an actor from outside the polity's founding group, mean
+  age of the records), x ``memory.consequences.brain_input_weight``. Its weights in the
+  founders' brains are drawn like every non-marker input's (``init_sigma``).
 
 Appearance and dialect distances are the perceived ones (``systems/identity.py``: zero
 with ``blind_perception``); the weights reading them start at zero (``MARKER_FEATURES``,
@@ -33,7 +36,7 @@ from __future__ import annotations
 import numpy as np
 
 from deluge.config import BrainsConfig
-from deluge.systems import identity
+from deluge.systems import identity, memory
 from deluge.systems.cohesion import culture_distance, settlement_contacts
 
 FEATURES = (
@@ -145,7 +148,9 @@ def assemble(model, pids: np.ndarray) -> np.ndarray:
     put("drought", _weighted_mean(pol, dry, pop, n)[pids])
     put("headroom", np.clip(1.0 - P.load[pids], -1.0, 1.0))
 
-    # Memory slots stay zero (Round 8); recurrent units carry last year's hidden state.
+    # Memory summary (zeros with the memory consequences off); recurrent units carry last year's hidden state.
+    if cfg.memory_inputs:
+        x[:, col["memory_0"]:col["memory_0"] + cfg.memory_inputs] = memory.summary(model, pids)
     if cfg.recurrent_units:
         x[:, col["recurrent_0"]:col["recurrent_0"] + cfg.recurrent_units] = B.state[pids]
     return x

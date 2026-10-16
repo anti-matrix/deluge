@@ -36,6 +36,7 @@ ACTION_CODE = {name: i for i, name in enumerate(ACTIONS)}
 ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit", "polity",
                 "monument")
 KIND_CODE = {name: i for i, name in enumerate(ENTITY_KINDS)}
+PEOPLE_KINDS = ("teachers", "lineage", "settlement", "polity")  # entities that are groups of people
 TEACHERS = 0  # local id of the one teachers entity
 
 

@@ -671,7 +671,6 @@ class WarConfig:
     grievance_decay: float
     grievance_floor: float
     assimilation_rate: float
-    assimilation_memory_weight: float
     assimilated_distance: float
 
 
@@ -703,6 +702,55 @@ class BrainsConfig:
     jump_sigma: float
     frozen: bool
     features: BrainFeaturesConfig
+
+
+# --- memory -----------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MemoryConsequencesConfig:
+    cohesion_weight: float
+    cohesion_half: float
+    legitimacy_weight: float
+    legitimacy_half: float
+    merger_weight: float
+    assimilation_weight: float
+    invocation_gain: float
+    invocation_symbols: int
+    brain_input_weight: float
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    enabled: bool
+    control: bool
+    generation_years: int
+    capacity: int
+    magnitude_reference: Mapping[str, float]
+    record_min_vividness: float
+    vividness_max: float
+    symbol_min_vividness: float
+    decay: float
+    floor: float
+    detail_loss_chance: float
+    year_spans: tuple[int, ...]
+    region_cells: int
+    merge_chance: float
+    merge_carry: float
+    max_actors: int
+    max_symbols: int
+    substitution_chance: float
+    repeat_gain: float
+    borrow_contact_rate: float
+    borrow_conquest_rate: float
+    borrow_vividness: float
+    spread_rate: float
+    holding_loss: float
+    shared_majority: float
+    heavy_symbols: int
+    summary_weight_reference: float
+    summary_age_reference: float
+    consequences: MemoryConsequencesConfig
 
 
 # --- output and rendering ----------------------------------------------------------------------
@@ -773,6 +821,7 @@ class Config:
     ancestry: AncestryConfig
     war: WarConfig
     brains: BrainsConfig
+    memory: MemoryConfig
     output: OutputConfig
     viz: VizConfig
     render: RenderConfig

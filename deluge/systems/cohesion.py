@@ -34,7 +34,8 @@ Per living polity, each year, in this order:
    members' grievance from conquest (population-weighted mean), plus
    ``marker_cohesion_decay`` x the cohesion marker parameters . the members' mean perceived
    appearance and dialect distance from the capital (delta floored at 0).
-   The shared-memory term joins in Round 8.
+   Then the shared-memory term: C + ``memory.cohesion_term`` x (1 - C) (spec section 11;
+   zero with the memory consequences off).
 
 The load (people over the capacity of the members' cells) is kept for the brains' headroom
 input.
@@ -46,7 +47,7 @@ import numpy as np
 
 from deluge.agents.polity import marker_index
 from deluge.brains.network import OUT
-from deluge.systems import identity
+from deluge.systems import identity, memory
 from deluge.systems.subsistence import fed_capacity, mode_capacity
 
 TRAIT_DIST_EPS = 1e-12
@@ -217,4 +218,5 @@ def run(model) -> None:
     c = P.cohesion[pids]
     m = maintained[pids]
     c = c + cc.growth_rate * f * c * (1.0 - c) - delta * c + cc.monument_cohesion * m / (m + cc.monument_half) * (1 - c)
+    c = c + memory.cohesion_term(model, pids) * (1.0 - c)
     P.cohesion[pids] = np.clip(c, 0.0, 1.0)

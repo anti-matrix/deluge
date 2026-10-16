@@ -15,6 +15,8 @@ and subsistence shift. Phase 7 runs war (assimilation of
 conquered settlements, then the brains' war choice and battles). Phase 8 runs cohesion
 (tribute, monuments, elites, pressure, cohesion), then politics (secession, fragmentation,
 mergers, culture drift, territory), then the drift and mixing of appearance and dialect.
+Phase 9 writes the year's events into the polities' memory stores and, once per
+generation, runs lossy transmission (``systems/memory.py``).
 
 ``model.year`` is the year being simulated: a step runs every phase for that year,
 collects data, then advances the year.
@@ -42,8 +44,8 @@ from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
 from deluge.data.events import EventLog, entity
 from deluge.rng import RngStreams
-from deluge.systems import (capacity, climate, cohesion, decide, demography, identity, knowledge, politics,
-                            subsistence, war)
+from deluge.systems import (capacity, climate, cohesion, decide, demography, identity, knowledge, memory,
+                            politics, subsistence, war)
 from deluge.systems.knowledge import KnowledgeGraph, usable_mask
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
@@ -64,6 +66,7 @@ PHASES: tuple[Callable[[DelugeModel], None], ...] = (
     cohesion.run,
     politics.run,
     identity.run,
+    memory.run,
 )
 
 YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost", "techniques_learned",
@@ -150,6 +153,7 @@ class DelugeModel(mesa.Model):
         # People and knowledge.
         self.knowledge = KnowledgeGraph.from_config(cfg.knowledge)
         self.events = EventLog(cfg.events.min_magnitude)
+        self.memory = memory.MemoryState(self)
         self.settlements = SettlementTable(len(self.knowledge.names), n_minerals=len(MINERALS),
                                            n_appearance=len(cfg.ancestry.appearance_traits),
                                            n_dialect=cfg.ancestry.dialect_dims,
@@ -236,6 +240,7 @@ class DelugeModel(mesa.Model):
         sid = t.add(cell, population, lineage, parent, self.year, store, knows, strength, shares, practised, polity)
         if parent >= 0:
             identity.inherit(self, sid, parent)
+            memory.inherit(self, sid, parent)
             t.culture[sid] = t.culture[parent]
             if polity == t.polity[parent]:
                 t.grievance[sid] = t.grievance[parent]
@@ -290,9 +295,11 @@ class DelugeModel(mesa.Model):
         P.ended[pid] = self.year
         P.end_cause[pid] = END_CAUSES.index(cause)
         P.merged_into[pid] = merged_into
+        memory.polity_ended(self, pid)
         self.polity_agents.pop(pid).remove()
 
     def build_monument(self, pid: int, sid: int, cost: float) -> int:
+        memory.invoke(self, pid, (entity("polity", pid), entity("settlement", sid)))
         cell = int(self.settlements.cell[sid])
         mid = self.monuments.add(sid, cell, pid, self.year, cost)
         self.stats["monuments_built"] += 1
@@ -321,6 +328,7 @@ class DelugeModel(mesa.Model):
         if cause in ("dissolved", "drowned"):
             self.log_event("died", [("settlement", sid)], int(t.cell[sid]), float(t.population[sid]))
         self.teachers_state.settlement_ended(sid, host)
+        memory.settlement_ended(self, sid, host)
         self.occupant[t.cell[sid]] = -1
         t.ended[sid] = self.year
         t.population[sid] = 0.0

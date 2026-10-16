@@ -20,14 +20,16 @@
   mutation (``marker_mutation``, bounded by ``marker_effect_max``) and a mutated copy of
   the parent's brain (``model.found_polity``, ``brains/evolution.py``), starts at
   ``child_cohesion`` and the initial elite ratio, and records its parent, so the polity
-  tree stays complete. (Memory copies join in Round 8.)
+  tree stays complete, and a copy of the parent's memory store (``memory.copy_store``).
+  Secession odds are lowered by the polity's legitimacy from memory (``memory.legitimacy``).
 - Mergers: two polities in contact merge with chance ``merge_rate`` x affinity x common
-  threat; affinity is their shared-memory overlap (Round 8) and the threat a common enemy.
-  Mergers stay inactive until shared memory exists (Round 8): no merger happens yet, and
-  the common enemy is not computed. ``merge`` does the union:
-  the larger partner absorbs the smaller, keeps its culture and brain (each a uniform
-  crossover with the smaller one's with chance ``merge_crossover_chance``), and the smaller
-  ends (``merged``).
+  threat; affinity is min(1, ``memory.consequences.merger_weight`` x the overlap of their
+  heaviest memory symbols) and the threat 1 when both are at war with the same third polity
+  (``model.wars``), else 0. With the memory consequences off no merger happens. ``merge``
+  does the union: each partner first invokes its memories of the other, the larger partner
+  absorbs the smaller, keeps its culture and brain (each a uniform crossover with the
+  smaller one's with chance ``merge_crossover_chance``) and adds the smaller one's memory
+  store to its own, and the smaller ends (``merged``).
 - Culture drift: culture moves toward the mean culture of the polities in contact.
 - Territory: the cells of the members and those within ``territory_radius`` of them; a
   deposit there gives every member access (spec section 5).
@@ -39,7 +41,8 @@ import numpy as np
 
 from deluge.agents.polity import marker_index
 from deluge.brains import evolution
-from deluge.systems import identity
+from deluge.data.events import entity
+from deluge.systems import identity, memory
 from deluge.systems.cohesion import culture_distance, settlement_contacts
 
 
@@ -71,6 +74,7 @@ def spin_off(model, parent: int, members: list[int]) -> int:
     t.culture[members_arr] = culture
     t.subject_of[members_arr] = -1
     t.grievance[members_arr] = 0.0
+    memory.copy_store(model, parent, pid, members_arr)
     model.log_event("founded", [("polity", pid), ("polity", parent)], int(t.cell[capital]),
                     float(t.population[members_arr].sum()))
     return pid
@@ -116,7 +120,8 @@ def secession(model) -> None:
     factor = np.clip(1.0 + e[:, 0] * app + e[:, 1] * dia + e[:, 2] * gap, 0.0, pc.marker_factor_max)
     p = (pc.secession_base * (steps / pc.secession_distance_reference) ** pc.secession_distance_exponent
          * (1.0 - P.cohesion[pol]) * (1.0 + pc.secession_pressure_weight * P.pressure[pol])
-         * (1.0 + pc.secession_grievance_weight * t.grievance[ids]) * factor)
+         * (1.0 + pc.secession_grievance_weight * t.grievance[ids]) * factor
+         * (1.0 - memory.legitimacy(model, pol)))
     p = np.where(ids == capital, 0.0, np.minimum(p, pc.secession_max))
     leaving = model.streams["politics"].random(len(ids)) < p
     if not leaving.any():
@@ -166,18 +171,20 @@ def fragmentation(model) -> None:
 # --- mergers ---------------------------------------------------------------------------------
 
 
-MERGER_INPUTS_EXIST = False  # set once shared memory exists (Round 8)
-
-
 def shared_memory_overlap(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Affinity of polity pairs from shared memory: zero until memory exists (Round 8)."""
-    return np.zeros(len(a))
+    """Affinity of polity pairs from shared memory (``memory.affinity``: zero with the
+    memory consequences off)."""
+    return memory.affinity(model, a, b)
 
 
 def common_enemy(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Whether polity pairs face a common enemy: zero while mergers are inactive (until
-    Round 8, which can read the war system's ``model.wars``)."""
-    return np.zeros(len(a))
+    """1 where both polities of a pair are at war (``model.wars``) with the same third polity."""
+    enemies: dict[int, set[int]] = {}
+    for p, q in model.wars:
+        enemies.setdefault(p, set()).add(q)
+        enemies.setdefault(q, set()).add(p)
+    return np.array([float(bool((enemies.get(p, set()) & enemies.get(q, set())) - {p, q}))
+                     for p, q in zip(np.asarray(a).tolist(), np.asarray(b).tolist())])
 
 
 def contact_pairs(model) -> np.ndarray:
@@ -187,7 +194,9 @@ def contact_pairs(model) -> np.ndarray:
     contacts = settlement_contacts(model, ids)
     i, k = np.nonzero(contacts >= 0)
     a, b = t.polity[ids[i]], t.polity[contacts[i, k]]
-    pairs = np.unique(np.column_stack([np.minimum(a, b), np.maximum(a, b)]), axis=0)
+    n = np.int64(model.polities.n)
+    code = np.unique(np.minimum(a, b) * n + np.maximum(a, b))  # sorted as (low, high) pairs
+    pairs = np.column_stack([code // n, code % n])
     return pairs[pairs[:, 0] != pairs[:, 1]]
 
 
@@ -196,6 +205,8 @@ def merge(model, a: int, b: int) -> int:
     Returns the surviving polity."""
     P, t = model.polities, model.settlements
     big, small = (a, b) if P.population[a] >= P.population[b] else (b, a)
+    memory.invoke(model, big, (entity("polity", small),))
+    memory.invoke(model, small, (entity("polity", big),))
     rng = model.streams["politics"]
     if rng.random() < model.config.polities.merge_crossover_chance:
         take = rng.random(P.culture.shape[1]) < 0.5
@@ -215,19 +226,22 @@ def merge(model, a: int, b: int) -> int:
     P.n_settlements[big] += len(members)
     model.log_event("joined", [("polity", small), ("polity", big)], int(t.cell[P.capital[big]]),
                     float(t.population[members].sum()))
+    memory.absorb(model, big, small)
     model.end_polity(small, "merged", merged_into=big)
     model.stats["mergers"] += 1
     return big
 
 
 def mergers(model) -> None:
-    if not MERGER_INPUTS_EXIST:  # both inputs are zero: skip building the contact pairs
+    if model.memory.w["merger_weight"] == 0.0:  # affinity is zero: skip building the contact pairs
         return
     pairs = contact_pairs(model)
     if len(pairs) == 0:
         return
-    affinity = shared_memory_overlap(model, pairs[:, 0], pairs[:, 1])
     threat = common_enemy(model, pairs[:, 0], pairs[:, 1])
+    affinity = np.zeros(len(pairs))
+    hot = threat > 0  # affinity only matters where there is a common enemy
+    affinity[hot] = shared_memory_overlap(model, pairs[hot, 0], pairs[hot, 1])
     odds = model.config.polities.merge_rate * affinity * threat
     if not (odds > 0).any():
         return

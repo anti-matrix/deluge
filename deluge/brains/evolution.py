@@ -8,7 +8,7 @@
   ``mutation_sigma``) per weight and, with ``jump_chance`` per weight, a larger jump of sd
   ``jump_sigma``. With ``frozen`` the child carries an exact copy (control condition):
   every brain is then its founder's.
-- Mergers (inactive until Round 8): the larger partner keeps its brain; with
+- Mergers: the larger partner keeps its brain; with
   ``merge_crossover_chance`` it becomes a uniform crossover with the smaller one's.
 - Conquest: the conquered polity ends and its brain with it (nothing to do here).
 """

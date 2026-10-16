@@ -37,7 +37,8 @@
 #   military                       multiplier on war strength (Round 6)
 #   defense                        multiplier on a defended settlement's strength (Round 6)
 #   raid_range                     multiplier on the war logistics range from the capital (Round 6)
-#   town_cap, monuments, memory_capacity, trade_range: later rounds
+#   memory_capacity                multiplier on a polity's memory store capacity, at its capital (Round 8)
+#   town_cap, monuments, trade_range: later rounds
 # Late techniques (after iron): effect sizes are uncalibrated placeholders (Round 4b).
 
 techniques:

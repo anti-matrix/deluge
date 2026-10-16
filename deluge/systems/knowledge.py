@@ -64,7 +64,8 @@ class KnowledgeGraph:
     acquirable: np.ndarray  # (T,) bool: can be invented or diffused (late ones only with late_techniques_enabled)
 
     MULTIPLIERS = ("farm_yield", "herd_yield", "river_farm_yield", "production", "spoilage", "drought_loss",
-                   "diffusion", "famine_mortality", "admin_cap", "military", "defense", "raid_range")
+                   "diffusion", "famine_mortality", "admin_cap", "military", "defense", "raid_range",
+                   "memory_capacity")
     ADDITIVE = ("migration_radius", "sea_steps", "production_min_population")
 
     @classmethod

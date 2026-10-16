@@ -11,7 +11,7 @@ distance included) can count for or against, or not at all.
 
 ``BrainTable`` holds, per polity id (ids are never reused): the genome, set once at birth
 (``brains/evolution.py``) and kept after the polity ends, so the table is also the archive
-of every brain born (spec section 12; a merger's crossover, inactive until Round 8, files
+of every brain born (spec section 12; a merger's crossover files
 the replaced genome in ``replaced``); this year's outputs and target weights; the
 recurrent state (with ``brains.recurrent_units`` > 0); and the settlement counts of the
 last years (the territory-growth input).
