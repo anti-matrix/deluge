@@ -548,7 +548,8 @@ The browser UI is for watching one history unfold; headless runs write Parquet f
 
 **Browser UI** (`viz/app.py`, run with `solara run`)
 
-- **Map view:** the hex grid drawn as polygons, colored by a selectable layer: polity (color per polity, shades per lineage), terrain, population density, subsistence mode, cohesion, or a knowledge technique's spread. Sea updates with the sea-level curve.
+- **Map view:** the hex grid drawn as polygons, colored by a selectable layer: polity (see Polity map below), terrain, population density, subsistence mode, cohesion, or a knowledge technique's spread. Sea updates with the sea-level curve.
+- **Polity map:** each claimed cell is filled in its founding lineage's hue. Brightness shows the cell's own population density on a log scale: darker means more people. Polities are identified by borders, not by shades: a thick line where polities of different founding peoples meet, a thin line between polities of the same people, each with a light outline so borders stay visible on dark fills. No per-polity shade slots. A "shade by" selector picks the brightness variable (population density for now), built so other variables can be added later with the same darker-means-more convention: technology level, farming, foraging or herding output, industrial output.
 - **Overlays:** capitals, monuments, the teachers' position and path during the contact phase, active wars as arrows between capitals.
 - **Controls:** play, pause, step 1, 10 or 100 years, seed, world source, key parameters as sliders.
 - **Hover tooltips:** hovering a cell shows its terrain, elevation, who lives there (settlement, polity, lineage) and its population.
