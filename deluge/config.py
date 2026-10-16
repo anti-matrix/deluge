@@ -710,9 +710,9 @@ class BrainsConfig:
 @dataclass(frozen=True)
 class MemoryConsequencesConfig:
     cohesion_weight: float
-    cohesion_half: float
+    cohesion_half_medians: float
     legitimacy_weight: float
-    legitimacy_half: float
+    legitimacy_half_medians: float
     merger_weight: float
     assimilation_weight: float
     invocation_gain: float
@@ -735,7 +735,7 @@ class MemoryConfig:
     decay: float
     floor: float
     detail_loss_chance: float
-    year_spans: tuple[int, ...]
+    year_span_fractions: tuple[float, ...]
     region_cells: int
     merge_chance: float
     merge_carry: float
@@ -751,7 +751,7 @@ class MemoryConfig:
     holding_loss: float
     shared_majority: float
     heavy_symbols: int
-    summary_weight_reference: float
+    summary_weight_medians: float
     summary_age_reference: float
     consequences: MemoryConsequencesConfig
 
@@ -819,6 +819,7 @@ class RenderConfig:
 class ReportsConfig:
     origins_until_year: int
     narrator_file: str
+    sample_names: int
 
 
 @dataclass(frozen=True)

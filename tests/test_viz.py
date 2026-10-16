@@ -161,7 +161,7 @@ def test_lineage_overlay_colors_each_settlement_by_group(model):
 @pytest.fixture(scope="module")
 def grown():
     """A small-world run with several polities of several groups."""
-    m = small_model({"polities": {"secession_base": 0.05}}, years=250)
+    m = small_model({"polities": {"secession_base": 0.5}}, years=250)
     m.run()
     return m
 

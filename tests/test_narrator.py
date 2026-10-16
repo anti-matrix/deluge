@@ -45,8 +45,9 @@ def test_phrase_table_covers_every_technique_mineral_and_verb(ran):
     assert set(data["minerals"]) == set(MINERALS)
     assert set(data["templates"]) == set(ACTIONS)
     assert set(data["technologies"]) >= set(ran.config.teachers.technologies)
-    for k in ("onsets", "vowels", "codas", "endings"):
-        assert all(isinstance(x, str) for x in data["names"][k])  # quoted: never read as booleans
+    for trad in data["names"]["traditions"].values():
+        for k in ("initials", "consonants", "clusters", "vowels", "codas", "endings"):
+            assert trad[k] and all(isinstance(x, str) for x in trad[k])  # quoted: never read as booleans
 
 
 def test_identical_runs_give_identical_output(ran, tmp_path):
@@ -129,6 +130,63 @@ def test_what_they_remember_uses_only_the_record(ran):
     # First age: a span starting at year 0.
     assert sp.time(0, 25) == data["times"]["first_age"] and sp.time(812) == "in year 812"
     assert sp.time(800, 100) == "in the years 800 to 899"
+
+
+def test_names_follow_the_phonotactics(ran):
+    spec = narrator.data_for(ran)["names"]
+    rng = np.random.default_rng(1)
+    for _ in range(5):
+        d = rng.standard_normal(8)
+        for i in range(300):
+            n = narrator.name((2, i), d, (1, 1), spec).lower()
+            assert narrator.phonotactic(n, spec), n
+            assert 2 <= narrator.syllable_count(n, spec) <= 4, n
+            assert len(n) <= spec["max_letters"]
+    assert not narrator.phonotactic("aaei", spec)
+    assert not narrator.phonotactic("bekka", spec) and narrator.phonotactic("bella", spec)
+    assert not narrator.phonotactic("ardbaskra", spec) and narrator.phonotactic("ardesh", spec)
+
+
+def test_runs_stays_counts_and_agreement(ran):
+    from deluge.data.events import ACTION_CODE, entity
+
+    m = ran
+    sp = narrator.Speaker(m, 0, narrator.people_dialect(m, 0), narrator.data_for(m))
+    ev = m.events
+    start = len(ev)
+    s = entity("settlement", 0)
+    ev.log(5, "taught", [entity("teachers", 0), s], 3, 0.0)
+    ev.log(6, "starved", [s], 3, 1000.0)
+    ev.log(7, "starved", [s], 3, 2000.0)
+    ev.log(8, "taught", [entity("teachers", 0), s], 3, 0.0)
+    ev.log(9, "starved", [s], 3, 1500.0)
+    out = narrator.happened(m, sp, list(range(start, len(ev))))
+    try:
+        assert len(out) == 3
+        assert "stayed with" in out[0]["text"] and "from year 5 to 8" in out[0]["text"].lower()
+        assert "from year 6 to 7" in out[1]["text"].lower() and "(two times)" in out[1]["text"] and "3,000 dead" in out[1]["text"]
+        assert "in year 9" in out[2]["text"].lower()
+    finally:
+        for col in (ev.year, ev.action, ev.actors, ev.place, ev.magnitude, ev.link, ev.people):
+            del col[start:]
+    # Identical items are counted; a polity is spoken of as many.
+    arts = [entity("artifact", i) for i in range(2)]
+    if len(m.teachers_state.kind) >= 2 and len({sp.entity(a) for a in arts}) == 1:
+        assert sp.counted(arts)[0].startswith("two gifts of")
+    text = sp.sentence(ACTION_CODE["founded"], [entity("polity", 0), entity("polity", 1)], "here", "in year 1")
+    assert " were founded" in text
+    text = sp.sentence(ACTION_CODE["founded"], [entity("settlement", 0), entity("settlement", 1)], "here", "in year 1")
+    assert " was founded" in text
+
+
+def test_origins_list_current_records_first(ran):
+    hist = narrator.History(ran)
+    for g in range(5):
+        flags = [e["current"] for e in narrator.origin_records(ran, g, hist)]
+        assert flags == sorted(flags, reverse=True)
+    data = narrator.narrate(ran)
+    for p in data["peoples"]:
+        assert len(p["sample_names"]) <= ran.config.reports.sample_names and p["sample_names"]
 
 
 def test_myths_report_lists_origins_first(ran):

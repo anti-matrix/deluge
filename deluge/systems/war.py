@@ -244,6 +244,87 @@ def sea_reach(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) 
     return targets, f[:, :-1]
 
 
+def reach_lists(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Per origin of ``cells``: (targets, sea) of ``sea_reach`` kept to the cells within reach
+    (on the map, at most that origin's ``sea_steps`` sea cells). Results are cached on the model
+    per (cell, land_steps, sea_steps); when the sea changes, only the entries whose hex ball
+    (``land_steps`` + sea_steps) holds a cell that changed are dropped. Origins missing from the
+    cache are computed in one batch per sea_steps value, so a large budget does not widen the
+    others'."""
+    state = model.__dict__.setdefault("_reach_cache", {"sea": None, "cache": {}})
+    cache = state["cache"]
+    if state["sea"] is None or not np.array_equal(state["sea"], model.is_sea):
+        if state["sea"] is not None and cache:
+            flipped = np.flatnonzero(state["sea"] != model.is_sea)
+            keys = list(cache)
+            origin = np.array([k[0] for k in keys], dtype=np.int64)
+            radius = np.array([k[1] + k[2] for k in keys], dtype=np.int64)
+            near = np.zeros(len(keys), dtype=bool)
+            for f in flipped.tolist():
+                near |= model.geom.hex_distance(origin, f) <= radius
+                if near.all():
+                    break
+            for k in np.flatnonzero(near).tolist():
+                del cache[keys[k]]
+        state["sea"] = model.is_sea.copy()
+    cells = np.asarray(cells, dtype=np.int64)
+    budgets = np.asarray(sea_steps, dtype=np.int64)
+    out: list = [None] * len(cells)
+    missing: dict[int, list[int]] = {}
+    for k, (c, b) in enumerate(zip(cells.tolist(), budgets.tolist())):
+        hit = cache.get((c, land_steps, b))
+        if hit is None:
+            missing.setdefault(b, []).append(k)
+        else:
+            out[k] = hit
+    if missing:
+        from scipy.sparse.csgraph import dijkstra
+
+        graph = _layer_graph(model, land_steps)
+        n = model.geom.n_cells
+        for b, ks in sorted(missing.items()):
+            for k in ks:
+                d = dijkstra(graph, indices=int(cells[k]), limit=b + 0.5)
+                sea = np.floor(d.reshape(land_steps + 1, n).min(axis=0) + 1e-3)
+                targets = np.flatnonzero(sea <= b)
+                hit = (targets, sea[targets].astype(np.int64))
+                cache[(int(cells[k]), land_steps, b)] = hit
+                out[k] = hit
+    return out
+
+
+def _layer_graph(model, land_steps: int):
+    """The hex graph layered by land cells entered (node ``layer * n_cells + cell``): a step
+    onto a sea cell stays in its layer and costs 1, a step onto a land cell goes one layer up
+    and costs next to nothing (1e-6), so a shortest path's cost, floored, is the fewest sea
+    cells crossed on a path entering at most ``land_steps`` land cells: ``sea_reach`` exactly,
+    computed in C (scipy's Dijkstra) from one origin at a time. Rebuilt when the sea changes."""
+    from scipy.sparse import csr_matrix
+
+    graphs = model.__dict__.setdefault("_reach_graphs", {})
+    hit = graphs.get(land_steps)
+    if hit is not None and np.array_equal(hit[0], model.is_sea):
+        return hit[1]
+    n = model.geom.n_cells
+    nb = model.geom.neighbors
+    c, k = np.nonzero(nb >= 0)
+    t = nb[c, k]
+    wet = model.is_sea[t]
+    src, dst, w = [], [], []
+    for layer in range(land_steps + 1):
+        src.append(layer * n + c[wet])
+        dst.append(layer * n + t[wet])
+        w.append(np.ones(int(wet.sum())))
+        if layer < land_steps:
+            src.append(layer * n + c[~wet])
+            dst.append((layer + 1) * n + t[~wet])
+            w.append(np.full(int((~wet).sum()), 1e-6))
+    size = (land_steps + 1) * n
+    graph = csr_matrix((np.concatenate(w), (np.concatenate(src), np.concatenate(dst))), shape=(size, size))
+    graphs[land_steps] = (model.is_sea.copy(), graph)
+    return graph
+
+
 def sea_budget(model, ids: np.ndarray) -> np.ndarray:
     """Sea cells each settlement's attack can cross: the sea_steps of the techniques it holds
     and can use where it is (sailing: on the coast), the same sea_steps migration uses."""
@@ -267,16 +348,13 @@ def war_contacts(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
     reach = model.config.polities.contact_radius
     budget = sea_budget(model, ids)
     rows, xs, seas = [], [], []
-    for group in (np.flatnonzero(budget == 0), np.flatnonzero(budget > 0)):
-        if len(group) == 0:
-            continue
-        targets, sea = sea_reach(model, t.cell[ids[group]], reach, budget[group])
-        occ = np.append(model.occupant, -1)[targets]  # -1 off the map reads the padding
-        i, k = np.nonzero((sea <= budget[group][:, None]) & (occ >= 0))
-        keep = occ[i, k] != ids[group][i]
-        rows.append(group[i[keep]])
-        xs.append(occ[i, k][keep])
-        seas.append(sea[i, k][keep])
+    for row, (targets, sea) in enumerate(reach_lists(model, t.cell[ids], reach, budget)):
+        occ = model.occupant[targets]
+        keep = (occ >= 0) & (occ != ids[row])
+        if keep.any():
+            rows.append(np.full(int(keep.sum()), row, dtype=np.int64))
+            xs.append(occ[keep])
+            seas.append(sea[keep])
     if not rows:
         empty = np.zeros(0, dtype=np.int64)
         return empty, empty, empty

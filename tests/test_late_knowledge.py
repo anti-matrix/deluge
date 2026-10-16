@@ -21,7 +21,7 @@ HELD = {
     "demography": {"famine_mortality": 0.0, "demographic_turnover": 0.0},
     "migration": {"famine_move_ratio": 0.0, "split_threshold": 1e9},
 }
-LATE = ("ocean_navigation", "printing", "mechanical_power", "chemistry", "gunpowder", "steel", "coal_mining",
+LATE = ("printing", "mechanical_power", "chemistry", "gunpowder", "steel", "coal_mining",
         "steam_power", "railways_steamships", "synthetic_fertilizers", "modern_medicine", "electricity",
         "telecommunication", "oil_combustion")
 
@@ -299,6 +299,7 @@ def test_late_techniques_off_by_default():
     m.step()
     g, t = m.knowledge, m.settlements
     assert g.late.sum() == len(LATE) and {g.names[j] for j in np.flatnonzero(g.late)} == set(LATE)
+    assert g.acquirable[g.index("ocean_navigation")]  # not late: open with late techniques off
     src = int(t.alive_ids()[0])
     dst = m.found_settlement(free_neighbour(m, src), 8000.0, int(t.lineage[src]), src)
     give(m, src, ancestors(g, "printing"))

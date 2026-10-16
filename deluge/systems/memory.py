@@ -12,7 +12,7 @@ people the event affected (all of them when the polity is an actor itself, else 
 its settlement actors had when the event was logged, over the polity's people), log-scaled:
 ``vividness_scale`` x log(1 + share / ``share_reference``) / log(1 + 1 / share_reference),
 plus ``novelty_bonus`` if the verb has never been recorded in that store and again if some
-actor never has. Records at least ``record_min_vividness`` are written. Each record keeps
+actor from outside the holder's polity (``_outside``) never has. Records at least ``record_min_vividness`` are written. Each record keeps
 the event's actors, verb, place, year and magnitude, the appearance and dialect signature
 of every actor at the time (``identity.actor_signatures``) and its provenance: the indices
 of the original events in the log. ``vividness_max`` caps vividness as a safety bound.
@@ -29,11 +29,14 @@ symbols of its actors, place and events. A symbol's weight in a store is the sum
 vividness of the store's records attached to it.
 
 Transmission, every ``generation_years`` years, per store: decay; detail loss (the year to
-a broader span, the place to its region and then to none, the magnitude to one significant
-figure); merge of two records sharing an actor, the place or a symbol whose year spans
-overlap or touch, unless the union of their provenance would exceed ``max_provenance``
-original events (provenance the union; the fused record keeps the more vivid one's actors
-and symbols, then the other's up to ``max_actors`` and ``max_symbols``); actor
+a broader span relative to the record's age, ``year_span_fractions`` of the years since its
+original events, centred on their mean year; the place to its region and then to none; the
+magnitude to one significant figure); merge of two records sharing an actor, the place or a
+symbol whose year spans overlap or touch, unless the union of their provenance would exceed
+``max_provenance`` original events (provenance the union; the year span the one covering
+both; the verb, the place and the actors, up to ``max_actors``, by a vividness-weighted vote
+over every record fused in so far, each record's tally weighing its vividness; symbols the
+more vivid one's, then the other's, up to ``max_symbols``); actor
 substitution by an entity of the store drawn by its total vividness; the
 floor and the capacity (``capacity`` x the capital's ``memory_capacity`` multipliers);
 borrowing between polities in contact and from subject settlements to their rulers, with
@@ -56,6 +59,8 @@ Consequences, each weighted by ``consequences`` (all zero with ``control``):
 - legitimacy: secession odds x (1 - weight x L), L = w / (w + half), w the weight of the
   symbols of the capital, the polity, its parent polities and its founding lineage
   (``legitimacy``);
+- every vividness reference (the two halves, the summary's symbol-weight reference) is a
+  multiple of the store's own median record vividness (``scale``), so it is scale-free;
 - affinity: the overlap of two stores' heaviest symbols drives mergers (with a common
   enemy, ``politics``) and speeds a subject's assimilation (``subject_affinity``);
 - invocation: before a battle, a monument or a union the polity's heaviest symbols among
@@ -97,6 +102,7 @@ class Memory:
     provenance: tuple[int, ...]
     signatures: tuple = ()      # per actor: appearance means + dialect at the time, or None
     year_span: int = 1          # the year stands for [year, year + span)
+    year_level: int = 0         # how many times the year has coarsened (year_span_fractions)
     place_level: int = PLACE_CELL
     magnitude_rounded: bool = False
     store: int = -1             # polity whose store holds it, -1 once that store has ended
@@ -107,6 +113,17 @@ class Memory:
     base: float = 0.0           # starting vividness
     repeats: int = 0            # repetitions and invocations so far (amplification diminishes with them)
     invocations: int = 0
+    # Vividness-weighted tallies of the constituent records' fields (merges vote with them):
+    # verb -> weight, (place, place level) -> weight, actor -> weight.
+    action_votes: dict = field(default_factory=dict)
+    place_votes: dict = field(default_factory=dict)
+    actor_votes: dict = field(default_factory=dict)
+
+    def tally(self) -> None:
+        """Start the tallies from the record's own fields, at its vividness."""
+        self.action_votes = {self.action: self.vividness}
+        self.place_votes = {(self.place, self.place_level): self.vividness}
+        self.actor_votes = {a: self.vividness for a in self.actors}
 
 
 class MemoryState:
@@ -140,6 +157,7 @@ class MemoryState:
         self.heavy: dict[int, dict[int, float]] = {}
         self.shared: dict[int, float] = {}
         self.legit: dict[int, float] = {}
+        self.scale: dict[int, float] = {}  # median vividness of each store's records
         self.summary_of: dict[int, np.ndarray] = {}
         self.subject_overlap: dict[int, float] = {}
         self.coverage: dict[int, dict[int, float]] = {}  # per polity: record -> share of its people holding it
@@ -228,6 +246,19 @@ def salience(cfg, share: float) -> float:
     return cfg.vividness_scale * np.log1p(share / cfg.share_reference) / np.log1p(1.0 / cfg.share_reference)
 
 
+def _outside(model, pid: int, eid: int) -> bool:
+    """Whether actor ``eid`` is a group of people from outside polity ``pid``: another polity,
+    a settlement of another polity, another founding lineage, or any other group of people."""
+    kind, local = decode(eid)
+    if kind == "polity":
+        return local != pid
+    if kind == "settlement":
+        return int(model.settlements.polity[local]) != pid
+    if kind == "lineage":
+        return local != int(model.polities.lineage[pid])
+    return kind in PEOPLE_KINDS
+
+
 def _record_events(model) -> None:
     state: MemoryState = model.memory
     cfg = state.cfg
@@ -274,7 +305,7 @@ def _record_events(model) -> None:
             total = float(people[p]) if p < len(people) else 0.0
             share = 1.0 if p in whole else (affected.get(p, 0.0) / total if total > 0 else 1.0)
             verbs, seen = state.seen.setdefault(p, (set(), set()))
-            novel = (code not in verbs) + any(a not in seen for a in actors)
+            novel = (code not in verbs) + any(a not in seen and _outside(model, p, a) for a in actors)
             v = min(salience(cfg, share) + cfg.novelty_bonus * novel, vmax)
             if v < cfg.record_min_vividness:
                 continue
@@ -311,7 +342,7 @@ def _coarsen(model, state: MemoryState, rec: Memory, year: int) -> None:
     """Detail loss: one field that still has detail coarsens."""
     cfg = state.cfg
     open_fields = []
-    if rec.year_span < cfg.year_spans[-1]:
+    if rec.year_level < len(cfg.year_span_fractions):
         open_fields.append(0)
     if rec.place_level < PLACE_NONE:
         open_fields.append(1)
@@ -321,9 +352,12 @@ def _coarsen(model, state: MemoryState, rec: Memory, year: int) -> None:
         return
     f = open_fields[int(state.rng.integers(len(open_fields)))]
     if f == 0:
-        span = next(s for s in cfg.year_spans if s > rec.year_span)
+        # Relative to the record's age: a share of the years since its original events, centred on them.
+        center = float(np.mean([model.events.year[i] for i in rec.provenance]))
+        span = max(rec.year_span + 1, int(round(cfg.year_span_fractions[rec.year_level] * (year - center))))
+        rec.year_level += 1
         rec.year_span = span
-        rec.year = (rec.year // span) * span
+        rec.year = max(int(round(center - span / 2)), 0)
         new = span
     elif f == 1:
         if rec.place_level == PLACE_CELL and rec.place >= 0:
@@ -332,6 +366,8 @@ def _coarsen(model, state: MemoryState, rec: Memory, year: int) -> None:
         else:
             rec.place = -1
             rec.place_level = PLACE_NONE
+        if rec.place_votes:  # the tally now speaks of the coarsened place only
+            rec.place_votes = {(rec.place, rec.place_level): sum(rec.place_votes.values())}
         new = rec.place_level
     else:
         rec.magnitude = float(f"{rec.magnitude:.1g}")
@@ -346,12 +382,19 @@ def _shares_detail(a: Memory, b: Memory) -> bool:
             or bool(set(a.symbols).intersection(b.symbols)))
 
 
-def _common_span(spans, y1: int, y2: int) -> tuple[int, int]:
-    for s in spans:
-        if y1 // s == y2 // s:
-            return s, (y1 // s) * s
-    s = spans[-1]
-    return s, (min(y1, y2) // s) * s
+def _vote(tallies: list[tuple[dict, float]]) -> dict:
+    """Sum the tallies, each rescaled so it weighs its record's vividness."""
+    out: dict = {}
+    for votes, w in tallies:
+        total = sum(votes.values())
+        for k, v in votes.items():
+            out[k] = out.get(k, 0.0) + (v * w / total if total > 0 else 0.0)
+    return out
+
+
+def _ranked(votes: dict) -> list:
+    """Keys by weight, heaviest first (ties: the lower key)."""
+    return sorted(votes, key=lambda k: (-votes[k], k))
 
 
 def _spans_meet(a: Memory, b: Memory) -> bool:
@@ -372,20 +415,34 @@ def _merge(state: MemoryState, pid: int, mid: int, year: int) -> None:
         return
     w = np.array([state.records[m].vividness for m in others])
     other = others[int(np.searchsorted(np.cumsum(w), state.rng.random() * w.sum(), side="right").clip(0, len(w) - 1))]
+    _fuse(state, pid, mid, other, year)
+
+
+def _fuse(state: MemoryState, pid: int, mid: int, other: int, year: int) -> None:
+    """Fuse records ``mid`` and ``other`` of ``pid``'s store into the more vivid one."""
     a, b = state.records[mid], state.records[other]
     if (b.vividness, -b.mem_id) > (a.vividness, -a.mem_id):
         a, b = b, a
     cfg = state.cfg
-    actors, sigs = list(a.actors), list(a.signatures)
-    for x, sg in zip(b.actors, b.signatures):
-        if x not in actors and len(actors) < cfg.max_actors:
-            actors.append(x)
-            sigs.append(sg)
-    a.actors, a.signatures = tuple(actors), tuple(sigs)
-    if a.year_span < state.cfg.year_spans[-1] or a.year != b.year:
-        span, start = _common_span(state.cfg.year_spans, a.year, b.year)
-        if span > a.year_span:
-            a.year_span, a.year = span, start
+    # Verb, place and actors: a vividness-weighted vote over every record fused in so far.
+    for r in (a, b):
+        if not r.action_votes:
+            r.tally()
+    wa, wb = a.vividness, b.vividness
+    action_votes = _vote([(a.action_votes, wa), (b.action_votes, wb)])
+    place_votes = _vote([(a.place_votes, wa), (b.place_votes, wb)])
+    actor_votes = _vote([(a.actor_votes, wa), (b.actor_votes, wb)])
+    sig_of = dict(zip(b.actors, b.signatures))
+    sig_of.update(zip(a.actors, a.signatures))
+    a.action = _ranked(action_votes)[0]
+    a.place, a.place_level = _ranked(place_votes)[0]
+    actors = [x for x in _ranked(actor_votes) if x in sig_of][: cfg.max_actors]
+    a.actors, a.signatures = tuple(actors), tuple(sig_of[x] for x in actors)
+    a.action_votes, a.place_votes, a.actor_votes = action_votes, place_votes, actor_votes
+    # Year: the span covering both (spans are relative to each record's age, never fixed bins).
+    start = min(a.year, b.year)
+    end = max(a.year + a.year_span, b.year + b.year_span)
+    a.year, a.year_span, a.year_level = start, end - start, max(a.year_level, b.year_level)
     a.vividness = min(a.vividness + state.cfg.merge_carry * b.vividness, state.cfg.vividness_max)
     a.symbols = tuple(dict.fromkeys(a.symbols + b.symbols))[: max(cfg.max_symbols, len(a.symbols))]
     a.provenance = tuple(sorted(set(a.provenance) | set(b.provenance)))
@@ -422,6 +479,8 @@ def _substitute(state: MemoryState, pid: int, mid: int, year: int) -> None:
     old = rec.actors[k]
     rec.actors = rec.actors[:k] + (new,) + rec.actors[k + 1:]
     rec.signatures = rec.signatures[:k] + (where[new],) + rec.signatures[k + 1:]
+    if rec.actor_votes:  # the substituted actor takes over the old one's votes
+        rec.actor_votes[new] = rec.actor_votes.get(new, 0.0) + rec.actor_votes.pop(old, 0.0)
     s_old, s_new = state.symbol(("entity", old), False), state.symbol(("entity", new), False)
     syms = [s for s in rec.symbols if s != s_old]
     if s_new >= 0 and s_new not in syms:
@@ -435,8 +494,10 @@ def _copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, op: s
     """A copy of ``rec`` into ``pid``'s store (-1 if it did not fit)."""
     new = Memory(state._new_id(), rec.actors, rec.action, rec.place, rec.year, rec.magnitude,
                  rec.vividness * factor, rec.symbols, rec.provenance, rec.signatures, rec.year_span,
-                 rec.place_level, rec.magnitude_rounded, parent=rec.mem_id, base=rec.base * factor,
-                 repeats=rec.repeats, invocations=rec.invocations)
+                 rec.year_level, rec.place_level, rec.magnitude_rounded, parent=rec.mem_id,
+                 base=rec.base * factor, repeats=rec.repeats, invocations=rec.invocations,
+                 action_votes=dict(rec.action_votes), place_votes=dict(rec.place_votes),
+                 actor_votes=dict(rec.actor_votes))
     verbs, seen = state.seen.setdefault(pid, (set(), set()))
     verbs.add(rec.action)
     seen.update(rec.actors)
@@ -607,7 +668,7 @@ def copy_store(model, parent: int, child: int, members) -> None:
             state.held[s].discard(mid)
         if new < 0:
             continue
-    for d in (state.weights, state.heavy, state.shared, state.legit, state.summary_of):
+    for d in (state.weights, state.heavy, state.shared, state.legit, state.summary_of, state.scale):
         if parent in d:
             d[child] = d[parent].copy() if hasattr(d[parent], "copy") else d[parent]
 
@@ -642,7 +703,7 @@ def polity_ended(model, pid: int) -> None:
         rec.store = -1
         if not rec.holders:
             state._delete(mid)
-    for d in (state.weights, state.heavy, state.shared, state.legit, state.summary_of):
+    for d in (state.weights, state.heavy, state.shared, state.legit, state.summary_of, state.scale):
         d.pop(pid, None)
 
 
@@ -695,6 +756,11 @@ def _overlap(a: dict[int, float], b: dict[int, float]) -> float:
     return lo / hi if hi > 0 else 0.0
 
 
+def _saturate(x: float, half: float) -> float:
+    """x / (x + half), 0 when both are 0."""
+    return x / (x + half) if x + half > 0 else 0.0
+
+
 def derive(model) -> None:
     """Symbol weights, heaviest symbols, shared term, legitimacy, summary, subject overlaps."""
     state: MemoryState = model.memory
@@ -702,6 +768,7 @@ def derive(model) -> None:
     t, P = model.settlements, model.polities
     year = model.year
     state.weights, state.heavy, state.shared, state.legit, state.summary_of = {}, {}, {}, {}, {}
+    state.scale = {}
     for pid in P.alive_ids().tolist():
         mids = state.stores.get(pid, [])
         weights: dict[int, float] = {}
@@ -720,14 +787,18 @@ def derive(model) -> None:
                 outsider += v
             age += v * (year - r.year)
         heavy = dict(sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))[: cfg.heavy_symbols])
+        # The store's own scale: the median vividness of its records (references are in its units).
+        scale = float(np.median([state.records[m].vividness for m in mids])) if mids else 0.0
         state.weights[pid], state.heavy[pid], state.shared[pid] = weights, heavy, shared
+        state.scale[pid] = scale
         keys = [("entity", entity("settlement", int(P.capital[pid]))), ("entity", entity("lineage", own_lineage))]
         keys += [("entity", entity("polity", p)) for p in model.lineages.polity_ancestry(P, pid)]
         wl = sum(weights.get(state.symbol(k, False), 0.0) for k in keys if state.symbol(k, False) >= 0)
-        state.legit[pid] = wl / (wl + cfg.consequences.legitimacy_half)
+        state.legit[pid] = _saturate(wl, cfg.consequences.legitimacy_half_medians * scale)
         top = max(weights.values()) if weights else 0.0
+        top_ref = cfg.summary_weight_medians * scale
         state.summary_of[pid] = np.array([
-            np.tanh(top / cfg.summary_weight_reference),
+            np.tanh(top / top_ref) if top_ref > 0 else 0.0,
             outsider / total_v if total_v > 0 else 0.0,
             np.tanh(age / total_v / cfg.summary_age_reference) if total_v > 0 else 0.0,
         ])
@@ -751,9 +822,9 @@ def cohesion_term(model, pids: np.ndarray) -> np.ndarray:
     w = state.w["cohesion_weight"]
     if w == 0.0:
         return np.zeros(len(pids))
-    half = state.cfg.consequences.cohesion_half
-    s = np.array([state.shared.get(p, 0.0) for p in np.asarray(pids).tolist()])
-    return w * s / (s + half)
+    k = state.cfg.consequences.cohesion_half_medians
+    return w * np.array([_saturate(state.shared.get(p, 0.0), k * state.scale.get(p, 0.0))
+                         for p in np.asarray(pids).tolist()])
 
 
 def legitimacy(model, pol: np.ndarray) -> np.ndarray:

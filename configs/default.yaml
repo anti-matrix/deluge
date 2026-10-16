@@ -726,11 +726,12 @@ memory:                       # spec section 11: generic substrate, copying erro
   #   share = people of the holder affected / the holder's people (the whole polity when it is an actor itself,
   #           else its settlement actors' people when the event was logged), at most 1
   #   vividness = vividness_scale x log(1 + share / share_reference) / log(1 + 1 / share_reference)
-  #               + novelty_bonus x (the verb is new to the store) + novelty_bonus x (some actor is new to it)
+  #               + novelty_bonus x (the verb is new to the store)
+  #               + novelty_bonus x (some actor from outside the holder's polity is new to it)
   # Events below record_min_vividness are not recorded.
   vividness_scale: 1.0        # vividness of an event affecting the whole holder
   share_reference: 0.01       # the log scale's knee: a share this small gets ~15% of the scale
-  novelty_bonus: 0.5          # per novelty: the first record of a verb, the first record of an actor, in a store
+  novelty_bonus: 0.5          # per novelty: the first record of a verb, the first record of an outside actor, in a store
   record_min_vividness: 0.1
   vividness_max: 10000.0      # safety bound only (amplification is logarithmic in its count)
   symbol_min_vividness: 1.0   # an entity, place or event gets a symbol when it first enters memory at least this vivid
@@ -738,7 +739,10 @@ memory:                       # spec section 11: generic substrate, copying erro
   decay: 0.1                  # vividness x (1 - decay)
   floor: 0.05                 # when the store is full, memories below this vividness drop out
   detail_loss_chance: 0.1     # one field coarsens: the year to the next span, the place to its region and then to
-  year_spans: [1, 25, 100, 500, 2500]  # none, the magnitude to one significant figure
+                              # none, the magnitude to one significant figure
+  # The year coarsens relative to the record's own age: at its k-th coarsening the span becomes this share of
+  # the years since its original events (at least one year wider than before), centred on their mean year.
+  year_span_fractions: [0.05, 0.15, 0.3, 0.5]
   region_cells: 8             # a region is a block of region_cells x region_cells cells
   merge_chance: 0.05          # fuse with another memory of the store sharing an actor, the place or a symbol,
                               # whose year span overlaps or touches its own
@@ -757,13 +761,15 @@ memory:                       # spec section 11: generic substrate, copying erro
   holding_loss: 0.05          # per settlement, per memory it holds: chance it is lost
   shared_majority: 0.5        # a memory counts as shared when held by at least this share of the polity's people
   heavy_symbols: 10           # the heaviest symbols of a store used for affinity, legitimacy and invocation
-  summary_weight_reference: 5000.0 # brain input: tanh(heaviest symbol weight / reference)
+  # The vividness references below are scale-free: in units of the median vividness of the store's own
+  # memories (m), so they mean the same however vivid a store's memories are overall.
+  summary_weight_medians: 10.0  # brain input: tanh(heaviest symbol weight / (this x m))
   summary_age_reference: 500.0    # brain input: tanh(mean age of memories in years / reference)
   consequences:               # every weight reads as zero with control: true
-    cohesion_weight: 0.01     # cohesion + weight x S / (S + half) x (1 - C), S = vividness of the shared memories
-    cohesion_half: 1000.0
+    cohesion_weight: 0.01     # cohesion + weight x S / (S + half) x (1 - C), S = vividness of the shared memories,
+    cohesion_half_medians: 10.0  # half = this x m
     legitimacy_weight: 0.5    # secession odds x (1 - weight x L), L = w / (w + half), w = weight of the symbols of
-    legitimacy_half: 1000.0   # the capital, the polity, its parent polities and its founding lineage
+    legitimacy_half_medians: 5.0  # the capital, the polity, its parent polities and its founding lineage; half = this x m
     merger_weight: 1.0        # merger odds = polities.merge_rate x min(1, weight x heavy-symbol overlap) x common enemy
     assimilation_weight: 1.0  # assimilation rate x (1 + weight x overlap of the subject's memories with its ruler's)
     invocation_gain: 0.05     # before a battle, a monument or a union: each memory of the heaviest related symbols
@@ -834,3 +840,4 @@ render:                       # static PNG maps only; no effect on the simulatio
 reports:                      # analysis reports only (analysis/); no effect on the simulation
   origins_until_year: 100     # myths report "Origins" and the narrator: records descending from events in years 0 to this
   narrator_file: narrator.yaml  # analysis/narrator.py: name syllables, technique phrases, templates (relative to this file)
+  sample_names: 20            # narrator: settlement names shown per people

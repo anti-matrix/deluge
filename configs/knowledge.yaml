@@ -184,14 +184,14 @@ techniques:
     effects: {production: 1.05, production_min_population: 0, military: 1.5}
   ocean_navigation:
     label: ocean navigation
-    late: true
+    late: false
     resources: []
     category: other
     prerequisites: [sailing, writing, sky_calendar]
     invention_rate: 0.3
     used_with: coast
     unlocks: ""
-    effects: {sea_steps: 6, migration_radius: 1, trade_range: 3.0}
+    effects: {sea_steps: 20, migration_radius: 1, trade_range: 3.0}
   printing:
     label: printing
     late: true

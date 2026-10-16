@@ -204,14 +204,23 @@ def origins_section(model, name: Namer, hist: History) -> list[str]:
     out = ["## Origins", "",
            f"Per founding group: every surviving record whose provenance includes an event of years 0 to {until}, "
            "with its current actors, its full provenance and the actor substitutions it went through, in order. "
-           "Copies alike in every field (in sibling stores) are listed once.", ""]
+           "Copies alike in every field (in sibling stores) are listed once. First (a) the records whose own "
+           f"fields still hold something of years 0 to {until} (their year reaches into them, or they keep the "
+           "verb and an actor of an original event of those years), then (b) those that descend from those years "
+           "by provenance only.", ""]
     for g in range(len(model.lineages.founders)):
         entries = origin_records(model, g, hist, until)
         out += [f"### Origins of group {model.lineages.names[g]}", ""]
         if not entries:
             out += [f"No surviving record descends from years 0 to {until}.", ""]
             continue
+        heading = None
         for e in entries:
+            h = (f"(a) Records still holding something of years 0 to {until}" if e["current"] else
+                 f"(b) Records descending from years 0 to {until} by provenance only")
+            if h != heading:
+                heading = h
+                out += ["", f"#### {h}", ""]
             rec = e["record"]
             actors = ", ".join(name(a) for a in rec.actors) or "no actors"
             out.append(f"- **#{rec.mem_id}** `{ACTIONS[rec.action]}`: {actors}; {_place(model, rec)}; {_year(rec)}; "

@@ -344,7 +344,7 @@ def test_deposit_access_widens_to_the_polity_territory():
 
 
 def test_polity_layer_and_chronicle():
-    m = small_model({"polities": {"secession_base": 0.05}}, years=300)
+    m = small_model({"polities": {"secession_base": 0.5}}, years=300)
     m.run()
     t, P = m.settlements, m.polities
     ids = t.alive_ids()

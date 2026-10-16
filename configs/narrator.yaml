@@ -7,20 +7,53 @@ names:
   # weight = exp(dialect_scale x (dialect . direction of the item)), each item's direction a fixed
   # unit vector hashed from its spelling. Peoples whose dialects differ favour different pieces,
   # and drift apart as their dialects do.
-  dialect_scale: 0.7
-  syllables: [[2, 0.55], [3, 0.35], [4, 0.10]]   # [syllables, chance]
-  coda_chance: 0.3            # per syllable: it closes with a coda
-  ending_chance: 0.55         # the name ends with one of the endings (then the last syllable keeps no coda)
-  max_letters: 14             # longer draws are cut at a syllable boundary
-  # Pieces inspired by the sound of Hebrew/biblical, Greek, Avestan and Sanskrit names.
-  # Quoted: YAML would read some bare pieces (y, n, on, ...) as booleans.
-  onsets: ["b", "d", "g", "h", "k", "l", "m", "n", "r", "s", "t", "v", "y", "z", "sh", "ch", "ts", "ph", "th", "kh",
-           "ps", "kr", "pr", "st", "x", "zh", "fr", "sp", "dr", "thr", "hv", "bh", "dh", "gh", "jh", "sv", "sr", "j",
-           "p", "", ""]
-  vowels: ["a", "e", "i", "o", "u", "a", "i", "ai", "eu", "oi", "y", "ao", "ae", "au", "aa", "ii", "ei"]
-  codas: ["n", "m", "r", "l", "s", "sh", "th", "k", "t", "z", "x", "sp", "rd", "st", "nt"]
-  endings: ["on", "ah", "im", "ai", "eth", "ar", "os", "es", "ia", "as", "ides", "ope", "aspa", "ama", "ant", "ush",
-            "ra", "tra", "esh", "an", "ita", "ika", "aka", "ath", "or", "ur", "ima", "avi", "ona", "ys"]
+  # The dialect weighs the sound traditions below (which one a name is drawn from) and, inside a
+  # tradition, its pieces.
+  dialect_scale: 1.5
+  syllables: [[2, 0.5], [3, 0.38], [4, 0.12]]   # [syllables (vowel groups) in the name, chance]
+  templates: [["V", 0.15], ["CV", 0.55], ["CVC", 0.30]]  # shape of each syllable between the start and the ending
+  cluster_chance: 0.15        # a CV or CVC syllable opens with one of the tradition's clusters instead
+  initial_chance: 0.5         # the name opens with one of the tradition's initials
+  ending_chance: 0.75         # the name closes with one of the tradition's endings
+  max_letters: 13             # pieces that would make it longer are left out
+  # Phonotactics, checked on every piece added (a piece that breaks one is replaced by a plainer one):
+  vowel_letters: "aeiou"
+  digraphs: ["sh", "th", "kh", "ch", "ph", "zh", "dh", "bh", "gh", "jh", "ts"]  # one consonant each
+  max_vowel_run: 2            # no more than two vowel letters in a row
+  max_clusters: 1             # at most one run of two or more consonants per name
+  allowed_doubles: ["ll", "nn", "ss", "rr"]  # no other letter may stand twice in a row
+  # Pieces from real name patterns of four traditions. Quoted: YAML would read some bare
+  # pieces (y, n, on, ...) as booleans.
+  traditions:
+    persian:                  # Avestan and Persian
+      initials: ["ard", "mehr", "yaz", "dar", "far", "kur", "vah", "zar", "ash", "bah", "ros", "tir", "kav", "jam"]
+      consonants: ["b", "d", "f", "g", "h", "k", "kh", "m", "n", "p", "r", "s", "sh", "t", "v", "y", "z"]
+      clusters: ["fr", "sp", "st", "hv", "br", "khsh"]
+      vowels: ["a", "a", "e", "i", "o", "u", "ai", "ei"]
+      codas: ["r", "n", "sh", "d", "s", "z", "h"]
+      endings: ["ush", "esh", "an", "ad", "ar", "ana", "aspa", "ak", "ish", "dad"]
+    hebrew:
+      initials: ["ab", "el", "ya", "sha", "mi", "na", "ze", "yo", "be", "ha", "re", "ad", "yeh", "ash"]
+      consonants: ["b", "d", "g", "h", "k", "kh", "l", "m", "n", "p", "r", "s", "sh", "t", "ts", "v", "y", "z"]
+      clusters: ["shm", "br", "dr", "tsv"]
+      vowels: ["a", "a", "e", "i", "o", "u", "ai"]
+      codas: ["l", "m", "n", "r", "s", "th", "k", "v"]
+      endings: ["el", "im", "ah", "ath", "iah", "on", "ai", "ek", "oth", "iel"]
+    greek:
+      initials: ["the", "ar", "kal", "dem", "phil", "ni", "an", "ly", "eu", "kle", "pe", "me", "ze", "xen"]
+      consonants: ["b", "d", "g", "k", "l", "m", "n", "p", "r", "s", "t", "ph", "th", "kh", "x", "z"]
+      clusters: ["kl", "kr", "pr", "tr", "st", "ps", "dr"]
+      vowels: ["a", "e", "i", "o", "u", "eu", "ai", "oi"]
+      codas: ["s", "n", "r", "l", "x"]
+      endings: ["os", "on", "ia", "eus", "es", "as", "ides", "ope", "ion", "ias"]
+    sanskrit:
+      initials: ["in", "ra", "vi", "dev", "sur", "ar", "ma", "su", "bha", "gan", "lak", "sam", "har", "nar"]
+      consonants: ["b", "bh", "d", "dh", "g", "gh", "h", "j", "k", "kh", "m", "n", "p", "r", "s", "sh", "t", "th", "v",
+                   "y"]
+      clusters: ["kr", "pr", "sv", "sr", "dr", "tr", "shr"]
+      vowels: ["a", "a", "i", "u", "e", "o", "ai", "au"]
+      codas: ["n", "m", "r", "sh", "t", "s"]
+      endings: ["an", "isha", "ra", "endra", "ita", "ika", "esh", "ana", "ini", "aya"]
 
 # Techniques, minerals and what the groups could witness, in plain words.
 techniques:
@@ -83,6 +116,7 @@ times:
   year: "in year {year}"
   span: "in the years {year} to {last}"
   first_age: "in the first age"
+  run: "from year {year} to {last}"
 someone: someone
 nothing: nothing             # {rest} when the verb has no third actor
 with_others: ", with {others}"
@@ -102,16 +136,31 @@ templates:
   won: "{time}, {0} raided {1} at {place}"
   lost: "{time}, {0} lost {1} to {2}"
   moved: "{time}, {0} moved to {place}"
-  founded: "{time}, {0} was founded from {1} at {place}"
+  founded: "{time}, {0} {be} founded from {1} at {place}"
   built: "{time}, {0} built {1} at {place}"
   starved: "{time}, {0} went hungry"
   died: "{time}, {0} came to an end"
   joined: "{time}, {0} joined {1}"
   learned: "{time}, {0} learned {1}{from_}"
   forgot: "{time}, {0} forgot {1}"
-  depleted: "{time}, {0} was used up"
+  depleted: "{time}, {0} {be} used up"
   took: "{time}, {0} took {1} from {2}"
   crossed: "{time}, {0} crossed the sea to {place}"
+# The shape for a verb when the event has only its first two actors (a teaching contact that passed on nothing).
+empty_templates:
+  taught: "{time}, {0} stayed with {1}"
+  gave: "{time}, {0} stayed with {1}"
+# Verb agreement: {be} in a template reads as one of these, by the first actor (spoken of as many people or one).
+be: {one: was, many: were}
+plural_kinds: [polity, lineage, first_kind]  # first_kind: the entity kind listed first in the event log's kinds
+# Several actors with the same name are counted ("two gifts of medicine").
+plural_forms:
+  artifact: "{count} gifts of {phrase}"
+  technology: "{count} kinds of {phrase}"
+  default: "{name} ({count} times)"
+numbers: [zero, one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve]
+# Runs of identical events (same verb, actors and place in a row) are told once.
+run: " ({count} times)"
 # Sizes of what happened (event log magnitudes), only in "What happened".
 amounts:
   arrived: "{m} people there"

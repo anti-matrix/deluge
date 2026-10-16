@@ -19,8 +19,9 @@
   crowded means at least ``split_threshold`` + ``split_threshold_range`` x (0.5 - the
   brain's expand output) of the cell's capacity.
 
-Reach is ``search_radius`` hex steps over land, plus technique bonuses; with sailing a
-path may cross a few sea cells (sea cells count toward the search radius too). A move,
+Reach is ``search_radius`` land cells entered, plus technique bonuses; with sailing a
+path may also cross up to the band's sea_steps sea cells, counted apart from the land
+radius, as war counts them (``war.sea_reach``). A move,
 a founding or a join that needs such a path (``sea_cells_crossed``) is logged as
 ``crossed`` with the fewest sea cells crossed, right after its own event; for the core's
 migration the band's polity is the second actor. A cell's appeal is a utility over expected food per head
@@ -84,58 +85,36 @@ def grow(model) -> None:
 # --- migration ------------------------------------------------------------------------------
 
 
-def reach(model, sid: int, origin: int | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """(cells, steps): land cells a band can reach from ``origin`` (its own cell by
-    default) within its search radius, crossing at most its sea_steps sea cells (the
-    origin itself excluded)."""
+def _reach_field(model, sid: int, origin: int) -> tuple[np.ndarray, np.ndarray]:
+    """(cells, sea cells crossed) within band ``sid``'s reach from ``origin`` (``war.reach_lists``):
+    its land search radius and its sea_steps counted apart, as war counts them."""
+    from deluge.systems.war import reach_lists
+
     m, g, t = model.config.migration, model.knowledge, model.settlements
     knows = t.knows[sid]
     radius = m.search_radius + int(g.total(knows, "migration_radius"))
     sea_steps = int(g.total(knows, "sea_steps"))
+    return reach_lists(model, np.array([origin]), radius, np.array([sea_steps]))[0]
+
+
+def reach(model, sid: int, origin: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """(cells, steps): land cells a band can reach from ``origin`` (its own cell by
+    default) entering at most its search radius of land cells and crossing at most its
+    sea_steps sea cells (the origin itself excluded); steps: hex distance."""
+    t = model.settlements
     origin = int(t.cell[sid]) if origin is None else origin
-    sea = model.is_sea
-    nbrs = model.geom.neighbor_lists
-    seen = {origin: 0}
-    land_steps = {}
-    frontier = [(origin, 0)]  # (cell, sea cells crossed)
-    for step in range(1, radius + 1):
-        nxt = []
-        for c, wet in frontier:
-            for n in nbrs[c]:
-                if n in seen:
-                    continue
-                w = wet + int(sea[n])
-                if w > sea_steps:
-                    continue
-                seen[n] = step
-                nxt.append((n, w))
-                if not sea[n]:
-                    land_steps[n] = step
-        frontier = nxt
-    return (np.fromiter(land_steps.keys(), dtype=np.int64, count=len(land_steps)),
-            np.fromiter(land_steps.values(), dtype=np.int64, count=len(land_steps)))
+    targets, _ = _reach_field(model, sid, origin)
+    cells = targets[(targets != origin) & ~model.is_sea[targets]]
+    return cells, model.geom.hex_distance(cells, np.full(len(cells), origin))
 
 
 def sea_cells_crossed(model, sid: int, origin: int, dest: int) -> int:
-    """The fewest sea cells a path from ``origin`` to ``dest`` within band ``sid``'s search
-    radius crosses (0 when a path over land alone reaches it; the origin itself not
-    counted). Used to log the band's sea crossings."""
-    m, g, t = model.config.migration, model.knowledge, model.settlements
-    radius = m.search_radius + int(g.total(t.knows[sid], "migration_radius"))
-    sea = model.is_sea
-    nbrs = model.geom.neighbor_lists
-    best = {origin: 0}
-    frontier = {origin: 0}
-    for _ in range(radius):
-        nxt = {}
-        for c, w in frontier.items():
-            for n in nbrs[c]:
-                v = w + int(sea[n])
-                if v < best.get(n, radius + 1):
-                    best[n] = v
-                    nxt[n] = v
-        frontier = nxt
-    return int(best.get(dest, 0))
+    """The fewest sea cells a path from ``origin`` to ``dest`` within band ``sid``'s reach
+    crosses (0 when a path over land alone reaches it; the origin itself not counted). Used
+    to log the band's sea crossings."""
+    targets, sea = _reach_field(model, sid, origin)
+    hit = np.flatnonzero(targets == dest)
+    return int(sea[hit[0]]) if len(hit) else 0
 
 
 def expected_food(model, sid: int, cells: np.ndarray, people: float) -> np.ndarray:
@@ -261,14 +240,22 @@ def relocate_drowned(model) -> None:
 
 
 def free_land_nearby(model) -> np.ndarray:
-    """Per cell: some free land cell lies within the largest reach any band can have.
-    Reach never extends past that many hex steps, so a band whose cell is False here
-    cannot find a free cell; skipping its search changes nothing but the run time."""
+    """Per cell: some free land cell lies within the largest land reach any band can have.
+    Without sea_steps, reach never extends past that many hex steps, so a band whose cell
+    is False here cannot find a free cell; skipping its search changes nothing but the run
+    time (``may_find_free``)."""
     radius = model.config.migration.search_radius + int(model.knowledge.effect["migration_radius"].sum())
     near = ~model.is_sea & (model.occupant < 0)
     for _ in range(radius):
         near = near | model.geom.neighbor_any(near)
     return near
+
+
+def may_find_free(model, near_free: np.ndarray, sid: int) -> bool:
+    """Whether band ``sid``'s search for a free cell can succeed: free land in land reach,
+    or it holds sea_steps (its reach over sea is not bounded by ``free_land_nearby``)."""
+    t = model.settlements
+    return bool(near_free[t.cell[sid]]) or model.knowledge.total(t.knows[sid], "sea_steps") > 0
 
 
 def move_cores(model, near_free: np.ndarray) -> None:
@@ -287,7 +274,7 @@ def move_cores(model, near_free: np.ndarray) -> None:
         if t.ended[cap] != ALIVE or t.polity[cap] != pid or t.shares[cap, farm] >= m.sedentary_farm_share:
             continue
         origin = int(t.cell[cap])
-        if not near_free[origin]:
+        if not may_find_free(model, near_free, cap):
             continue
         pop = float(t.population[cap])
         here = cell_utility(model, cap, np.array([origin]), np.zeros(1, dtype=np.int64), pop)[0]
@@ -315,7 +302,7 @@ def migrate(model) -> None:
             continue  # already joined by another band this year
         origin = int(t.cell[sid])
         pop = float(t.population[sid])
-        if near_free[origin]:
+        if may_find_free(model, near_free, sid):
             here = cell_utility(model, sid, np.array([origin]), np.zeros(1, dtype=np.int64), pop)[0]
             cell, util = best_free_cell(model, sid, pop, 0.0)
             if cell >= 0 and util > here:
@@ -339,7 +326,7 @@ def migrate(model) -> None:
     for sid in crowded.tolist():
         leaving = m.split_fraction * float(t.population[sid])
         cell = -1
-        if near_free[t.cell[sid]]:
+        if may_find_free(model, near_free, sid):
             cell, _ = best_free_cell(model, sid, leaving, m.min_found_food_ratio)
         if cell < 0 or leaving < d.min_population:
             t.next_split_year[sid] = year + m.split_retry_years

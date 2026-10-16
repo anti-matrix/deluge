@@ -83,7 +83,9 @@ def origin_records(model, g: int, hist: History, until: int | None = None) -> li
     """The surviving records of founding group ``g`` (in its living polities' stores) whose
     provenance includes an event of years 0 to ``until`` (``reports.origins_until_year``).
     Copies alike in every field and history (sibling stores after splits) are one entry:
-    {"record", "stores", "copies", "substitutions"}, oldest first."""
+    {"record", "stores", "copies", "substitutions", "current"}. ``current`` (a): the record's
+    own fields still hold something of those years (``holds_early``); the others (b) descend
+    from them by provenance only. (a) come first, then (b), each oldest first."""
     until = model.config.reports.origins_until_year if until is None else until
     st, P, ev = model.memory, model.polities, model.events
     groups: dict[tuple, dict] = {}
@@ -98,12 +100,24 @@ def origin_records(model, g: int, hist: History, until: int | None = None) -> li
             key = (r.provenance, r.actors, r.action, r.year, r.year_span, r.place, r.place_level, subs)
             e = groups.get(key)
             if e is None:
-                groups[key] = {"record": r, "stores": [p], "copies": 1, "substitutions": list(subs)}
+                groups[key] = {"record": r, "stores": [p], "copies": 1, "substitutions": list(subs),
+                               "current": holds_early(model, r, until)}
             else:
                 e["copies"] += 1
                 if p not in e["stores"]:
                     e["stores"].append(p)
                 if r.mem_id < e["record"].mem_id:
                     e["record"] = r
-    return sorted(groups.values(), key=lambda e: (min(ev.year[i] for i in e["record"].provenance),
+    return sorted(groups.values(), key=lambda e: (not e["current"], min(ev.year[i] for i in e["record"].provenance),
                                                   e["record"].mem_id))
+
+
+def holds_early(model, rec, until: int) -> bool:
+    """Whether a record's current fields still hold something of years 0 to ``until``: its
+    year span reaches into them, or it keeps the verb and an actor of one of its original
+    events from those years."""
+    ev = model.events
+    if rec.year <= until:
+        return True
+    early = [i for i in rec.provenance if ev.year[i] <= until]
+    return any(ev.action[i] == rec.action and set(ev.actors[i]) & set(rec.actors) for i in early)

@@ -108,6 +108,64 @@ def test_strait_needs_sailing_and_a_crossing_within_sea_reach():
     assert reach_of(m, s1, s2) == 0 and reach_of(m, s1, s3) is None
 
 
+def test_migration_counts_sea_cells_apart_from_the_land_radius():
+    """A band crosses up to its sea_steps sea cells however small its land search radius:
+    sea cells do not use up the radius, as in war's reach."""
+    from deluge.systems import demography
+
+    steps = int(load_sea_steps())
+    over = {"migration": {"search_radius": 1}}
+    for width, sailing, reached in ((steps, True, True), (steps + 1, True, False), (1, False, False)):
+        m, a, sa, b, sb = strait(width, sailing=sailing)
+        m.config = m.config.with_overrides(over)
+        target = int(m.settlements.cell[sb])
+        cells, dist = demography.reach(m, sa)
+        assert (target in cells.tolist()) == reached
+        if reached:
+            assert demography.sea_cells_crossed(m, sa, int(m.settlements.cell[sa]), target) == width
+            assert dist[cells.tolist().index(target)] == width + 1
+
+
+def test_reach_cache_follows_the_sea():
+    """Cached reach matches a fresh computation after the sea changes near an origin."""
+    m, a, sa, b, sb = strait(2, sailing=True)
+    cells = m.settlements.cell[[sa, sb]]
+    budget = np.array([3, 0])
+
+    def fresh():
+        t, s = war.sea_reach(m, cells, 2, budget)
+        out = []
+        for i in range(2):
+            ok = (t[i] >= 0) & (s[i] <= budget[i])
+            order = np.argsort(t[i][ok])
+            out.append((t[i][ok][order], s[i][ok][order]))
+        return out
+
+    for _ in range(2):
+        for (t1, s1), (t2, s2) in zip(war.reach_lists(m, cells, 2, budget), fresh()):
+            np.testing.assert_array_equal(t1, t2)
+            np.testing.assert_array_equal(s1, s2)
+        m.is_sea[int(m.geom.neighbors[int(cells[0])][0])] ^= True  # flip a neighbour
+
+
+def test_layered_graph_reach_equals_sea_reach():
+    """``reach_lists`` (scipy Dijkstra on the layered graph) gives ``sea_reach``'s cells and sea
+    counts exactly, for several land radii and sea budgets."""
+    m = small_model(years=20)
+    m.run()
+    cells = np.random.default_rng(0).choice(np.flatnonzero(~m.is_sea), 25, replace=False)
+    for land in (2, 4):
+        for b in (0, 3, 23):
+            budget = np.full(len(cells), b)
+            t, s = war.sea_reach(m, cells, land, budget)
+            m.__dict__.pop("_reach_cache", None)
+            for i, (tg, se) in enumerate(war.reach_lists(m, cells, land, budget)):
+                ok = (t[i] >= 0) & (s[i] <= b)
+                order = np.argsort(t[i][ok])
+                np.testing.assert_array_equal(tg, t[i][ok][order])
+                np.testing.assert_array_equal(se, s[i][ok][order])
+
+
 def load_sea_steps():
     from deluge.config import load_config
     from deluge.systems.knowledge import KnowledgeGraph

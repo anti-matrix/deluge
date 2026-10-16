@@ -152,24 +152,29 @@ def test_merge_needs_meeting_year_spans_and_respects_the_provenance_cap():
 
 def test_vividness_comes_from_the_share_of_people_affected_and_novelty():
     """One rule for every verb: the share of the holder's people affected, log-scaled, plus a
-    bonus the first time a verb or an actor enters the store."""
-    m = held(years=10)
+    bonus the first time a verb, or an actor from outside the holder's polity, enters the store."""
+    m = held(years=10, more={"memory": {"repeat_gain": 0.0}})  # no amplification between the records
     cfg = m.config.memory
     origin = interior_cell(m, 3)
     pid, sid = lone_polity(m, origin, pop=3000.0)
     other = place(m, free_land(m, origin, 1)[0], pid, pop=1000.0)
+    stranger, ssid = lone_polity(m, free_land(m, origin, 4)[0], lineage=1)
     # No place: no shared symbol, so no amplification between them.
     i = log_people(m, "starved", [("settlement", sid)], -1, 5000.0)
     j = log_people(m, "starved", [("settlement", other)], -1, 5000.0)
     k = log_people(m, "moved", [("settlement", other)], -1, 1e6)
     q = log_people(m, "starved", [("polity", pid)], -1, 5000.0)
+    o = log_people(m, "starved", [("settlement", sid), ("polity", stranger)], -1, 5000.0)
+    o2 = log_people(m, "starved", [("settlement", other), ("polity", stranger)], -1, 5000.0)
     memory._record_events(m)
     v = {m.memory.records[x].provenance[0]: m.memory.records[x].vividness for x in m.memory.stores[pid]}
     b = cfg.novelty_bonus
-    assert v[i] == pytest.approx(memory.salience(cfg, 0.75) + 2 * b)  # new verb, new actor
-    assert v[j] == pytest.approx(memory.salience(cfg, 0.25) + b)  # new actor
+    assert v[i] == pytest.approx(memory.salience(cfg, 0.75) + b)  # new verb; its own settlement is no novelty
+    assert v[j] == pytest.approx(memory.salience(cfg, 0.25))  # nothing new
     assert v[k] == pytest.approx(memory.salience(cfg, 0.25) + b)  # new verb; the magnitude plays no part
-    assert v[q] == pytest.approx(cfg.vividness_scale + b)  # the polity itself: everyone; new actor
+    assert v[q] == pytest.approx(cfg.vividness_scale)  # the polity itself: everyone; not an outsider
+    assert v[o] == pytest.approx(memory.salience(cfg, 0.75) + b)  # a new actor from outside
+    assert v[o2] == pytest.approx(memory.salience(cfg, 0.25))  # that outsider is no longer new
     assert memory.salience(cfg, 0.01) < memory.salience(cfg, 0.1) < memory.salience(cfg, 1.0) == cfg.vividness_scale
     assert not hasattr(cfg, "magnitude_reference")
 
@@ -201,9 +206,73 @@ def test_detail_loss_coarsens_one_field_at_a_time():
     rec = m.memory.records[mid]
     for _ in range(12):
         memory._coarsen(m, m.memory, rec, m.year)
-    spans = m.config.memory.year_spans
-    assert rec.year_span == spans[-1] and rec.place == -1 and rec.magnitude_rounded
-    assert sum(memory.OPS[r[1]] == "coarsened" for r in m.memory.ops) == len(spans) - 1 + 2 + 1
+    levels = len(m.config.memory.year_span_fractions)
+    assert rec.year_level == levels and rec.place == -1 and rec.magnitude_rounded
+    assert sum(memory.OPS[r[1]] == "coarsened" for r in m.memory.ops) == levels + 2 + 1
+
+
+def test_year_coarsens_relative_to_the_records_age():
+    """The span is a share of the years since the original event, centred on it: no bins
+    anchored at year 0, and an old record's span is wider than a young one's."""
+    m = held(years=10, more={"memory": {"detail_loss_chance": 0.0}})
+    origin = interior_cell(m, 3)
+    pid, sid = lone_polity(m, origin)
+    st, fr = m.memory, m.config.memory.year_span_fractions
+    i = log_people(m, "starved", [("settlement", sid)], -1, 5000.0, year=1234)
+    memory._record_events(m)
+    rec = next(st.records[x] for x in st.stores[pid] if st.records[x].provenance == (i,))
+    spans = []
+    for now in (1334, 3234, 9234):  # 100, 2000 and 8000 years later, at the first level each time
+        rec.year, rec.year_span, rec.year_level = 1234, 1, 0
+        rec.place_level, rec.magnitude_rounded = memory.PLACE_NONE, True  # only the year is open
+        memory._coarsen(m, st, rec, now)
+        span = rec.year_span
+        assert span == max(2, round(fr[0] * (now - 1234)))
+        assert rec.year <= 1234 < rec.year + span and abs((rec.year + span / 2) - 1234) <= 1
+        spans.append(span)
+    assert spans[0] < spans[1] < spans[2]
+
+
+def test_merge_votes_by_vividness():
+    """Fused records take verb, place and actors by a vividness-weighted vote over the records
+    fused in, not from whichever record is newest."""
+    m = held(years=10, more={"memory": {"repeat_gain": 0.0}})
+    origin = interior_cell(m, 3)
+    pid, sid = lone_polity(m, origin)
+    other = place(m, free_land(m, origin, 1)[0], pid)
+    st = m.memory
+    ids = [log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
+           log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
+           log_people(m, "moved", [("settlement", sid), ("settlement", other)], origin, 5000.0, year=m.year + 1)]
+    memory._record_events(m)
+    from deluge.data.events import ACTION_CODE
+
+    def mids():
+        out = {st.records[x].provenance[0]: x for x in st.stores[pid] if len(st.records[x].provenance) == 1}
+        return [out[k] for k in ids]
+
+    for order in ((0, 1, 2), (0, 2, 1)):  # either order of fusing
+        m2 = held(years=10, more={"memory": {"repeat_gain": 0.0}})
+        # Fresh copies of the three records, the newest the most vivid on its own.
+        if order != (0, 1, 2):
+            m, st = m2, m2.memory
+            pid, sid = lone_polity(m, origin)
+            other = place(m, free_land(m, origin, 1)[0], pid)
+            ids = [log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
+                   log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
+                   log_people(m, "moved", [("settlement", sid), ("settlement", other)], origin, 5000.0,
+                              year=m.year + 1)]
+            memory._record_events(m)
+        x = mids()
+        for k, v in zip(x, (1.0, 1.0, 1.2)):
+            st.records[k].vividness = v
+        memory._fuse(st, pid, x[order[0]], x[order[1]], m.year)
+        first = next(r for r in st.records.values() if r.store == pid and len(r.provenance) == 2)
+        memory._fuse(st, pid, first.mem_id, x[order[2]], m.year)
+        rec = next(r for r in st.records.values() if r.store == pid and len(r.provenance) == 3)
+        assert rec.action == ACTION_CODE["starved"]  # two records of one verb outvote the more vivid third
+        assert rec.actors[0] == entity("settlement", sid)
+        assert rec.year == m.year and rec.year_span == 2  # the span covering all three
 
 
 def test_substitution_draws_an_entity_of_the_store():
@@ -327,6 +396,24 @@ def test_consequences_change_the_run():
     a.run()
     b.run()
     assert not a.datacollector.get_model_vars_dataframe().equals(b.datacollector.get_model_vars_dataframe())
+
+
+def test_consequences_are_scale_free():
+    """Cohesion, legitimacy and the summary read each store relative to its own median
+    vividness: scaling every record's vividness leaves them unchanged."""
+    m = small_model(years=200)
+    m.run()
+    memory.derive(m)
+    pids = m.polities.alive_ids()
+    before = (memory.cohesion_term(m, pids), dict(m.memory.legit), memory.summary(m, pids))
+    assert before[0].any() and any(before[1].values())
+    for r in m.memory.records.values():
+        r.vividness *= 100.0
+    memory.derive(m)
+    after = (memory.cohesion_term(m, pids), dict(m.memory.legit), memory.summary(m, pids))
+    np.testing.assert_allclose(after[0], before[0])
+    assert after[1] == pytest.approx(before[1])
+    np.testing.assert_allclose(after[2], before[2])
 
 
 def test_myths_report_renders(ran):
