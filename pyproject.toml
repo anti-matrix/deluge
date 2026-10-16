@@ -16,6 +16,9 @@ dependencies = [
     "pandas",
     "pyyaml",
     "matplotlib",
+    # Round 11: JIT for the reach and war-candidate kernels (deluge/systems/war.py); without it
+    # the same kernels run as plain Python, very slowly.
+    "numba>=0.68",
 ]
 
 [project.optional-dependencies]
@@ -23,10 +26,6 @@ dev = [
     "pytest",
     "pytest-xdist",
     "hypothesis",
-]
-# Installed in round 11, only if profiling shows the need.
-jit = [
-    "numba",
 ]
 # Installed in round 12 for the real-topography importer.
 earth = [

@@ -769,6 +769,15 @@ def derive(model) -> None:
     year = model.year
     state.weights, state.heavy, state.shared, state.legit, state.summary_of = {}, {}, {}, {}, {}
     state.scale = {}
+    people_lineage: dict[int, int | None] = {}  # actor -> its founding lineage if a group of people, else None
+
+    def lineage_of(x: int) -> int | None:
+        v = people_lineage.get(x, -2)
+        if v == -2:
+            v = _lineage(model, x) if decode(x)[0] in PEOPLE_KINDS else None
+            people_lineage[x] = v
+        return v
+
     for pid in P.alive_ids().tolist():
         mids = state.stores.get(pid, [])
         weights: dict[int, float] = {}
@@ -783,8 +792,11 @@ def derive(model) -> None:
                 weights[s] = weights.get(s, 0.0) + v
             if coverage.get(m, 0.0) >= cfg.shared_majority:
                 shared += v
-            if any(decode(x)[0] in PEOPLE_KINDS and _lineage(model, x) != own_lineage for x in r.actors):
-                outsider += v
+            for x in r.actors:
+                lin = lineage_of(x)
+                if lin is not None and lin != own_lineage:
+                    outsider += v
+                    break
             age += v * (year - r.year)
         heavy = dict(sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))[: cfg.heavy_symbols])
         # The store's own scale: the median vividness of its records (references are in its units).

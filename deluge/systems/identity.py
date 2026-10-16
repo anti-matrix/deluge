@@ -104,9 +104,9 @@ def actor_signatures(model, actors) -> tuple:
         if kind == "polity":
             kind, local = "settlement", int(model.polities.capital[local])
         if kind == "settlement":
-            out.append(tuple(np.r_[t.appearance_mean[local], t.dialect[local]].round(4).tolist()))
+            out.append(tuple(np.concatenate((t.appearance_mean[local], t.dialect[local])).round(4).tolist()))
         elif kind == "teachers":
-            out.append(tuple(np.r_[model.teachers_appearance, np.full(n_dia, np.nan)].round(4).tolist()))
+            out.append(tuple(np.concatenate((model.teachers_appearance, np.full(n_dia, np.nan))).round(4).tolist()))
         else:
             out.append(None)
     return tuple(out)

@@ -173,16 +173,20 @@ def test_reach_cache_follows_the_sea():
             out.append((t[i][ok][order], s[i][ok][order]))
         return out
 
-    for _ in range(2):
+    for _ in range(3):
         for (t1, s1), (t2, s2) in zip(war.reach_lists(m, cells, 2, budget), fresh()):
             np.testing.assert_array_equal(t1, t2)
             np.testing.assert_array_equal(s1, s2)
+        for (t1, s1), (t2, s2) in zip(war.land_reach(m, cells, 2, budget), fresh()):  # cached, land only
+            land = ~m.is_sea[t2]
+            np.testing.assert_array_equal(t1, t2[land])
+            np.testing.assert_array_equal(s1, s2[land])
         m.is_sea[int(m.geom.neighbors[int(cells[0])][0])] ^= True  # flip a neighbour
 
 
 def test_layered_graph_reach_equals_sea_reach():
-    """``reach_lists`` (scipy Dijkstra on the layered graph) gives ``sea_reach``'s cells and sea
-    counts exactly, for several land radii and sea budgets."""
+    """``reach_lists`` (the layered BFS kernel, ``war._reach_one``) gives ``sea_reach``'s cells
+    and sea counts exactly, for several land radii and sea budgets."""
     m = small_model(years=20)
     m.run()
     cells = np.random.default_rng(0).choice(np.flatnonzero(~m.is_sea), 25, replace=False)
@@ -568,3 +572,45 @@ def test_identity_measures_are_untouched_by_markers_through_war():
     h0, s0 = t.appearance_mean[sb].copy(), t.appearance_mean[sa].copy()
     identity.blend(m, sb, sa, people=t.population[sb])  # as many settlers as residents
     np.testing.assert_allclose(t.appearance_mean[sb], (h0 + s0) / 2)
+
+
+def test_at_war_matches_the_war_table():
+    from types import SimpleNamespace
+
+    rng = np.random.default_rng(0)
+    for _ in range(100):
+        n = int(rng.integers(2, 40))
+        wars = {tuple(sorted(rng.choice(n, 2, replace=False).tolist())): 0 for _ in range(int(rng.integers(0, 30)))}
+        a, b = rng.integers(0, n, 80), rng.integers(0, n, 80)
+        expected = [(min(p, q), max(p, q)) in wars for p, q in zip(a.tolist(), b.tolist())]
+        assert war.at_war(SimpleNamespace(wars=wars), a, b).tolist() == expected
+
+
+def test_war_candidates_match_the_contact_list():
+    """One attacking settlement per (polity, foreign target): the fewest sea cells, then the
+    lowest id, by polity then target, as sorting ``war_contacts`` gives."""
+    m = held()
+    rng = np.random.default_rng(0)
+    free = np.flatnonzero(~m.is_sea & (m.occupant < 0) & m.is_coast)
+    pids = [lone_polity(m, int(c), lineage=i % 5)[0] for i, c in enumerate(rng.choice(free, 40, replace=False))]
+    free = np.flatnonzero(~m.is_sea & (m.occupant < 0))
+    for c in rng.choice(free, 120, replace=False).tolist():
+        place(m, int(c), int(rng.choice(pids)))
+    t = m.settlements
+    ids = t.alive_ids()
+    t.knows[ids, m.knowledge.index("sailing")] = True  # crossings in play
+    t.knows[ids[::3], m.knowledge.index("open_sea_voyaging")] = True
+    rows, x, sea = war.war_contacts(m, ids)
+    pol = t.polity[ids]
+    foreign = t.polity[x] != pol[rows]
+    rows, x, sea = rows[foreign], x[foreign], sea[foreign]
+    src, a = ids[rows], pol[rows]
+    key = a * (t.n + 1) + x
+    order = np.lexsort((src, sea, key))
+    first = order[np.r_[True, key[order][1:] != key[order][:-1]]]
+    lens, targets, seas = war._contact_lists(m, ids)
+    got = war._war_candidates(lens, targets, seas, ids, pol, np.argsort(pol, kind="stable"), m.occupant,
+                              t.polity[: t.n], t.n)
+    assert len(first) > 0 and (sea[first] > 0).any()
+    for g, e in zip(got, (a[first], x[first], src[first], sea[first])):
+        np.testing.assert_array_equal(g, e)

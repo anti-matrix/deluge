@@ -37,6 +37,7 @@ import numpy as np
 from deluge.agents.settlement import ALIVE, MODES
 from deluge.brains.network import OUT
 from deluge.config import DemographyConfig
+from deluge.jit import njit
 from deluge.systems import identity
 from deluge.systems.subsistence import fed_capacity, food_per_head, mode_capacity, mode_parameters
 
@@ -87,15 +88,16 @@ def grow(model) -> None:
 
 
 def _reach_field(model, sid: int, origin: int) -> tuple[np.ndarray, np.ndarray]:
-    """(cells, sea cells crossed) within band ``sid``'s reach from ``origin`` (``war.reach_lists``):
-    its land search radius and its sea_steps counted apart, as war counts them."""
-    from deluge.systems.war import reach_lists
+    """(land cells, sea cells crossed) within band ``sid``'s reach from ``origin``
+    (``war.land_reach``): its land search radius and its sea_steps counted apart, as war
+    counts them."""
+    from deluge.systems.war import land_reach
 
     m, g, t = model.config.migration, model.knowledge, model.settlements
     knows = t.knows[sid]
     radius = m.search_radius + int(g.total(knows, "migration_radius"))
     sea_steps = int(g.highest(knows, "sea_steps"))
-    return reach_lists(model, np.array([origin]), radius, np.array([sea_steps]))[0]
+    return land_reach(model, np.array([origin]), radius, np.array([sea_steps]))[0]
 
 
 def reach(model, sid: int, origin: int | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -105,14 +107,14 @@ def reach(model, sid: int, origin: int | None = None) -> tuple[np.ndarray, np.nd
     t = model.settlements
     origin = int(t.cell[sid]) if origin is None else origin
     targets, _ = _reach_field(model, sid, origin)
-    cells = targets[(targets != origin) & ~model.is_sea[targets]]
+    cells = targets[targets != origin].astype(np.int64)
     return cells, model.geom.hex_distance(cells, np.full(len(cells), origin))
 
 
 def sea_cells_crossed(model, sid: int, origin: int, dest: int) -> int:
-    """The fewest sea cells a path from ``origin`` to ``dest`` within band ``sid``'s reach
-    crosses (0 when a path over land alone reaches it; the origin itself not counted). Used
-    to log the band's sea crossings."""
+    """The fewest sea cells a path from ``origin`` to land cell ``dest`` within band
+    ``sid``'s reach crosses (0 when a path over land alone reaches it; the origin itself not
+    counted). Used to log the band's sea crossings."""
     targets, sea = _reach_field(model, sid, origin)
     hit = np.flatnonzero(targets == dest)
     return int(sea[hit[0]]) if len(hit) else 0
@@ -246,10 +248,25 @@ def free_land_nearby(model) -> np.ndarray:
     is False here cannot find a free cell; skipping its search changes nothing but the run
     time (``may_find_free``)."""
     radius = model.config.migration.search_radius + int(model.knowledge.effect["migration_radius"].sum())
-    near = ~model.is_sea & (model.occupant < 0)
-    for _ in range(radius):
-        near = near | model.geom.neighbor_any(near)
-    return near
+    return _dilate(model.geom.neighbors, ~model.is_sea & (model.occupant < 0), radius)
+
+
+@njit(cache=True)
+def _dilate(neighbors, flags, steps):
+    """``flags`` grown ``steps`` times over hex neighbours (each step: a cell or one of its
+    neighbours is set)."""
+    cur = flags.copy()
+    for _ in range(steps):
+        nxt = cur.copy()
+        for c in range(len(cur)):
+            if not cur[c]:
+                for e in range(neighbors.shape[1]):
+                    m = neighbors[c, e]
+                    if m >= 0 and cur[m]:
+                        nxt[c] = True
+                        break
+        cur = nxt
+    return cur
 
 
 def may_find_free(model, near_free: np.ndarray, sid: int) -> bool:

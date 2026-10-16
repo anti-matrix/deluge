@@ -69,6 +69,7 @@ from deluge.agents.polity import marker_index
 from deluge.brains.features import target_features
 from deluge.brains.network import OUT, target_scores
 from deluge.data.events import entity
+from deluge.jit import njit
 from deluge.systems import identity, knowledge, memory
 from deluge.systems.cohesion import culture_distance, trait_index
 from deluge.world.worlddata import terrain_table
@@ -180,12 +181,28 @@ def strengths(model, F, a: np.ndarray, b: np.ndarray, x: np.ndarray) -> tuple[np
     cell = t.cell[x]
     km_a = model.geom.hex_distance(F.capital_cell[a], cell) * model.unit_km
     km_b = model.geom.hex_distance(F.capital_cell[b], cell) * model.unit_km
-    sa = F.people[a] * F.mob[a] * F.tech[a] * (0.5 + P.cohesion[a]) * np.exp(-km_a / F.reach[a])
+    n = len(F.people)
+    force = F.people * F.mob * F.tech * (0.5 + P.cohesion[:n])  # per polity, the same products in the same order
+    sa = force[a] * np.exp(-km_a / F.reach[a])
     local = t.population[x]
     rest = np.maximum(F.people[b] - local, 0.0) * np.exp(-km_b / F.reach[b])
     sd = ((local + rest) * F.mob[b] * F.tech[b] * (0.5 + P.cohesion[b]) * F.terrain[cell]
-          * g.multiplier(t.knows[x], "defense") * w.home_bonus)
+          * _multiplier_of(g, t, x, "defense") * w.home_bonus)
     return sa, sd
+
+
+def _multiplier_of(g, t, x: np.ndarray, name: str) -> np.ndarray:
+    """``g.multiplier(t.knows[x], name)``. With at most one technique carrying the effect, the
+    product has one factor, so it is read per settlement from that technique's column (the
+    same values: a sum of one nonzero term is exact whatever the matrix shape)."""
+    logs = np.log(g.effect[name])
+    terms = np.flatnonzero(logs != 0.0)
+    if len(terms) > 1:
+        return g.multiplier(t.knows[x], name)
+    if len(terms) == 0:
+        return np.ones(len(x))
+    j = int(terms[0])
+    return np.exp(np.array([0.0, logs[j]]))[t.knows[x, j].astype(np.intp)]
 
 
 # --- reach over land and sea ---------------------------------------------------------------------
@@ -245,13 +262,114 @@ def sea_reach(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) 
     return targets, f[:, :-1]
 
 
+@njit(cache=True)
+def _relax_over_sea(neighbors, is_sea, cur, seeds, budget, reached, n_reached, buf_a, buf_b):
+    """Lower ``cur`` over sea cells (+1 per sea cell entered, at most ``budget``) from
+    ``seeds`` (cells whose value just fell), level by level; returns the new ``n_reached``."""
+    big = 1 << 30
+    # Seeds by value (a counting sort over 0..budget).
+    count = np.zeros(budget + 2, np.int64)
+    for s in seeds:
+        count[cur[s] + 1] += 1
+    for k in range(budget + 1):
+        count[k + 1] += count[k]
+    ordered = np.empty(len(seeds), np.int64)
+    fill = count.copy()
+    for s in seeds:
+        ordered[fill[cur[s]]] = s
+        fill[cur[s]] += 1
+    i, ns = 0, len(ordered)
+    now, n_now = buf_a, 0  # cells pushed at value k
+    nxt = buf_b
+    for k in range(budget + 1):
+        n_next = 0
+        for phase in range(2):
+            if phase == 0:
+                lo, hi = i, ns
+            else:
+                lo, hi = 0, n_now
+            j = lo
+            while j < hi:
+                c = ordered[j] if phase == 0 else now[j]
+                if phase == 0 and cur[c] != k:
+                    break  # the seeds of value k are done
+                j += 1
+                if cur[c] != k or k + 1 > budget:
+                    continue  # stale entry, or no sea step left
+                for e in range(neighbors.shape[1]):
+                    m = neighbors[c, e]
+                    if m >= 0 and is_sea[m] and k + 1 < cur[m]:
+                        if cur[m] == big:
+                            reached[n_reached] = m
+                            n_reached += 1
+                        cur[m] = k + 1
+                        nxt[n_next] = m
+                        n_next += 1
+            if phase == 0:
+                i = j
+        now, nxt = nxt, now
+        n_now = n_next
+        if i >= ns and n_now == 0:
+            break
+    return n_reached
+
+
+@njit(cache=True)
+def _reach_one(neighbors, is_sea, origin, land_steps, budget):
+    """(targets, sea) from ``origin``: every cell a path entering at most ``land_steps`` land
+    cells and at most ``budget`` sea cells reaches (the origin itself counts as neither), with
+    the fewest sea cells crossed; targets ascending. Layer by layer: the cells reached with at
+    most l land cells entered, closed over sea steps, then one more land step."""
+    n = is_sea.shape[0]
+    big = 1 << 30
+    cur = np.full(n, big, np.int64)
+    reached = np.empty(n, np.int64)
+    buf_a = np.empty(n, np.int64)
+    buf_b = np.empty(n, np.int64)
+    cur[origin] = 0
+    reached[0] = origin
+    n_reached = _relax_over_sea(neighbors, is_sea, cur, np.array([origin], np.int64), budget, reached, 1,
+                                buf_a, buf_b)
+    changed = np.empty(n, np.int64)
+    for _ in range(land_steps):
+        old = cur.copy()
+        n_changed = 0
+        for r in range(n_reached):
+            c = reached[r]
+            v = old[c]
+            for e in range(neighbors.shape[1]):
+                m = neighbors[c, e]
+                if m >= 0 and not is_sea[m] and v < cur[m]:
+                    if cur[m] == big:
+                        reached[n_reached] = m
+                        n_reached += 1
+                    if cur[m] == old[m]:
+                        changed[n_changed] = m
+                        n_changed += 1
+                    cur[m] = v
+        if n_changed == 0:
+            break
+        n_reached = _relax_over_sea(neighbors, is_sea, cur, changed[:n_changed].copy(), budget, reached,
+                                    n_reached, buf_a, buf_b)
+    targets = np.sort(reached[:n_reached])
+    return targets, cur[targets]
+
+
 def reach_lists(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
     """Per origin of ``cells``: (targets, sea) of ``sea_reach`` kept to the cells within reach
-    (on the map, at most that origin's ``sea_steps`` sea cells). Results are cached on the model
-    per (cell, land_steps, sea_steps); when the sea changes, only the entries whose hex ball
-    (``land_steps`` + sea_steps) holds a cell that changed are dropped. Origins missing from the
-    cache are computed in one batch per sea_steps value, so a large budget does not widen the
-    others'."""
+    (on the map, at most that origin's ``sea_steps`` sea cells), sea cells included;
+    ``_reach_one`` computes them. The sim itself reads only the land cells, cached
+    (``land_reach``)."""
+    neighbors, is_sea = model.geom.neighbors, model.is_sea
+    return [_reach_one(neighbors, is_sea, int(c), land_steps, int(b))
+            for c, b in zip(np.asarray(cells).tolist(), np.asarray(sea_steps).tolist())]
+
+
+def land_reach(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+    """``reach_lists`` kept to land cells: per origin (land targets as int32, sea cells
+    crossed as int16), ascending. Cached on the model per (cell, land_steps, sea_steps); when
+    the sea changes, only the entries whose hex ball (``land_steps`` + sea_steps) holds a cell
+    that changed are dropped, so an entry's land cells are always this year's."""
     state = model.__dict__.setdefault("_reach_cache", {"sea": None, "cache": {}})
     cache = state["cache"]
     if state["sea"] is None or not np.array_equal(state["sea"], model.is_sea):
@@ -271,59 +389,18 @@ def reach_lists(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray
     cells = np.asarray(cells, dtype=np.int64)
     budgets = np.asarray(sea_steps, dtype=np.int64)
     out: list = [None] * len(cells)
-    missing: dict[int, list[int]] = {}
+    get = cache.get
+    neighbors, is_sea = model.geom.neighbors, model.is_sea
     for k, (c, b) in enumerate(zip(cells.tolist(), budgets.tolist())):
-        hit = cache.get((c, land_steps, b))
+        key = (c, land_steps, b)
+        hit = get(key)
         if hit is None:
-            missing.setdefault(b, []).append(k)
-        else:
-            out[k] = hit
-    if missing:
-        from scipy.sparse.csgraph import dijkstra
-
-        graph = _layer_graph(model, land_steps)
-        n = model.geom.n_cells
-        for b, ks in sorted(missing.items()):
-            for k in ks:
-                d = dijkstra(graph, indices=int(cells[k]), limit=b + 0.5)
-                sea = np.floor(d.reshape(land_steps + 1, n).min(axis=0) + 1e-3)
-                targets = np.flatnonzero(sea <= b)
-                hit = (targets, sea[targets].astype(np.int64))
-                cache[(int(cells[k]), land_steps, b)] = hit
-                out[k] = hit
+            targets, sea = _reach_one(neighbors, is_sea, c, land_steps, b)
+            land = ~is_sea[targets]
+            hit = (targets[land].astype(np.int32), sea[land].astype(np.int16))
+            cache[key] = hit
+        out[k] = hit
     return out
-
-
-def _layer_graph(model, land_steps: int):
-    """The hex graph layered by land cells entered (node ``layer * n_cells + cell``): a step
-    onto a sea cell stays in its layer and costs 1, a step onto a land cell goes one layer up
-    and costs next to nothing (1e-6), so a shortest path's cost, floored, is the fewest sea
-    cells crossed on a path entering at most ``land_steps`` land cells: ``sea_reach`` exactly,
-    computed in C (scipy's Dijkstra) from one origin at a time. Rebuilt when the sea changes."""
-    from scipy.sparse import csr_matrix
-
-    graphs = model.__dict__.setdefault("_reach_graphs", {})
-    hit = graphs.get(land_steps)
-    if hit is not None and np.array_equal(hit[0], model.is_sea):
-        return hit[1]
-    n = model.geom.n_cells
-    nb = model.geom.neighbors
-    c, k = np.nonzero(nb >= 0)
-    t = nb[c, k]
-    wet = model.is_sea[t]
-    src, dst, w = [], [], []
-    for layer in range(land_steps + 1):
-        src.append(layer * n + c[wet])
-        dst.append(layer * n + t[wet])
-        w.append(np.ones(int(wet.sum())))
-        if layer < land_steps:
-            src.append(layer * n + c[~wet])
-            dst.append((layer + 1) * n + t[~wet])
-            w.append(np.full(int((~wet).sum()), 1e-6))
-    size = (land_steps + 1) * n
-    graph = csr_matrix((np.concatenate(w), (np.concatenate(src), np.concatenate(dst))), shape=(size, size))
-    graphs[land_steps] = (model.is_sea.copy(), graph)
-    return graph
 
 
 def sea_budget(model, ids: np.ndarray) -> np.ndarray:
@@ -342,31 +419,98 @@ def sea_budget(model, ids: np.ndarray) -> np.ndarray:
     return out
 
 
+def _contact_lists(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(lengths, land cells, sea cells crossed) within war reach of each settlement of ``ids``,
+    concatenated in ``ids`` order. Settlements sit on land cells only, so the reach entries'
+    land targets are all that can hold one."""
+    t = model.settlements
+    entries = land_reach(model, t.cell[ids], model.config.polities.contact_radius, sea_budget(model, ids))
+    lens = np.fromiter((len(e[0]) for e in entries), dtype=np.int64, count=len(entries))
+    return lens, np.concatenate([e[0] for e in entries]), np.concatenate([e[1] for e in entries])
+
+
+@njit(cache=True)
+def _war_candidates(lens, targets, sea, src, src_pol, perm, occupant, polity, n_settlements):
+    """Foreign settlements within reach of each polity's settlements, one per (polity, target):
+    the attacking settlement with the fewest sea cells to cross, then the lowest id. ``perm``:
+    the rows ordered by polity (stable). Returns (polity, target, settlement, sea) by polity,
+    then target."""
+    starts = np.zeros(len(lens) + 1, np.int64)
+    for r in range(len(lens)):
+        starts[r + 1] = starts[r] + lens[r]
+    big = 1 << 62
+    best_sea = np.full(n_settlements, big, np.int64)
+    best_src = np.full(n_settlements, big, np.int64)
+    touched = np.empty(n_settlements, np.int64)
+    out_a = np.empty(len(targets), np.int64)
+    out_x = np.empty(len(targets), np.int64)
+    out_s = np.empty(len(targets), np.int64)
+    out_sea = np.empty(len(targets), np.int64)
+    n_out = 0
+    i = 0
+    while i < len(perm):
+        a = src_pol[perm[i]]
+        n_touched = 0
+        while i < len(perm) and src_pol[perm[i]] == a:
+            r = perm[i]
+            s = src[r]
+            for j in range(starts[r], starts[r + 1]):
+                x = occupant[targets[j]]
+                if x < 0 or x == s or polity[x] == a:
+                    continue
+                d = sea[j]
+                if best_sea[x] == big:
+                    touched[n_touched] = x
+                    n_touched += 1
+                if d < best_sea[x] or (d == best_sea[x] and s < best_src[x]):
+                    best_sea[x] = d
+                    best_src[x] = s
+            i += 1
+        xs = np.sort(touched[:n_touched])
+        for x in xs:
+            out_a[n_out] = a
+            out_x[n_out] = x
+            out_s[n_out] = best_src[x]
+            out_sea[n_out] = best_sea[x]
+            n_out += 1
+            best_sea[x] = big
+            best_src[x] = big
+    return out_a[:n_out], out_x[:n_out], out_s[:n_out], out_sea[:n_out]
+
+
 def war_contacts(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(rows, targets, sea): each settlement of ``ids`` (by row) that another settlement is
     within reach of for war: over land within ``polities.contact_radius`` hex steps of land,
     or, from a settlement practising sailing, also across at most its ``sea_budget`` sea cells;
     ``sea`` is the fewest sea cells crossed (0 over land)."""
-    t = model.settlements
-    reach = model.config.polities.contact_radius
-    budget = sea_budget(model, ids)
-    rows, xs, seas = [], [], []
-    for row, (targets, sea) in enumerate(reach_lists(model, t.cell[ids], reach, budget)):
-        occ = model.occupant[targets]
-        keep = (occ >= 0) & (occ != ids[row])
-        if keep.any():
-            rows.append(np.full(int(keep.sum()), row, dtype=np.int64))
-            xs.append(occ[keep])
-            seas.append(sea[keep])
-    if not rows:
-        empty = np.zeros(0, dtype=np.int64)
+    empty = np.zeros(0, dtype=np.int64)
+    if len(ids) == 0:
         return empty, empty, empty
-    rows, xs, seas = np.concatenate(rows), np.concatenate(xs), np.concatenate(seas)
+    lens, targets, sea = _contact_lists(model, ids)
+    rows = np.repeat(np.arange(len(ids), dtype=np.int64), lens)
+    occ = model.occupant[targets]
+    keep = (occ >= 0) & (occ != ids[rows])
+    rows, xs, seas = rows[keep], occ[keep], sea[keep]
+    if len(rows) == 0:
+        return empty, empty, empty
     order = np.lexsort((xs, rows))
     return rows[order], xs[order], seas[order]
 
 
 # --- choice -----------------------------------------------------------------------------------
+
+
+def at_war(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Per pair of polity ids: they are at war (``model.wars``, keys low id first)."""
+    a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
+    if not model.wars or len(a) == 0:
+        return np.zeros(len(a), dtype=bool)
+    keys = np.array(list(model.wars), dtype=np.int64).reshape(-1, 2)
+    n = np.int64(max(int(keys.max()), int(a.max()), int(b.max())) + 1)
+    wars = np.sort(keys[:, 0] * n + keys[:, 1])
+    pairs = np.minimum(a, b) * n + np.maximum(a, b)
+    at = np.minimum(np.searchsorted(wars, pairs), len(wars) - 1)
+    return wars[at] == pairs
 
 
 def at_war_counts(model) -> np.ndarray:
@@ -386,37 +530,49 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
     ids = t.alive_ids()
     if len(ids) == 0:
         return []
-    rows, x, sea = war_contacts(model, ids)
+    # Foreign settlements in reach (``war_contacts``), one attacking settlement per (polity,
+    # target): over land if one is, else the shortest crossing (then the lowest id).
     pol = t.polity[ids]
-    foreign = t.polity[x] != pol[rows]
-    rows, x, sea = rows[foreign], x[foreign], sea[foreign]
-    if len(rows) == 0:
+    lens, targets, sea = _contact_lists(model, ids)
+    a, x, src, sea = _war_candidates(lens, targets, sea, ids, pol, np.argsort(pol, kind="stable"),
+                                     model.occupant, t.polity[: t.n], t.n)
+    if len(a) == 0:
         return []
-    src, a = ids[rows], pol[rows]
-    # One attacking settlement per (polity, target): over land if one is, else the shortest crossing.
-    key = a * (t.n + 1) + x
-    order = np.lexsort((src, sea, key))
-    first = order[np.r_[True, key[order][1:] != key[order][:-1]]]
-    src, x, a, sea = src[first], x[first], a[first], sea[first]
     b = t.polity[x]
     busy = at_war_counts(model) >= w.max_wars
     if busy[a].any():
-        allowed = ~busy[a] | np.array([(min(p, q), max(p, q)) in model.wars for p, q in zip(a.tolist(), b.tolist())])
+        allowed = ~busy[a]
+        held = np.flatnonzero(~allowed)
+        allowed[held] = at_war(model, a[held], b[held])
         src, x, a, b, sea = src[allowed], x[allowed], a[allowed], b[allowed], sea[allowed]
         if len(a) == 0:
             return []
+    # Candidates come by attacker id. Each attacker draws whether it attacks (chance attack_rate
+    # x aggression x its best target's score x food) and whether by campaign. A score is at most
+    # 1, so an attacker whose draw is at least attack_rate x aggression x food cannot attack:
+    # only the others' targets are scored (the same values: every step is per candidate).
+    brains = model.brains
+    first = np.flatnonzero(np.r_[True, a[1:] != a[:-1]])
+    attackers = a[first]
+    out = brains.output[attackers]
+    fed = np.clip(F.fed[attackers], 0.0, 1.0)
+    attack_draw = rng.random(len(attackers))
+    campaign = rng.random(len(attackers)) < out[:, OUT["campaign"]]
+    rate = w.attack_rate * out[:, OUT["aggression"]]
+    maybe = attack_draw < rate * fed
+    if not maybe.any():
+        return []
+    sel = np.repeat(maybe, np.diff(np.r_[first, len(a)]))
+    src, x, a, b, sea = src[sel], x[sel], a[sel], b[sel], sea[sel]
     sa, sd = strengths(model, F, a, b, x)
     p_win = win_chance(sa, sd, w.win_steepness)
-    brains = model.brains
     score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a])
     order = np.lexsort((-score, a))
     best = order[np.r_[True, a[order][1:] != a[order][:-1]]]  # top score per attacker, attacker id order
-    out = brains.output[a[best]]
-    p_attack = w.attack_rate * out[:, OUT["aggression"]] * score[best] * np.clip(F.fed[a[best]], 0.0, 1.0)
-    attack = rng.random(len(best)) < p_attack
-    campaign = rng.random(len(best)) < out[:, OUT["campaign"]]
+    k = np.flatnonzero(maybe)
+    attack = attack_draw[k] < rate[k] * score[best] * fed[k]
     return [(int(a[j]), int(b[j]), int(src[j]), int(x[j]), bool(c), int(sea[j]))
-            for j, go, c in zip(best.tolist(), attack.tolist(), campaign.tolist()) if go]
+            for j, go, c in zip(best.tolist(), attack.tolist(), campaign[k].tolist()) if go]
 
 
 # --- resolution -------------------------------------------------------------------------------

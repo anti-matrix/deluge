@@ -364,3 +364,25 @@ def test_polity_layer_and_chronicle():
     df = m.datacollector.get_model_vars_dataframe()
     assert {"n_polities", "mean_cohesion", "secessions", "fragmentations", "mergers"} <= set(df.columns)
     assert df["n_polities"].iloc[-1] == len(P.alive_ids())
+
+
+def test_common_enemy_matches_the_set_definition():
+    """Two polities share an enemy: some third polity at war with both (``model.wars``)."""
+    from types import SimpleNamespace
+
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        n = int(rng.integers(2, 30))
+        wars = {}
+        for _ in range(int(rng.integers(0, 40))):
+            p, q = sorted(rng.choice(n, 2, replace=False).tolist())
+            wars[(p, q)] = 0
+        enemies = {}
+        for p, q in wars:
+            enemies.setdefault(p, set()).add(q)
+            enemies.setdefault(q, set()).add(p)
+        a, b = rng.integers(0, n, 50), rng.integers(0, n, 50)
+        expected = [float(bool((enemies.get(p, set()) & enemies.get(q, set())) - {p, q}))
+                    for p, q in zip(a.tolist(), b.tolist())]
+        got = politics.common_enemy(SimpleNamespace(wars=wars), a, b)
+        assert got.tolist() == expected

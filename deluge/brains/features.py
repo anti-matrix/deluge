@@ -172,6 +172,8 @@ def target_features(model, a: np.ndarray, b: np.ndarray, x: np.ndarray, p_win: n
     f[:, col["culture_distance"]] = culture_distance(P.culture[a], t.culture[x])
     f[:, col["appearance_distance"]] = app
     f[:, col["dialect_distance"]] = dia
-    f[:, col["at_war"]] = [(min(p, q), max(p, q)) in model.wars for p, q in zip(a.tolist(), b.tolist())]
+    from deluge.systems.war import at_war  # war imports this module
+
+    f[:, col["at_war"]] = at_war(model, a, b)
     f[:, col["capital"]] = x == P.capital[b]
     return f

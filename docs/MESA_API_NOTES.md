@@ -21,8 +21,13 @@ Verified against the installed library on 2026-10-14 (Round 0), by introspection
 | pytest | 9.1.1 |
 | hypothesis | 6.169.1 |
 | git | 2.53.0.windows.4 (bundled with GitHub Desktop, not on PATH) |
+| numba | 0.68.0 with llvmlite 0.50.0 (Round 11; cp314 wheels, installs cleanly, numpy left at 2.5.4) |
 
-Not installed yet, declared as extras: `jit` = numba (round 11), `earth` = rasterio, xarray (round 12).
+Not installed yet, declared as an extra: `earth` = rasterio, xarray (round 12). numba became a dependency in Round 11.
+
+**Determinism note (Round 11):** NumPy's float64 matrix-vector product (OpenBLAS 0.3.34, used by `KnowledgeGraph.multiplier`) gives a row a result that can depend on the shape of the matrix it sits in (measured: `raid_range` rows, 4 nonzero terms). A run is deterministic on one machine, but the same seed may differ on a machine with another BLAS build or core count. Speed-ups that must leave results identical therefore keep every such call on the same input arrays.
+
+**Pickle note (Round 11):** a fresh model pickles, but a model restored from a pickle cannot be pickled again (Mesa's HexGrid builds a `GridCell` class at run time that pickle cannot find by name). Round 10's checkpointing has to handle this.
 
 ## Names and import paths
 
