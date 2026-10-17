@@ -794,7 +794,6 @@ viz:                          # browser UI only; no effect on the simulation
   render_interval: 25         # years stepped per frame while playing, and per click of Step
   render_interval_max: 100    # slider range
   step_buttons: [1, 10, 100]  # years per click of the step buttons
-  chronicle_lines: 100        # chronicle lines per page (the log itself keeps every event)
   # The one lineage palette: one colour per founding group, in founders.names order, used by every
   # lineage-coloured element (lineage and polity overlays, the population-per-group plot, legends).
   lineage_colors: ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"]
@@ -848,6 +847,7 @@ viz:                          # browser UI only; no effect on the simulation
   inspector_symbols: 5        # polity inspector: heaviest symbols shown, events per record, origin records
   inspector_events: 4
   inspector_origins: 12
+  inspector_file: inspector.yaml  # the inspector's words (relative to this file)
 
 render:                       # static PNG maps only; no effect on the simulation
   dpi: 110
@@ -869,3 +869,19 @@ reports:                      # analysis reports only (analysis/); no effect on 
   origins_until_year: 100     # myths report "Origins" and the narrator: records descending from events in years 0 to this
   narrator_file: narrator.yaml  # analysis/narrator.py: name syllables, technique phrases, templates (relative to this file)
   sample_names: 20            # narrator: settlement names shown per people
+
+chronicle:                    # the browser chronicle (deluge/data/chronicle.py); no effect on the simulation
+  # Which events are told one by one. Every rule reads only an event's action code, the kinds and
+  # ids of its actors and its numbers; every other event is counted in its generation's summary.
+  generation_years: 25        # routine events are summed per this many years
+  death_share: 0.05           # share_actions: told when magnitude / the smallest population among the
+                              # polities of its actors (when logged) is at least this
+  page_entries: 200           # entries shown at first, and added by each "show older"
+  polity_actions: [founded, died, joined]  # told when the first actor is a polity: founded, ended, united
+  capital_actions: [lost]     # always told (a polity losing its capital)
+  share_actions: [fought, starved, died, took]  # battles, famines, settlements lost, settlements taken
+  teachers_actions: [arrived, taught, gave, departed]  # told when the first actor is the teachers and the
+  teachers_min_magnitude: 1.0 # magnitude is at least this (a teaching contact that passed on nothing is summed)
+  always_actions: [built]     # always told (monuments)
+  first_actions: [learned, taught]  # techniques among their actors: told the first time anywhere and per lineage
+  crossing_actions: [crossed] # told the first time a lineage reaches another landmass, and per sea tier anywhere

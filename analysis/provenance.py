@@ -9,27 +9,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from deluge.agents.teachers import ARTIFACT_KINDS
-from deluge.data.events import decode
+from deluge.naming import entity_detail  # noqa: F401  (re-exported for the reports)
 from deluge.systems.memory import OPS
-from deluge.world.worlddata import MINERALS
-
-
-def entity_detail(model, eid: int) -> tuple[str, str, int]:
-    """(kind, what it is by its registry name, a cell or -1) for an entity: a technique's name in
-    the knowledge graph, a technology's or an artifact's kind, a deposit's mineral and cell;
-    for the other kinds the name is empty."""
-    kind, i = decode(eid)
-    if kind == "technique":
-        return kind, model.knowledge.names[i], -1
-    if kind == "technology":
-        return kind, model.config.teachers.technologies[i], -1
-    if kind == "artifact":
-        return kind, ARTIFACT_KINDS[model.teachers_state.kind[i]], -1
-    if kind == "deposit":
-        cell, mineral = divmod(i, len(MINERALS))
-        return kind, MINERALS[mineral], cell
-    return kind, "", -1
 
 
 class History:

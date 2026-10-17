@@ -239,25 +239,35 @@ def test_every_event_is_complete_and_the_chronicle_renders(early, tmp_path):
         assert len(r["actors"]) >= 1 and all(decode(a)[0] in ENTITY_KINDS for a in r["actors"])
         assert -1 <= r["place"] < n_cells
         assert np.isfinite(r["magnitude"])
-    every = chronicle.lines(early, len(log))
-    assert len(every) == len(log) and all(s.startswith("Year ") for s in every)
-    years = [int(s.split(":")[0].split()[1]) for s in every]
-    assert years == sorted(years, reverse=True)  # newest first
+    name = chronicle.Namer(early)
+    told = [chronicle.line(log.record(i), name) for i in range(len(log))]  # every event can be told
+    assert all(s.startswith("In ") and s.endswith(".") for s in told)
+    every = chronicle.lines(early, 10 ** 6)
+    assert every and len(every) <= len(log)
+    c_name = name.sp.people(2)
     only_c = chronicle.lines(early, 50, groups={2})
-    assert all("group C" in s for s in only_c)
-    only_taught = chronicle.lines(early, 50, actions={"taught"})
-    assert only_taught and all(" taught " in s for s in only_taught)
+    assert only_c and all(c_name in s or "the " in s for s in only_c)
     log.write(tmp_path / "events.parquet")
     df = pd.read_parquet(tmp_path / "events.parquet")
-    assert list(df.columns) == ["year", "action", "actors", "place", "magnitude", "link", "people"]
+    assert list(df.columns) == ["year", "action", "actors", "place", "magnitude", "link", "people", "polity_people",
+                                "origin"]
     assert len(df) == len(log)
 
 
 def test_chronicle_has_no_story_vocabulary():
-    """Templates describe what the sim did, nothing more (spec section 11)."""
-    text = " ".join(chronicle.TEMPLATES.values()).lower() + " ".join(chronicle.MAGNITUDE.values()).lower()
+    """The chronicle's words describe what the sim did, nothing more (spec section 11)."""
+    from pathlib import Path
+
+    import yaml
+
+    from deluge.config import DEFAULT_CONFIG_PATH
+
+    path = Path(DEFAULT_CONFIG_PATH).parent
+    data = yaml.safe_load((path / "narrator.yaml").read_text(encoding="utf-8"))
+    words = yaml.safe_load((path / "inspector.yaml").read_text(encoding="utf-8"))
+    text = str(data["chronicle"]) + str(data["summaries"]) + str(words)
     for word in ("god", "flood", "hero", "myth", "legend", "sacred", "divine", "deluge", "founder"):
-        assert word not in text, word
+        assert word not in text.lower(), word
 
 
 def test_event_threshold(cfg):
@@ -268,26 +278,29 @@ def test_event_threshold(cfg):
     assert len(log) == 1
 
 
-def test_chronicle_view_keeps_every_event_and_pages(early):
-    """The view covers the whole log; pages, year range, group, type and text filters
-    select from it; the full text has one line per event, oldest first."""
+def test_chronicle_accounts_for_every_event_and_pages(early):
+    """Every event of the generations that are over is either told or counted in a summary;
+    entries are in time order; the view shows the newest first and grows on demand."""
     view = chronicle.Chronicle(early)
+    view.sync()
     n = len(early.events)
-    everything = view.select()
-    assert len(everything) == len(view) == n
-    size = 7
-    pages = [view.page(everything, p, size) for p in range(view.pages(everything, size))]
-    assert sum(len(p) for p in pages) == n and all(len(p) == size for p in pages[:-1])
-    assert pages[0][0] == view.line(n - 1)  # newest first
     years = np.asarray(early.events.year)
-    sel = view.select(year_min=60, year_max=120)
-    assert len(sel) == ((years >= 60) & (years <= 120)).sum()
-    assert all(60 <= early.events.year[i] <= 120 for i in sel)
+    over = view.emitted_gen * early.config.chronicle.generation_years
+    told = [e["event"] for e in view.entries if e["event"] >= 0]
+    counted = sum(it[3] for e in view.entries if e["event"] < 0 for it in e["items"])
+    told_over = sum(1 for i in told if years[i] < over)
+    assert len(set(told)) == len(told) and told_over + counted == (years < over).sum()
+    keys = [(e["year"] if e["event"] >= 0 else e["last"]) for e in view.entries]
+    assert keys == sorted(keys)
+    everything = view.select()
+    first = view.latest(everything, 7)
+    assert len(first) == min(7, len(everything)) and first[0] == view.text(view.entries[everything[-1]])
+    more = view.latest(everything, 14)
+    assert more[:7] == first
+    assert n == view.n
     hits = view.select(text="TAUGHT")
-    assert len(hits) and all(" taught " in view.line(i) for i in hits)
+    assert len(hits) and all(" taught " in view.text(view.entries[k]) for k in hits)
     assert len(view.select(text="no such words anywhere")) == 0
-    assert len(view.select(groups=set(), actions=None)) == 0
-    text = view.text()
-    rows = text.splitlines()
-    assert len(rows) == n and rows[0] == view.line(0) and rows[-1] == view.line(n - 1)
+    rows = [r for r in view.markdown().splitlines() if r.startswith("- ")]
+    assert len(rows) == len(view) and rows[0] == "- " + view.text(view.entries[0])
     assert len(early.events) == n  # reading never drops events

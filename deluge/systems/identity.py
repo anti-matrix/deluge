@@ -16,7 +16,7 @@ capability.
 - Year 0 (``draw_founders``): each founding people gets its own mean per appearance trait
   (uniform in [founder_mean_min, founder_mean_max], redrawn until every two peoples are at
   least ``founder_min_distance`` apart), a small variance, and an independent dialect
-  vector. The teachers get their own appearance draw (fixed by config if given); they
+  vector (kept as it was at year 0 for naming only, ``founding_dialect``). The teachers get their own appearance draw (fixed by config if given); they
   leave no settlements, so it is only kept for the memory records of later rounds.
 - Inheritance (``inherit``): a daughter settlement copies its parent's markers.
 - Mixing: when a band joins another, or settlers from the conqueror move into a
@@ -63,12 +63,21 @@ def draw_founders(model, founder_sids: list[int]) -> None:
         t.appearance_mean[sid] = mean
         t.appearance_var[sid] = a.founder_variance
         t.dialect[sid] = rng.normal(0.0, a.dialect_founder_sigma, size=a.dialect_dims)
+    # Each founding people's dialect at year 0, kept for naming only (``founding_dialect``).
+    model.founding_dialects = t.dialect[founder_sids].copy()
     if a.teachers_appearance:
         if len(a.teachers_appearance) != k:
             raise ValueError(f"ancestry.teachers_appearance needs {k} values")
         model.teachers_appearance = np.array(a.teachers_appearance, dtype=float)
     else:
         model.teachers_appearance = rng.uniform(a.founder_mean_min, a.founder_mean_max, size=k)
+
+
+def founding_dialect(model, lineage: int) -> np.ndarray:
+    """A founding people's dialect at year 0 (``draw_founders``); zeros for -1 (no people).
+    Read only by the names of things (``deluge/naming.py``), never by the simulation."""
+    d = model.founding_dialects
+    return d[lineage].copy() if lineage >= 0 else np.zeros(d.shape[1])
 
 
 def pair_distances(model, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

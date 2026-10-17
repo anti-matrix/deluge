@@ -197,7 +197,8 @@ def join_kin(model, sid: int, host: int) -> None:
     polity (it may be another polity of the same founding group)."""
     t = model.settlements
     pop = float(t.population[sid])
-    crossed = sea_cells_crossed(model, sid, int(t.cell[sid]), int(t.cell[host]))
+    origin = int(t.cell[sid])
+    crossed = sea_cells_crossed(model, sid, origin, int(t.cell[host]))
     identity.blend(model, host, sid)
     t.population[host] += pop
     t.peak_population[host] = max(t.peak_population[host], t.population[host])
@@ -206,7 +207,7 @@ def join_kin(model, sid: int, host: int) -> None:
     t.knows[host] |= t.knows[sid]
     t.practised[host] |= t.practised[sid]
     i = model.log_event("joined", [("settlement", sid), ("settlement", host)], int(t.cell[host]), pop)
-    model.log_crossing(crossed, [("settlement", sid), ("settlement", host)], int(t.cell[host]), i)
+    model.log_crossing(crossed, [("settlement", sid), ("settlement", host)], int(t.cell[host]), i, origin)
     model.end_settlement(sid, "joined", host=host)
 
 
@@ -215,11 +216,12 @@ def move(model, sid: int, cell: int, core: int = -1) -> None:
     when the core migrates)."""
     t = model.settlements
     pop = float(t.population[sid])
-    crossed = sea_cells_crossed(model, sid, int(t.cell[sid]), cell)
+    origin = int(t.cell[sid])
+    crossed = sea_cells_crossed(model, sid, origin, cell)
     model.move_settlement(sid, cell)
     model.stats["moves"] += 1
     i = model.log_event("moved", [("settlement", sid)], cell, pop)
-    model.log_crossing(crossed, [("settlement", sid)] + ([("polity", core)] if core >= 0 else []), cell, i)
+    model.log_crossing(crossed, [("settlement", sid)] + ([("polity", core)] if core >= 0 else []), cell, i, origin)
 
 
 def relocate_drowned(model) -> None:
@@ -361,4 +363,4 @@ def migrate(model) -> None:
                                        shares=t.shares[sid].copy(), practised=t.practised[sid].copy())
         model.stats["foundings"] += 1
         i = model.log_event("founded", [("settlement", child), ("settlement", sid)], cell, leaving)
-        model.log_crossing(crossed, [("settlement", child), ("settlement", sid)], cell, i)
+        model.log_crossing(crossed, [("settlement", child), ("settlement", sid)], cell, i, int(t.cell[sid]))

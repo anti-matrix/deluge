@@ -664,7 +664,8 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
             link = before
     if sea > 0:
         model.stats["sea_battles"] += 1
-        model.log_crossing(sea, [("polity", a), ("settlement", src), ("settlement", x), ("polity", b)], cell, link)
+        model.log_crossing(sea, [("polity", a), ("settlement", src), ("settlement", x), ("polity", b)], cell, link,
+                           int(t.cell[src]))
     return won
 
 

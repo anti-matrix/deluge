@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     crossings = []
     orig_log_crossing = m.log_crossing
 
-    def log_crossing(sea_cells, actors, place, link):
+    def log_crossing(sea_cells, actors, place, link, origin_cell=-1):
         if sea_cells > 0:
             kinds = [k for k, _ in actors]
             if kinds[0] == "polity":
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             crossings.append({"year": m.year, "type": kind, "sea_cells": int(sea_cells),
                               "needed": needed_tier(int(sea_cells)), "held": held_tier(int(src)),
                               "other_landmass": bool(a >= 0 and b >= 0 and a != b)})
-        orig_log_crossing(sea_cells, actors, place, link)
+        orig_log_crossing(sea_cells, actors, place, link, origin_cell)
 
     m.log_crossing = log_crossing
 

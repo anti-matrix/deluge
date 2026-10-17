@@ -1,0 +1,41 @@
+# Words of the polity inspector (deluge/viz/panels.py, viz.inspector_file): plain language for the
+# numbers it shows. Browser UI only; no effect on the simulation.
+
+# How strong a value in 0..1 is: [upper bound, word], the first bound above the value applies.
+levels: [[0.2, "hardly"], [0.4, "a little"], [0.6, "somewhat"], [0.8, "strongly"], [1.01, "very strongly"]]
+
+# Each culture trait between the words for its low (0) and high (1) ends; "between" in the middle.
+culture:
+  hierarchy: [equal, ranked]
+  militarism: [peaceable, warlike]
+  openness: [closed to others, open to others]
+  kin_vs_civic: [held together by kin, held together by common law]
+  ritual_investment: [spare in ceremony, given to ceremony]
+  mobility_preference: [settled, on the move]
+culture_middle: 0.15          # within this of 0.5: "between {low} and {high}"
+between: "between {low} and {high}"
+
+# Each brain output: what this year's decision leans toward.
+outputs:
+  expand: founding new settlements
+  aggression: going to war
+  campaign: conquest rather than raids
+  trade_openness: trade
+  alliance_seeking: seeking allies
+  tribute: taking tribute
+  monuments: building monuments
+  farming: turning to farming
+  herding: turning to herding
+  newcomers: taking in newcomers
+  core_migration: moving their heartland
+
+# State in words, by level of the value (cohesion and pressure in 0..1).
+cohesion: [loosely held together, tightly held together]
+pressure: [at ease, under strain]
+
+# How a polity ended (polity END_CAUSES); {other}: the polity it went to.
+ended:
+  extinct: "died out in year {year}"
+  fragmented: "broke apart into its regions in year {year}"
+  merged: "was united with {other} in year {year}"
+  conquered: "was conquered by {other} in year {year}"

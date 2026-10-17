@@ -290,8 +290,9 @@ def test_tribute_elites_and_monuments():
     built = [r for r in events(m, "built") if r["actors"][0] == entity("polity", pid)]
     assert built and m.monuments.maintained[m.monuments.builder == pid].any()
     assert P.prestige[pid] > 0
-    line = chronicle.line(built[0], chronicle.Namer(m))
-    assert f"polity {pid} (group A) built monument" in line and "rations of labour" in line
+    name = chronicle.Namer(m)
+    line = chronicle.line(built[0], name)
+    assert f"{name(entity('polity', pid))} built a monument" in line
 
 
 def test_no_monuments_without_megalithic_construction():
@@ -357,10 +358,10 @@ def test_polity_layer_and_chronicle():
     for c in claimed[:200].tolist():
         members = ids[t.polity[ids] == layer[c] - 1]
         assert m.geom.hex_distance(t.cell[members], c).min() <= r
-    text = chronicle.Chronicle(m).text()
-    assert "was founded from polity" in text
-    sel = chronicle.Chronicle(m).select(groups={0})
-    assert len(sel) > 0
+    view = chronicle.Chronicle(m)
+    view.sync()
+    assert " people (A) were founded from " in view.markdown()  # a polity founded: always told
+    assert len(view.select(groups={0})) > 0
     df = m.datacollector.get_model_vars_dataframe()
     assert {"n_polities", "mean_cohesion", "secessions", "fragmentations", "mergers"} <= set(df.columns)
     assert df["n_polities"].iloc[-1] == len(P.alive_ids())

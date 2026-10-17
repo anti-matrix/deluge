@@ -329,21 +329,29 @@ def cell_snapshot(model) -> dict[str, np.ndarray]:
 
 
 def tooltip(model, snap: dict[str, np.ndarray], cell: int) -> str:
-    """HTML hover text of ``cell``: terrain, elevation, settlement, polity, lineage, population."""
-    names = model.lineages.names
+    """HTML hover text of ``cell``: its name, terrain, elevation, settlement, polity, lineage,
+    population (names as everywhere, ``deluge/naming.py``)."""
+    import html
+
+    from deluge.data.events import entity
+    from deluge.naming import Speaker
+
+    say = Speaker(model, tags=True)
     x, y = model.geom.xy(cell)
     terrain = "sea" if snap["sea"][cell] else Terrain(int(model.world.terrain.ravel()[cell])).name.lower()
-    lines = [f"<b>cell ({x}, {y})</b>: {terrain}, elevation {model.elevation_flat[cell]:,.0f} m"]
+    lines = [f"<b>{html.escape(say.place(cell))}</b> (cell {x}, {y}): {terrain}, "
+             f"elevation {model.elevation_flat[cell]:,.0f} m"]
     sid = int(snap["settlement"][cell])
     if sid >= 0:
         sp, g = int(snap["settlement_polity"][cell]), int(snap["lineage"][cell])
-        lines.append(f"settlement {sid} of polity {sp}, group {names[g]}")
+        lines.append(f"{html.escape(say.entity(entity('settlement', sid)))}, of "
+                     f"{html.escape(say.entity(entity('polity', sp)))}, a people of {html.escape(say.people(g))}")
         lines.append(f"population {snap['population'][cell]:,.0f}")
     else:
         lines.append("no settlement")
     p = int(snap["polity"][cell])
     if p >= 0 and (sid < 0 or p != int(snap["settlement_polity"][cell])):
-        lines.append(f"claimed by polity {p}, group {names[int(snap['polity_lineage'][cell])]}")
+        lines.append(f"claimed by {html.escape(say.entity(entity('polity', p)))}")
     elif p < 0 and sid < 0:
         lines.append("unclaimed")
     return "<br>".join(lines)
@@ -357,9 +365,9 @@ def legend_html(vcfg: VizConfig, layer: str, group_names, technique: str | None 
     palette = lineage_palette(vcfg)
     note = ""
     if layer == "lineage":
-        items = [(f"group {n}", c) for n, c in zip(group_names, palette)]
+        items = [(n, c) for n, c in zip(group_names, palette)]
     elif layer == "polity":
-        items = [(f"polities of group {n}", c) for n, c in zip(group_names, palette)]
+        items = [(f"polities of {n}", c) for n, c in zip(group_names, palette)]
         note = ("Darker: more of the shade-by variable. Thick lines: borders between founding groups; thin lines: "
                 "between polities of one group. Enclave cells have no outline of their own.")
     elif layer == "resources":
@@ -384,6 +392,14 @@ def legend_html(vcfg: VizConfig, layer: str, group_names, technique: str | None 
     return f'<div class="legend">{rows}{note}</div>'
 
 
+def people_names(model) -> list[str]:
+    """Each founding lineage as the UI names it, e.g. "the Keraithaa (B)" (``deluge/naming.py``)."""
+    from deluge.naming import Speaker
+
+    say = Speaker(model, tags=True)
+    return [say.people(g) for g in range(len(model.lineages.names))]
+
+
 def shown_year(model) -> int:
     """The year the map shows: the last simulated year (year 0 before the first step,
     when the model already holds year 0's sea)."""
@@ -402,8 +418,8 @@ def status_text(model) -> str:
         f"Land cells: {int(model.is_sea.size - model.is_sea.sum()):,}",
         f"Temperature anomaly: {model.temp_anomaly:+.2f} °C",
         f"Population: {model.population:,.0f} in {model.n_settlements:,} settlements",
-        "By group: " + ", ".join(f"{name} {p:,.0f}" for name, p in
-                                 zip(model.lineages.names, model.lineage_population)),
+        "By people: " + ", ".join(f"{name} {p:,.0f}" for name, p in
+                                  zip(people_names(model), model.lineage_population)),
         f"By mode: {modes}",
         f"Techniques per settlement: {model.techniques_known:.1f}; teachers: {teachers}",
         f"Polities: {model.n_polities:,}; mean cohesion {model.mean_cohesion:.2f}; largest "

@@ -47,7 +47,7 @@ def test_run_script_acceptance(tmp_path, small_cfg):
     assert meta_a["config_hash"] == meta_b["config_hash"]
 
     assert len(ev_a) > 0 and set(ev_a.columns) == {"year", "action", "actors", "place", "magnitude",
-                                                        "link", "people"}
+                                                        "link", "people", "polity_people", "origin"}
     entities = pd.read_parquet(tmp_path / "a" / "entities.parquet")
     assert set(entities.entity) == {a for actors in ev_a.actors for a in actors}
     brains = pd.read_parquet(tmp_path / "a" / "brains" / "brains.parquet")

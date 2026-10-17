@@ -1,6 +1,7 @@
 """Browser UI entry point (spec section 12).
 
     solara run deluge/viz/app.py
+    DELUGE_CHECKPOINT=runs/<run>/checkpoints/year_04000.pkl solara run deluge/viz/app.py   # open a checkpoint
 
 The map is a canvas drawn in the browser (``viz/hexmap.py``): zoom with the wheel or the
 buttons, pan by dragging, hover a cell for its terrain, elevation, settlement, polity,
@@ -10,7 +11,8 @@ density, subsistence mode, cohesion, a chosen technique's spread, founding group
 deposits, techniques known; overlays: capitals, monuments, the teachers' path during the
 contact phase, active wars as arrows between capitals (dashed across the sea). Side panels:
 population per founding group, polity count, sea level and subsistence modes over time, a
-lineage tree snapshot, the polity inspector and the chronicle of the whole event log.
+lineage tree snapshot (polity names on hover), the polity inspector and the chronicle, every
+entity named as in the reports (``deluge/naming.py``).
 
 Speed: while playing, a worker thread steps the model ``years per frame`` years at a time
 and, between steps, builds the next frame (``Frame``: the map's colours, borders and marks,
@@ -24,6 +26,9 @@ call a headless run makes, so a UI run and a headless run with the same seeds ag
 
 from __future__ import annotations
 
+import html
+import os
+import pickle
 import threading
 import time
 from dataclasses import dataclass, field
@@ -34,7 +39,6 @@ import solara.lab
 from deluge.agents.settlement import MODES
 from deluge.config import load_config
 from deluge.data import chronicle
-from deluge.data.events import ACTIONS
 from deluge.model import DelugeModel
 from deluge.viz import panels, portrayal
 from deluge.viz.hexmap import HexMap, b64
@@ -141,9 +145,16 @@ _initial: list = []
 
 def initial_model() -> DelugeModel:
     """The model the page opens with, built on first use (not at import, so importing this
-    module stays cheap)."""
+    module stays cheap): a new one, or the model of the checkpoint (``scripts/run.py``) named by
+    the environment variable ``DELUGE_CHECKPOINT``."""
     if not _initial:
-        _initial.append(DelugeModel(world_seed=CONFIG.run.world_seed, history_seed=CONFIG.run.history_seed))
+        path = os.environ.get("DELUGE_CHECKPOINT")
+        if path:
+            with open(path, "rb") as f:
+                state = pickle.load(f)
+            _initial.append(state["model"] if isinstance(state, dict) else state)
+        else:
+            _initial.append(DelugeModel(world_seed=CONFIG.run.world_seed, history_seed=CONFIG.run.history_seed))
     return _initial[0]
 
 
@@ -182,7 +193,7 @@ def LayerSelect(view: solara.Reactive[View], refresh):
         solara.Select("Shade by", values=list(VIZ.polity_shade_by), value=v.shade_by, on_value=setter("shade_by"))
     if v.layer == "technique":
         solara.Select("Technique", values=techniques, value=v.technique, on_value=setter("technique"))
-    legend = portrayal.legend_html(VIZ, v.layer, CONFIG.founders.names, v.technique)
+    legend = portrayal.legend_html(VIZ, v.layer, portrayal.people_names(initial_model()), v.technique)
     if legend:
         solara.HTML(tag="div", unsafe_innerHTML=legend)
     solara.HTML(tag="div", unsafe_innerHTML=(
@@ -206,46 +217,63 @@ def SeedInputs(seeds: solara.Reactive[dict]):
                     on_value=setter("history_seed"))
 
 
-@solara.component
-def Chronicle(model: DelugeModel, version: int):
-    """The whole event log, a page at a time (newest first), filtered by group, event
-    type, year range and text; the full chronicle downloads as a text file. Refreshed with
-    the side panels, not every frame."""
-    view = solara.use_memo(lambda: chronicle.Chronicle(model), dependencies=[model])
-    names = list(model.lineages.names)
-    groups, set_groups = solara.use_state(names)
-    actions, set_actions = solara.use_state(list(ACTIONS))
-    year_min, set_year_min = solara.use_state(None)
-    year_max, set_year_max = solara.use_state(None)
-    text, set_text = solara.use_state("")
-    page, set_page = solara.use_state(0)
+def chronicle_panel(session: Session, view: chronicle.Chronicle, peoples: list[str], chosen_peoples,
+                    text: str, limit: int) -> tuple[str, int, int]:
+    """What the chronicle panel shows: (HTML of the newest ``limit`` matching entries, entries
+    shown, entries matching). Reads the events logged since the last call first."""
+    with session.lock:
+        view.sync()
+    groups = {peoples.index(g) for g in chosen_peoples if g in peoples}
+    chosen = view.select(groups, text or "")
+    lines = view.latest(chosen, limit)
+    body = "".join(f'<div style="margin:0 0 3px 0">{html.escape(s)}</div>' for s in lines) or "<i>Nothing yet.</i>"
+    return body, len(lines), len(chosen)
 
-    def reset_page(setter):
+
+@solara.component
+def Chronicle(session: Session, version: int):
+    """The chronicle (``deluge/data/chronicle.py``): important events in the narrator's
+    language, routine ones summed per generation, newest first: the latest
+    ``chronicle.page_entries``, more on demand. Filtered by people and text; downloads the
+    full raw log (CSV) and the whole chronicle (markdown). Refreshed with the side panels."""
+    model = session.model
+    view = solara.use_memo(lambda: chronicle.Chronicle(model), dependencies=[model])
+    peoples = solara.use_memo(lambda: portrayal.people_names(model), dependencies=[model])
+    chosen_peoples, set_peoples = solara.use_state(peoples)
+    text, set_text = solara.use_state("")
+    limit, set_limit = solara.use_state(CONFIG.chronicle.page_entries)
+
+    def reset(setter):
         def on_value(value):
             setter(value)
-            set_page(0)
+            set_limit(CONFIG.chronicle.page_entries)
         return on_value
 
-    solara.SelectMultiple("Groups", values=groups, all_values=names, on_value=reset_page(set_groups))
-    solara.SelectMultiple("Event types", values=actions, all_values=list(ACTIONS), on_value=reset_page(set_actions))
+    def locked(make):
+        """A download: read the new events under the lock, write the file outside it (the
+        chronicle and the log are only appended to, so playing goes on meanwhile)."""
+        def data():
+            with session.lock:
+                view.sync()
+            return make()
+        return data
+
+    body, shown, total = solara.use_memo(
+        lambda: chronicle_panel(session, view, peoples, chosen_peoples, text, limit),
+        dependencies=[version, tuple(chosen_peoples), text, limit])
     with solara.Row():
-        solara.InputInt("From year", value=year_min, optional=True, clearable=True, on_value=reset_page(set_year_min))
-        solara.InputInt("To year", value=year_max, optional=True, clearable=True, on_value=reset_page(set_year_max))
-        solara.InputText("Search", value=text, on_value=reset_page(set_text), clearable=True)
-    chosen = solara.use_memo(lambda: view.select(groups={names.index(g) for g in groups}, actions=set(actions),
-                                                 year_min=year_min, year_max=year_max, text=text or ""),
-                             dependencies=[version, tuple(groups), tuple(actions), year_min, year_max, text])
-    pages = view.pages(chosen, VIZ.chronicle_lines)
-    shown_page = min(page, pages - 1)
+        solara.SelectMultiple("Peoples", values=chosen_peoples, all_values=peoples, on_value=reset(set_peoples))
+        solara.InputText("Search", value=text, on_value=reset(set_text), clearable=True)
     with solara.Row():
-        solara.Button("Newer", on_click=lambda: set_page(max(shown_page - 1, 0)), disabled=shown_page == 0)
-        solara.Button("Older", on_click=lambda: set_page(shown_page + 1), disabled=shown_page >= pages - 1)
-        solara.Text(f"Page {shown_page + 1:,} of {pages:,}: {len(chosen):,} events")
-        solara.FileDownload(lambda: view.text(), filename="chronicle.txt", label="Download whole chronicle",
-                            mime_type="text/plain")
-    shown = view.page(chosen, shown_page, VIZ.chronicle_lines)
-    with solara.Div(style={"max-height": "420px", "overflow-y": "auto"}):
-        solara.Markdown("  \n".join(shown) if shown else "No events.")
+        solara.Text(f"Latest {shown:,} of {total:,} entries")
+        solara.Button("Show older", on_click=lambda: set_limit(limit + CONFIG.chronicle.page_entries),
+                      disabled=shown >= total)
+        solara.FileDownload(locked(lambda: chronicle.log_csv(model)), filename="events.csv",
+                            label="Download full log", mime_type="text/csv")
+        solara.FileDownload(locked(view.markdown), filename="chronicle.md", label="Download chronicle",
+                            mime_type="text/markdown")
+    with solara.Div(style={"max-height": "420px", "overflow-y": "auto", "font-size": "13px"}):
+        solara.HTML(tag="div", unsafe_innerHTML=body)
 
 
 @solara.component
@@ -355,4 +383,4 @@ def Page():
                 with solara.Card("Polity inspector"):
                     Inspector(s, selected_pid.value, f.panels_version if not playing.value else -1)
             with solara.Card("Chronicle"):
-                Chronicle(model, f.panels_version)
+                Chronicle(s, f.panels_version)

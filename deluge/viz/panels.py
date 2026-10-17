@@ -4,10 +4,13 @@
   thinned to at most ``viz.chart_points`` points per series.
 - ``lineage_tree``: a snapshot of the polity descent tree: every living polity and its
   ancestors, one horizontal line per polity from its founding to its end (or now), joined to
-  its parent at the year it split off, coloured by founding group.
-- ``inspector``: one polity: culture vector, current brain outputs, the heaviest symbols of its
-  memory store with the records and original events behind them, and the narrator's "What
-  they remember" for its origin records (``analysis/narrator.py``).
+  its parent at the year it split off, coloured by founding group; hovering a branch shows the
+  polity's name and years.
+- ``inspector``: one polity, in the narrator's language (``deluge/naming.py``, words in
+  ``viz.inspector_file``): who they are, their culture and this year's brain outputs in words,
+  and "What they remember": for each of the heaviest symbols of its store, the narrator's
+  sentence for its strongest record, with the raw record (fields, provenance, transformation
+  log) under a collapsed "details"; then the same for its origin records.
 
 Everything here only reads model state.
 """
@@ -16,12 +19,15 @@ from __future__ import annotations
 
 import html
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from deluge.brains.network import OUTPUTS
-from deluge.config import VizConfig
+from deluge.config import DEFAULT_CONFIG_PATH, VizConfig
+from deluge.naming import Speaker
 from deluge.viz.portrayal import lineage_palette
 
 REPO = Path(__file__).resolve().parents[2]
@@ -100,15 +106,24 @@ def lineage_tree(model, vcfg: VizConfig) -> str:
     w, h, pad = vcfg.tree_width_px, min(vcfg.tree_max_height_px, max(120, rows * vcfg.tree_row_px + 30)), 30
     sx = lambda y: pad + (w - pad - 10) * y / max(now, 1)  # noqa: E731
     sy = lambda r: 20 + (h - 30) * r / rows  # noqa: E731
+    from deluge.data.events import entity
+
     palette = lineage_palette(vcfg)
+    sp = Speaker(model, tags=True)
     parts = [f'<svg width="{w}" height="{h}" style="background:#fff;border:1px solid #ddd">',
              f'<text x="{pad}" y="12" font-size="11" font-weight="bold">Polity descent: {len(alive)} living, '
              f'{len(nodes)} with ancestors (year {max(now - 1, 0):,})</text>']
     for p, r in order.items():
         end = int(P.ended[p]) if P.ended[p] >= 0 else now
         c = palette[int(P.lineage[p])]
-        parts.append(f'<line x1="{sx(P.founded[p]):.1f}" y1="{sy(r):.1f}" x2="{sx(end):.1f}" y2="{sy(r):.1f}" '
-                     f'stroke="{c}" stroke-width="{1.6 if P.ended[p] < 0 else 0.8}"/>')
+        label = sp.entity(entity("polity", p))
+        years = f"{int(P.founded[p]):,} to {int(P.ended[p]):,}" if P.ended[p] >= 0 else f"{int(P.founded[p]):,} on"
+        x1, x2, y = sx(P.founded[p]), sx(end), sy(r)
+        parts.append(f'<g><title>{html.escape(label[:1].upper() + label[1:])}, years {years}</title>'
+                     f'<line x1="{x1:.1f}" y1="{y:.1f}" x2="{x2:.1f}" y2="{y:.1f}" '
+                     f'stroke="{c}" stroke-width="{1.6 if P.ended[p] < 0 else 0.8}"/>'
+                     f'<line x1="{x1:.1f}" y1="{y:.1f}" x2="{max(x2, x1 + 3):.1f}" y2="{y:.1f}" '
+                     f'stroke="transparent" stroke-width="4"/></g>')
         parent = int(P.parent[p])
         if parent in order:
             parts.append(f'<line x1="{sx(P.founded[p]):.1f}" y1="{sy(order[parent]):.1f}" '
@@ -126,56 +141,124 @@ def _bars(labels, values, color: str) -> str:
     return f"<div>{rows}</div>"
 
 
+@lru_cache(maxsize=4)
+def _load_words(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def inspector_words(vcfg: VizConfig) -> dict:
+    """The inspector's plain-language words (``viz.inspector_file``)."""
+    return _load_words(str(Path(DEFAULT_CONFIG_PATH).parent / vcfg.inspector_file))
+
+
+def level_word(words: dict, v: float) -> str:
+    for bound, word in words["levels"]:
+        if v < bound:
+            return word
+    return words["levels"][-1][1]
+
+
+def trait_word(words: dict, trait: str, v: float) -> str:
+    low, high = words["culture"][trait]
+    if abs(v - 0.5) <= words["culture_middle"]:
+        return words["between"].format(low=low, high=high)
+    return high if v > 0.5 else low
+
+
+def _worded_bars(rows, color: str) -> str:
+    """Rows of (label, word, value 0..1) as labelled bars."""
+    out = "".join(f'<div style="display:flex;align-items:center;gap:6px;font-size:12px">'
+                  f'<span style="width:14em">{html.escape(label)}</span>'
+                  f'<span style="width:12em;color:#444">{html.escape(word)}</span>'
+                  f'<span style="display:inline-block;height:10px;width:{80 * max(min(v, 1.0), 0.0):.0f}px;'
+                  f'background:{color}"></span><span style="color:#777">{v:.2f}</span></div>'
+                  for label, word, v in rows)
+    return f"<div>{out}</div>"
+
+
+def _details(lines: list[str]) -> str:
+    return ('<details style="margin:0 0 6px 1em"><summary style="font-size:11px;color:#666;cursor:pointer">'
+            'details</summary><pre style="white-space:pre-wrap;font-size:11px;margin:2px 0">'
+            + html.escape("\n".join(lines)) + "</pre></details>")
+
+
 def inspector(model, pid: int, vcfg: VizConfig, n_symbols: int | None = None) -> str:
-    """HTML for polity ``pid``."""
+    """HTML for polity ``pid``, in the narrator's language (``deluge/naming.py``)."""
     if REPO not in map(Path, sys.path):
         sys.path.insert(0, str(REPO))
     from analysis import myths, narrator
+    from deluge.agents.polity import END_CAUSES
     from deluge.data.chronicle import Namer
+    from deluge.data.events import entity
 
     P = model.polities
     if pid < 0 or pid >= P.n:
         return "<i>Click a claimed cell to inspect its polity.</i>"
-    names = model.lineages.names
+    words = inspector_words(vcfg)
+    sp = Speaker(model, tags=True)
+    plain = Speaker(model)
     g = int(P.lineage[pid])
     color = lineage_palette(vcfg)[g]
-    status = "living" if P.ended[pid] < 0 else f"ended in year {int(P.ended[pid])}"
-    out = [f'<h3 style="margin:0">Polity {pid} <span style="color:{color}">(group {names[g]})</span></h3>',
-           f"<div>Founded year {int(P.founded[pid])}, parent {int(P.parent[pid])}; {status}; "
-           f"{int(P.n_settlements[pid])} settlements, {P.population[pid]:,.0f} people; cohesion "
-           f"{P.cohesion[pid]:.2f}, pressure {P.pressure[pid]:.2f}, elite ratio {P.elite_ratio[pid]:.3f}</div>",
-           "<h4>Culture vector</h4>", _bars(model.config.founders.culture_traits, P.culture[pid], color),
-           "<h4>Brain outputs (this year's decision)</h4>", _bars(OUTPUTS, model.brains.output[pid], "#555")]
+    me = plain.entity(entity("polity", pid))
+    parent = int(P.parent[pid])
+    origin = (f"founded in year {int(P.founded[pid])} from {sp.entity(entity('polity', parent))}" if parent >= 0
+              else f"founded in year {int(P.founded[pid])}, the first polity of its people")
+    if P.ended[pid] < 0:
+        status = "living"
+    else:
+        other = int(P.merged_into[pid])
+        status = words["ended"][END_CAUSES[int(P.end_cause[pid])]].format(
+            year=int(P.ended[pid]), other=sp.entity(entity("polity", other)) if other >= 0 else "")
+    capital = plain.entity(entity("settlement", int(P.capital[pid])))
+    coh, pres = float(P.cohesion[pid]), float(min(P.pressure[pid], 1.0))
+    cw = words["cohesion"][int(coh >= 0.5)]
+    pw = words["pressure"][int(pres >= 0.5)]
+    out = [f'<h3 style="margin:0">{html.escape(me[:1].upper() + me[1:])} '
+           f'<span style="color:{color};font-size:13px">({model.lineages.names[g]})</span></h3>',
+           f"<div>A people of {html.escape(sp.people(g))}; {html.escape(origin)}; {html.escape(status)}. "
+           f"{int(P.n_settlements[pid]):,} settlement{'' if P.n_settlements[pid] == 1 else 's'}, "
+           f"{P.population[pid]:,.0f} people; capital {html.escape(capital)}.</div>",
+           f"<div>{html.escape(cw[:1].upper() + cw[1:])} (cohesion {coh:.2f}); {html.escape(pw)} "
+           f"(pressure {P.pressure[pid]:.2f}); elite ratio {P.elite_ratio[pid]:.3f}.</div>",
+           "<h4>Their ways</h4>",
+           _worded_bars([(tr.replace("_", " "), trait_word(words, tr, float(v)), float(v))
+                         for tr, v in zip(model.config.founders.culture_traits, P.culture[pid])], color),
+           "<h4>What they lean toward this year</h4>",
+           _worded_bars([(words["outputs"][o], level_word(words, float(v)), float(v))
+                         for o, v in zip(OUTPUTS, model.brains.output[pid])], "#555")]
     st = model.memory
     name = Namer(model)
     hist = myths.History(model)
     k = vcfg.inspector_symbols if n_symbols is None else n_symbols
-    out.append("<h4>Heaviest memory symbols and their provenance</h4>")
+    out.append("<h4>What they remember</h4>")
     syms = myths._store_symbols(model, pid)[:k]
     if not syms:
-        out.append("<i>Empty store.</i>")
+        out.append("<i>Nothing: the store is empty.</i>")
     mids = st.stores.get(pid, [])
     for s, w in syms:
-        out.append(f"<div><b>Symbol {s}</b> (weight {w:.2f}): {html.escape(myths.symbol_label(model, name, s))}</div>")
         recs = sorted((st.records[m] for m in mids if s in st.records[m].symbols),
                       key=lambda r: (-r.vividness, r.mem_id))[:1]
         for rec in recs:
-            lines = myths._record(model, name, hist, rec, max_events=vcfg.inspector_events, max_ops=4)
-            out.append('<pre style="white-space:pre-wrap;font-size:11px;margin:2px 0 6px 0">'
-                       + html.escape("\n".join(lines)) + "</pre>")
-    out.append("<h4>What they remember (origin records)</h4>")
+            told = narrator.remembered(sp, narrator.record_fields(rec))["text"]
+            lines = [f"Symbol {s} (weight {w:.2f}): {myths.symbol_label(model, name, s)}"]
+            lines += myths._record(model, name, hist, rec, max_events=vcfg.inspector_events, max_ops=4)
+            out.append(f"<div>{html.escape(told)}</div>" + _details(lines))
+    out.append("<h4>What they remember of the first years</h4>")
     entries = [e for e in narrator.origin_records(model, g, hist) if pid in e["stores"]]
     if not entries:
         out.append(f"<i>No record in this store descends from years 0 to "
                    f"{model.config.reports.origins_until_year}.</i>")
     else:
-        sp = narrator.Speaker(model, g, narrator.people_dialect(model, g), narrator.data_for(model))
         items = []
         for e in entries[: vcfg.inspector_origins]:
-            tag = "(a)" if e["current"] else "(b)"
-            items.append(f"<li>{tag} {html.escape(narrator.remembered(sp, narrator.record_fields(e['record']))['text'])}"
-                         f" <span style='color:#777'>(record #{e['record'].mem_id})</span></li>")
-        out.append("<ul>" + "".join(items) + "</ul>")
+            rec = e["record"]
+            told = narrator.remembered(sp, narrator.record_fields(rec))["text"]
+            happened = [h["text"] for h in narrator.happened(model, sp, rec.provenance)]
+            items.append(f"<li>{html.escape(told)}"
+                         + _details([f"Record #{rec.mem_id} ({'still holds' if e['current'] else 'descends from'} "
+                                     f"those years). What happened:"] + happened) + "</li>")
+        out.append("<ul style='margin:0'>" + "".join(items) + "</ul>")
         if len(entries) > vcfg.inspector_origins:
             out.append(f"<i>... {len(entries) - vcfg.inspector_origins} more.</i>")
     return "".join(out)

@@ -167,7 +167,8 @@ def test_runs_stays_counts_and_agreement(ran):
         assert "from year 6 to 7" in out[1]["text"].lower() and "(two times)" in out[1]["text"] and "3,000 dead" in out[1]["text"]
         assert "in year 9" in out[2]["text"].lower()
     finally:
-        for col in (ev.year, ev.action, ev.actors, ev.place, ev.magnitude, ev.link, ev.people):
+        for col in (ev.year, ev.action, ev.actors, ev.place, ev.magnitude, ev.link, ev.people, ev.polity_people,
+                    ev.origin):
             del col[start:]
     # Identical items are counted; a polity is spoken of as many.
     arts = [entity("artifact", i) for i in range(2)]

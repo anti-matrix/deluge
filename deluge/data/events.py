@@ -27,6 +27,11 @@ Every record is (year, action, actors, place, magnitude):
 - ``link`` is the index of the event this one is part of (-1 for none).
 - ``people`` is, per actor, how many people it had when the event was logged (settlements
   and polities; NaN for other entities). The memory system reads it for salience.
+- ``polity_people`` is, per actor, the people of the polity it is or belongs to (a polity
+  actor, or a settlement actor's polity), last counted when the event was logged; NaN for
+  other entities and for a polity not counted yet. Only the chronicle reads it.
+- ``origin`` is the cell a sea crossing set out from (-1 for every other event). Only the
+  chronicle reads it.
 """
 
 from __future__ import annotations
@@ -72,12 +77,14 @@ class EventLog:
         self.magnitude: list[float] = []
         self.link: list[int] = []
         self.people: list[tuple[float, ...]] = []
+        self.polity_people: list[tuple[float, ...]] = []
+        self.origin: list[int] = []
 
     def __len__(self) -> int:
         return len(self.year)
 
     def log(self, year: int, action: str, actors, place: int, magnitude: float, link: int = -1,
-            people=None) -> bool:
+            people=None, polity_people=None, origin: int = -1) -> bool:
         code = ACTION_CODE[action]
         if magnitude < self.min_magnitude[code]:
             return False
@@ -85,6 +92,9 @@ class EventLog:
         # The columns the chronicle reads first are appended last (``Chronicle._snapshot``).
         self.link.append(int(link))
         self.people.append(tuple(float(p) for p in people) if people is not None else (np.nan,) * len(actors))
+        self.polity_people.append(tuple(float(p) for p in polity_people) if polity_people is not None
+                                  else (np.nan,) * len(actors))
+        self.origin.append(int(origin))
         self.year.append(int(year))
         self.action.append(code)
         self.actors.append(actors)
@@ -105,6 +115,8 @@ class EventLog:
             "magnitude": np.asarray(self.magnitude, dtype=float),
             "link": np.asarray(self.link, dtype=np.int64),
             "people": [list(p) for p in self.people],
+            "polity_people": [list(p) for p in self.polity_people],
+            "origin": np.asarray(self.origin, dtype=np.int64),
         })
 
     def write(self, path: Path) -> None:

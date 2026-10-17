@@ -21,7 +21,7 @@ import numpy as np
 
 SKIP_MODEL_KEYS = frozenset({"subscribers", "data_registry", "step", "grid"})
 # Config sections the simulation never reads (outputs, browser UI, maps, reports).
-NON_SIMULATION_SECTIONS = ("output", "viz", "render", "reports")
+NON_SIMULATION_SECTIONS = ("output", "viz", "render", "reports", "chronicle")
 
 
 def simulation_config_hash(cfg) -> str:

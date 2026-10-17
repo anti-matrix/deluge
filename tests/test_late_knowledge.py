@@ -329,9 +329,13 @@ def test_chronicle_shows_late_techniques_and_deposits():
     give(m, sid, ancestors(g, "steam_power") - {"steam_power"})
     set_people(m, sid, 20000.0)
     m.run()
-    text = chronicle.Chronicle(m).text()
-    assert "learned steam power (invented)" in text
-    assert "used coal deposit at cell (" in text and "people working it" in text
-    words = " ".join(chronicle.TEMPLATES.values()) + " ".join(chronicle.MAGNITUDE_BY_KIND.values())
-    for w in ("god", "flood", "hero", "myth", "legend", "sacred", "divine", "deluge", "founder"):
-        assert w not in words.lower()
+    view = chronicle.Chronicle(m)
+    view.sync()
+    text = view.markdown()
+    steam = view.sp.technique(g.index("steam_power"))
+    assert f"learned {steam}, the first anywhere to know {steam}" in text
+    assert "deposit" in text and "first worked" in text  # deposits worked: in the generation summaries
+    name = chronicle.Namer(m)
+    used = [i for i in range(len(m.events)) if m.events.record(i)["action"] == "used"
+            and decode(m.events.actors[i][0])[0] == "deposit"]
+    assert any("the coal of " in chronicle.line(m.events.record(i), name) for i in used)

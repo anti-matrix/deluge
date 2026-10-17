@@ -390,20 +390,27 @@ class DelugeModel(mesa.Model):
             politics.update_territory(self)
     # --- events and knowledge bookkeeping ---------------------------------------------------
 
-    def log_event(self, action: str, actors, place: int, magnitude: float, link: int = -1) -> int:
+    def log_event(self, action: str, actors, place: int, magnitude: float, link: int = -1, origin: int = -1) -> int:
         """Log a raw event; ``actors`` are (kind, local id) pairs; each settlement actor's
-        people are noted with it. Returns the event's index, -1 if it was not logged."""
-        pop = self.settlements.population
-        people = [float(pop[i]) if kind == "settlement" else np.nan for kind, i in actors]
+        people are noted with it, and each polity's or settlement's polity's people as last
+        counted (``EventLog``). Returns the event's index, -1 if it was not logged."""
+        t, P = self.settlements, self.polities
+        people = [float(t.population[i]) if kind == "settlement" else np.nan for kind, i in actors]
+        polity_people = []
+        for kind, i in actors:
+            p = int(i) if kind == "polity" else int(t.polity[i]) if kind == "settlement" else -1
+            v = float(P.population[p]) if p >= 0 else 0.0
+            polity_people.append(v if v > 0 else np.nan)
         ok = self.events.log(self.year, action, [entity(kind, i) for kind, i in actors], place, magnitude, link,
-                             people)
+                             people, polity_people, origin)
         return len(self.events) - 1 if ok else -1
 
-    def log_crossing(self, sea_cells: int, actors, place: int, link: int) -> None:
-        """A sea crossing that is part of event ``link`` (``crossed``: sea cells crossed)."""
+    def log_crossing(self, sea_cells: int, actors, place: int, link: int, origin: int = -1) -> None:
+        """A sea crossing from cell ``origin`` that is part of event ``link`` (``crossed``: sea
+        cells crossed)."""
         if sea_cells > 0:
             self.stats["sea_crossings"] += 1
-            self.log_event("crossed", actors, place, float(sea_cells), link)
+            self.log_event("crossed", actors, place, float(sea_cells), link, origin)
 
     def note_technique_gained(self, technique: int, year: int, invented: bool) -> None:
         self.stats["techniques_learned"] += 1
@@ -460,9 +467,10 @@ class DelugeModel(mesa.Model):
 
     def __getstate__(self) -> dict:
         """Pickling leaves out the war reach cache (``war.land_reach``), a pure function of
-        the sea that is rebuilt as needed."""
+        the sea that is rebuilt as needed, and the names made for the views (``naming``)."""
         state = self.__dict__.copy()
         state.pop("_reach_cache", None)
+        state.pop("_names", None)
         return state
 
     def __setstate__(self, state: dict) -> None:

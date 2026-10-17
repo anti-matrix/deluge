@@ -779,7 +779,6 @@ class VizConfig:
     render_interval: int
     render_interval_max: int
     step_buttons: tuple[int, ...]
-    chronicle_lines: int
     lineage_colors: tuple[str, ...]
     polity_shade_by: tuple[str, ...]
     polity_density_min: float
@@ -823,6 +822,7 @@ class VizConfig:
     inspector_symbols: int
     inspector_events: int
     inspector_origins: int
+    inspector_file: str
 
 
 @dataclass(frozen=True)
@@ -851,6 +851,21 @@ class ReportsConfig:
 
 
 @dataclass(frozen=True)
+class ChronicleConfig:
+    generation_years: int
+    death_share: float
+    page_entries: int
+    polity_actions: tuple[str, ...]
+    capital_actions: tuple[str, ...]
+    share_actions: tuple[str, ...]
+    teachers_actions: tuple[str, ...]
+    teachers_min_magnitude: float
+    always_actions: tuple[str, ...]
+    first_actions: tuple[str, ...]
+    crossing_actions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Config:
     run: RunConfig
     rng: RngConfig
@@ -873,6 +888,7 @@ class Config:
     viz: VizConfig
     render: RenderConfig
     reports: ReportsConfig
+    chronicle: ChronicleConfig
 
     def to_dict(self) -> dict[str, Any]:
         return _to_plain(self)

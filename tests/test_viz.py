@@ -151,9 +151,13 @@ def test_tooltip_names_terrain_elevation_settlement_polity_lineage_population(gr
     cell = int(t.cell[sid])
     text = portrayal.tooltip(m, snap, cell)
     x, y = m.geom.xy(cell)
-    assert f"cell ({x}, {y})" in text and "elevation" in text
-    assert f"settlement {sid} of polity {int(t.polity[sid])}" in text
-    assert f"group {m.lineages.names[int(t.lineage[sid])]}" in text and "population" in text
+    from deluge.data.events import entity
+    from deluge.naming import Speaker
+
+    say = Speaker(m, tags=True)
+    assert f"{say.place(cell)}</b> (cell {x}, {y})" in text and "elevation" in text
+    assert f"{say.entity(entity('settlement', sid))}, of {say.entity(entity('polity', int(t.polity[sid])))}" in text
+    assert say.people(int(t.lineage[sid])) in text and "population" in text
     sea = int(np.flatnonzero(m.is_sea)[0])
     assert "sea" in portrayal.tooltip(m, snap, sea)
 
@@ -168,10 +172,11 @@ def test_side_panels_render(grown):
     assert tree.startswith("<svg") and f"{len(m.polities.alive_ids())} living" in tree
     pid = int(m.polities.alive_ids()[0])
     html = panels.inspector(m, pid, VIZ)
-    for part in ("Culture vector", "Brain outputs", "memory symbols", "What they remember"):
+    for part in ("Their ways", "What they lean toward this year", "What they remember", "<details"):
         assert part in html
     for trait in m.config.founders.culture_traits:
-        assert trait in html
+        assert trait.replace("_", " ") in html
+    assert "<title>" in tree  # polity names on hover
     assert "Click a claimed cell" in panels.inspector(m, -1, VIZ)
 
 
@@ -240,8 +245,8 @@ def test_legends_and_plots_use_one_lineage_palette():
     assert palette == ("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00")  # A red, B blue, C green, D purple, E orange
     names = app.CONFIG.founders.names
     assert app.GROUP_PLOT_COLORS == {f"pop_{n}": c for n, c in zip(names, palette)}
-    for layer, label in (("lineage", "group {}"), ("polity", "polities of group {}")):
-        html = portrayal.legend_html(VIZ, layer, names)
+    for layer, label in (("lineage", "the {}"), ("polity", "polities of the {}")):
+        html = portrayal.legend_html(VIZ, layer, [f"the {n}" for n in names])
         rows = html.split('<div style="display:flex')[1:]
         assert len(rows) == len(names)
         for row, n, c in zip(rows, names, palette):
@@ -251,30 +256,22 @@ def test_legends_and_plots_use_one_lineage_palette():
         assert portrayal.legend_html(VIZ, layer, names, "agriculture")
 
 
-def test_chronicle_filter_reads_one_snapshot_while_events_are_appended():
-    """The model can append events while the browser chronicle filters (Round 6 bug:
-    "operands could not be broadcast together"). Events appended between the column
-    reads of one select wait for the next select."""
+def test_chronicle_reads_one_snapshot_while_events_are_appended():
+    """The model can append events while the browser chronicle reads (Round 6 bug:
+    "operands could not be broadcast together"): a sync reads every column up to the length
+    all of them have; the rest waits for the next sync."""
     from deluge.data import chronicle
 
     m = small_model(years=20)
     for _ in range(5):
         m.step()
     view = chronicle.Chronicle(m)
-
-    class AppendingWhileRead:
-        """An actions filter whose iteration appends events, as a running model would."""
-
-        def __iter__(self):
-            for _ in range(3):
-                m.log_event("moved", [("settlement", 0)], 0, 1.0)
-            return iter(["moved", "founded"])
-
     n = len(m.events)
-    sel = view.select(actions=AppendingWhileRead(), groups={0, 1, 2, 3, 4}, year_min=0)
-    assert len(m.events) == n + 3 and (sel < n).all()
-    m.events.year.append(m.year)
-    later = view.select(actions={"moved"})
-    m.events.year.pop()
-    assert later.max() == n + 2
-    assert len(view.text().splitlines()) == n + 3
+    m.events.link.append(-1)  # an event half appended: its first column only
+    view.sync()
+    assert view.n == n
+    m.events.link.pop()
+    m.log_event("moved", [("settlement", 0)], 0, 1.0)
+    view.sync()
+    assert view.n == n + 1
+    assert len(chronicle.log_csv(m).splitlines()) == n + 2  # header and every event

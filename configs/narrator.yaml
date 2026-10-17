@@ -173,6 +173,39 @@ amounts:
   took: "{m} people"
   died: "{m} people left"
   crossed: "{m} sea cells"
+# The chronicle (deluge/data/chronicle.py): what it adds to an event's sentence, and its summaries.
+chronicle:
+  first_anywhere: ", the first anywhere to know {phrase}"
+  first_people: ", the first of {people} to know {phrase}"
+  first_land_people: ", the first of {people} to reach another land"
+  first_land_tier: ", the first crossing to another land that needed {phrase}"
+  summary: "from year {year} to {last}, among {people}: {items}."
+  summary_none: "from year {year} to {last}: {items}."
+  item_joiner: "; "
+# Summary items, one per verb (or verb/kind of the first actor) of a generation's routine events:
+# {count} events, {actors} distinct first actors, {phrase} the technique among the actors; a pair is
+# [one, many], chosen by the number the second form shows.
+summaries:
+  learned: ["{phrase} spread to one settlement", "{phrase} spread to {actors} settlements"]
+  forgot: ["one settlement forgot {phrase}", "{actors} settlements forgot {phrase}"]
+  taught: ["one year of contact passed on nothing", "{count} years of contact passed on nothing"]
+  used/deposit: ["a deposit was first worked", "{count} deposits were first worked"]
+  used/artifact: ["a gift was put to use", "gifts were put to use {count} times"]
+  moved: ["one band moved", "{actors} bands moved"]
+  joined/settlement: ["one band joined another", "{actors} bands joined others"]
+  founded/settlement: ["a new settlement was founded", "{count} new settlements were founded"]
+  won: ["a raid was won", "{count} raids were won"]
+  took: ["a settlement was taken", "{count} settlements were taken"]
+  fought: ["a smaller battle was fought", "{count} smaller battles were fought"]
+  starved: ["one settlement went hungry", "{actors} settlements went hungry"]
+  died/settlement: ["one settlement came to an end", "{actors} settlements came to an end"]
+  crossed: ["the sea was crossed once", "the sea was crossed {count} times"]
+  crossed/polity: ["one attack crossed the sea", "{count} attacks crossed the sea"]
+  displayed: ["one thing was shown", "{count} things were shown"]
+  broke: ["a gift broke", "{count} gifts broke"]
+  depleted: ["a deposit was used up", "{count} deposits were used up"]
+  default: ["{verb}: once", "{verb}: {count} times"]
+
 # "What memory changed".
 changes:
   substituted: "{new} took the place of {old} (year {year})"
