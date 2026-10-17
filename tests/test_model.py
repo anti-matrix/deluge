@@ -86,3 +86,20 @@ def test_model_pickles():
     clone = pickle.loads(pickle.dumps(m))
     np.testing.assert_array_equal(clone.world.elevation, m.world.elevation)
     assert clone.config == m.config
+
+
+def test_restored_model_checkpoints_again_and_continues_the_same_history():
+    """A model restored from a pickle pickles again (Mesa's grid cell classes,
+    ``world.grid.repair_unpickled_grid``), and every restore continues the same history."""
+    from deluge.data.state import state_digest
+
+    m = small_model(years=40)
+    for _ in range(10):
+        m.step()
+    once = pickle.loads(pickle.dumps(m))
+    twice = pickle.loads(pickle.dumps(once))
+    assert len({type(c) for c in twice.grid._cells.values()}) == 1
+    assert twice.grid._cells[(10, 20)].elevation == m.world.elevation[10, 20]
+    for model in (m, twice):
+        model.run()
+    assert state_digest(twice) == state_digest(m)

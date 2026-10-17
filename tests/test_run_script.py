@@ -60,6 +60,42 @@ def test_run_script_acceptance(tmp_path, small_cfg):
     assert (tmp_path / "a" / "memory_ops.parquet").exists()
 
 
+def test_run_resumes_from_its_checkpoint(tmp_path):
+    """Section 12 tables are written, and a run resumed from a checkpoint writes the same
+    outputs as the run that went through."""
+    import shutil
+
+    overrides = tmp_path / "overrides.yaml"
+    overrides.write_text(SMALL_OVERRIDES_PATH.read_text(encoding="utf-8")
+                         + "\noutput:\n  checkpoint_every_years: 100\n  memory_snapshot_every_years: 100\n",
+                         encoding="utf-8")
+
+    def go(out_dir):
+        subprocess.run([sys.executable, str(RUN), "--overrides", str(overrides), "--history-seed", "3",
+                        "--years", str(YEARS), "--out", str(out_dir)], cwd=REPO_ROOT, check=True,
+                       capture_output=True, text=True)
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    go(a)
+    assert sorted(p.name for p in (a / "checkpoints").iterdir()) == ["year_00100.pkl", "year_00200.pkl"]
+    shutil.copytree(a / "checkpoints", b / "checkpoints")
+    (b / "checkpoints" / "year_00200.pkl").unlink()  # the run was interrupted between years 100 and 200
+    go(b)
+    meta = json.loads((b / "meta.json").read_text(encoding="utf-8"))
+    assert meta["complete"] and meta["resumed_from_years"] == [100]
+    assert meta["git_commit"] and meta["versions"]["mesa"]
+    tables = ["model.parquet", "lineages.parquet", "polities.parquet", "events.parquet", "techniques.parquet",
+              "polity_tree.parquet", "memory_ops.parquet", "brains/brains.parquet"]
+    tables += [f"memory_snapshots/year_{y:05d}.parquet" for y in (200, 300)]  # 100: before the interruption
+    for name in tables:
+        pd.testing.assert_frame_equal(pd.read_parquet(a / name), pd.read_parquet(b / name), obj=name)
+    lineages = pd.read_parquet(a / "lineages.parquet")
+    assert sorted(set(lineages.year)) == list(range(0, YEARS, 10))
+    polities = pd.read_parquet(a / "polities.parquet")
+    assert sorted(set(polities.year)) == list(range(0, YEARS, 25))
+    assert {"culture_openness", "brain_aggression", "cohesion", "parent"} <= set(polities.columns)
+
+
 @pytest.mark.slow
 def test_run_script_seeds_differ(tmp_path):
     df_a, _, meta_a = _run(tmp_path / "a", seed=3)

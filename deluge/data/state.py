@@ -6,7 +6,8 @@ data, ...) and everything reachable from it, exactly: floats by their bits, dict
 insertion order, sets sorted. Left out: private attributes (leading underscore: Mesa's
 internals and the sim's caches, which hold nothing a later year reads that is not
 recomputed), the Mesa grid and agent objects (agents are digested by id and cell; their state
-lives in the tables), and bound methods. The config enters by its hash.
+lives in the tables), and bound methods. The config enters by the hash of the sections the
+simulation reads (``simulation_config_hash``).
 """
 
 from __future__ import annotations
@@ -19,6 +20,16 @@ from collections.abc import Mapping
 import numpy as np
 
 SKIP_MODEL_KEYS = frozenset({"subscribers", "data_registry", "step", "grid"})
+# Config sections the simulation never reads (outputs, browser UI, maps, reports).
+NON_SIMULATION_SECTIONS = ("output", "viz", "render", "reports")
+
+
+def simulation_config_hash(cfg) -> str:
+    """Hash of the config without ``NON_SIMULATION_SECTIONS``."""
+    import json
+
+    d = {k: v for k, v in cfg.to_dict().items() if k not in NON_SIMULATION_SECTIONS}
+    return hashlib.sha256(json.dumps(d, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _agent_key(agent) -> tuple:
@@ -72,7 +83,7 @@ def _feed(h, x, seen: set) -> None:
     elif isinstance(x, RngStreams):
         _feed(h, x.state(), seen)
     elif isinstance(x, Config):
-        h.update(b"c" + x.hash().encode())
+        h.update(b"c" + simulation_config_hash(x).encode())
     elif isinstance(x, PropertyLayer):
         _feed(h, x.data, seen)
     elif isinstance(x, mesa.Agent):

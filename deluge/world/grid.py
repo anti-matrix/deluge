@@ -221,6 +221,32 @@ def build_mesa_grid(geom: HexGeometry, fields: dict[str, np.ndarray], random=Non
     return grid
 
 
+def repair_unpickled_grid(grid: HexGrid) -> None:
+    """After unpickling: put every cell back on one cell class registered with pickle.
+
+    Mesa 3.5.1 builds the grid's cell class at run time and registers it with ``copyreg``;
+    its unpickle helper (``mesa.discrete_space.grid.unpickle_gridcell``) builds a new class
+    for every cell and registers none, so the restored grid cannot be pickled again, and only
+    the first cell's class gets the property-layer accessors. All those classes share one
+    base and empty ``__slots__``, so the cells can share the first one."""
+    import copyreg
+
+    from mesa.discrete_space import grid as mesa_grid
+
+    cells = list(grid._cells.values())
+    if not cells:
+        return
+    klass = type(cells[0])
+    for cell in cells:
+        if type(cell) is not klass:
+            cell.__class__ = klass
+    grid.cell_klass = klass
+    copyreg.pickle(klass, mesa_grid.pickle_gridcell)
+    for layer in grid._mesa_property_layers.values():
+        setattr(klass, layer.name,
+                mesa_grid.create_property_accessors(layer.data, docstring=f"accessor for {layer.name}"))
+
+
 def as_field(geom: HexGeometry, flat: np.ndarray) -> np.ndarray:
     """Flat per-cell array -> (width, height) field view."""
     return np.asarray(flat).reshape(geom.shape)

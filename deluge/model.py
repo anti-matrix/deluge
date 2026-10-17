@@ -50,7 +50,8 @@ from deluge.systems.knowledge import KnowledgeGraph, usable_mask
 from deluge.world import generate_world
 from deluge.world.capacity import CarryingCapacity
 from deluge.world.climate import ClimateShocks, sea_level_curve, temp_anomaly_series
-from deluge.world.grid import HexGeometry, as_field, build_mesa_grid, hex_area_km2, hex_unit_km
+from deluge.world.grid import (HexGeometry, as_field, build_mesa_grid, hex_area_km2, hex_unit_km,
+                               repair_unpickled_grid)
 from deluge.world.worlddata import MINERALS
 
 PHASES: tuple[Callable[[DelugeModel], None], ...] = (
@@ -454,6 +455,22 @@ class DelugeModel(mesa.Model):
             latent[t.cell[ids]] = (t.knows[ids] & ~usable).sum(axis=1)
         self.knowledge_layer.data[...] = as_field(self.geom, known)
         self.latent_layer.data[...] = as_field(self.geom, latent)
+
+    # --- checkpoints -------------------------------------------------------------------------
+
+    def __getstate__(self) -> dict:
+        """Pickling leaves out the war reach cache (``war.land_reach``), a pure function of
+        the sea that is rebuilt as needed."""
+        state = self.__dict__.copy()
+        state.pop("_reach_cache", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Unpickling (checkpoints): Mesa 3.5's grid gives every unpickled cell a class of its
+        own that pickle cannot find again, so a restored model could not be pickled twice;
+        ``repair_unpickled_grid`` puts the cells back on one class."""
+        self.__dict__.update(state)
+        repair_unpickled_grid(self.grid)
 
     # --- stepping --------------------------------------------------------------------------
 

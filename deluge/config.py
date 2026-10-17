@@ -762,6 +762,14 @@ class MemoryConfig:
 @dataclass(frozen=True)
 class OutputConfig:
     runs_dir: str
+    lineages_every_years: int
+    polities_every_years: int
+    memory_snapshot_every_years: int
+    checkpoint_every_years: int
+    checkpoints_kept: int
+    batch_workers: int
+    batch_run_memory_mb: int
+    batch_memory_reserve_mb: int
 
 
 @dataclass(frozen=True)

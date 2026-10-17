@@ -27,7 +27,7 @@ Not installed yet, declared as an extra: `earth` = rasterio, xarray (round 12). 
 
 **Determinism note (Round 11):** NumPy's float64 matrix-vector product (OpenBLAS 0.3.34, used by `KnowledgeGraph.multiplier`) gives a row a result that can depend on the shape of the matrix it sits in (measured: `raid_range` rows, 4 nonzero terms). A run is deterministic on one machine, but the same seed may differ on a machine with another BLAS build or core count. Speed-ups that must leave results identical therefore keep every such call on the same input arrays.
 
-**Pickle note (Round 11):** a fresh model pickles, but a model restored from a pickle cannot be pickled again (Mesa's HexGrid builds a `GridCell` class at run time that pickle cannot find by name). Round 10's checkpointing has to handle this.
+**Pickle note (Round 11, fixed in Round 10):** a fresh model pickles, but in Mesa 3.5.1 a model restored from a pickle could not be pickled again: `Grid.__init__` builds a `GridCell` class at run time and registers it with `copyreg`, while `mesa.discrete_space.grid.unpickle_gridcell` builds a new class for every cell and registers none (and `Grid.__setstate__` puts the property-layer accessors on the first cell's class only). `DelugeModel.__setstate__` calls `deluge.world.grid.repair_unpickled_grid`, which puts every cell back on one class (they share a base and empty `__slots__`), registers it with `copyreg` and re-attaches the accessors. Checkpoints also leave out the war reach cache (`_reach_cache`, rebuilt on demand).
 
 ## Names and import paths
 
