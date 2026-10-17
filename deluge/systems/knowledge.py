@@ -1,12 +1,12 @@
 """Phase 5, knowledge: teacher contact, invention, diffusion and loss (spec section 7).
 
-Per settlement per year, for each technique it does not hold:
+Per settlement per year, for each technique it does not hold and whose prerequisites it
+all holds (hard prerequisites, Round 12):
 
 - invention: small base odds (``invention_scale`` x the technique's ``invention_rate``),
-  scaled by population, by division of labor, and by the share of the technique's
-  prerequisites the settlement holds (``** invention_prerequisite_exponent``);
-- diffusion, only when every prerequisite is held: each adjacent settlement holding it
-  gives a chance ``diffusion_rate`` x the receiver's openness.
+  scaled by population and by division of labor;
+- diffusion: each adjacent settlement holding it gives a chance ``diffusion_rate`` x the
+  receiver's openness.
 
 A held technique is usable where the settlement is (sailing needs a coast; herding and
 farming techniques need some capacity for their mode on the cell; everything else,
@@ -321,16 +321,14 @@ def run(model) -> None:
     work_deposits(model, ids, knows & used)
 
     # Invention.
-    held = g.prerequisites_held(knows)
-    prereq_share = np.where(g.prereq.sum(axis=1) > 0, held / np.maximum(g.prereq.sum(axis=1), 1), 1.0)
     dol = knows[:, g.index("division_of_labor")]
     odds = (k.invention_scale * g.invention_rate[None, :]
             * (pop[:, None] / k.invention_reference_population) ** k.invention_population_exponent
-            * (1.0 + k.division_of_labor_invention_bonus * dol[:, None])
-            * prereq_share ** k.invention_prerequisite_exponent)
-    # Techniques that need minerals are only invented or adopted with access to them.
-    # Late techniques only while knowledge.late_techniques_enabled.
-    access = resources_met(model, ids) & g.acquirable[None, :]
+            * (1.0 + k.division_of_labor_invention_bonus * dol[:, None]))
+    # Hard prerequisites: a technique is only invented or adopted with every prerequisite
+    # held. Techniques that need minerals only with access to them. Late techniques only
+    # while knowledge.late_techniques_enabled.
+    access = g.prerequisites_met(knows) & resources_met(model, ids) & g.acquirable[None, :]
     invented = ~knows & access & (rng.random(knows.shape) < odds)
 
     # Diffusion from adjacent settlements, scaled by the receiver's polity's openness.
@@ -338,7 +336,7 @@ def run(model) -> None:
     openness = model.openness_of(ids)
     rate = k.diffusion_rate * openness * g.multiplier(knows, "diffusion")
     p = 1.0 - (1.0 - np.clip(rate, 0.0, 1.0))[:, None] ** contacts
-    adopted = (~knows & ~invented & access & g.prerequisites_met(knows, held) & (contacts > 0)
+    adopted = (~knows & ~invented & access & (contacts > 0)
                & (rng.random(knows.shape) < p))
 
     gained = invented | adopted

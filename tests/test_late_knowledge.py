@@ -317,6 +317,22 @@ def test_late_techniques_off_by_default():
     assert (m.first_invented_year[~g.late] >= 0).any()
 
 
+def test_prerequisites_are_hard():
+    """Round 12: with invention and diffusion odds near certain, a settlement gains a
+    technique in a year only when it held every prerequisite at the start of that year."""
+    m = scenario({"knowledge": {"invention_scale": 1.0, "diffusion_rate": 1.0}}, years=40)
+    g, t = m.knowledge, m.settlements
+    gained = 0
+    for _ in range(30):
+        ids = t.alive_ids()
+        before = t.knows[ids].copy()
+        m.step()
+        new = t.knows[ids] & ~before
+        assert not (new & ~g.prerequisites_met(before)).any()
+        gained += int(new.sum())
+    assert gained > 0 and t.knows[t.alive_ids()][:, g.prereq.any(axis=1)].any()
+
+
 # --- chronicle -----------------------------------------------------------------------------------------
 
 

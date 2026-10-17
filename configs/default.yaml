@@ -464,7 +464,6 @@ knowledge:                    # spec section 7; the graph itself is a data file
   invention_scale: 2.0e-6     # inventions per settlement-year at the reference population, times the technique's invention_rate
   invention_reference_population: 1000
   invention_population_exponent: 1.0
-  invention_prerequisite_exponent: 3.0  # invention odds x (share of prerequisites known) ** exponent
   division_of_labor_invention_bonus: 1.0  # with division of labor known, invention odds x (1 + bonus)
   diffusion_rate: 0.02        # chance per year per adjacent settlement that knows it, times the receiver's openness
   use_share: 0.1              # a mode technique counts as used when at least this share of people work that mode

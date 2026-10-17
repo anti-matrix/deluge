@@ -492,7 +492,6 @@ class KnowledgeConfig:
     invention_scale: float
     invention_reference_population: float
     invention_population_exponent: float
-    invention_prerequisite_exponent: float
     division_of_labor_invention_bonus: float
     diffusion_rate: float
     use_share: float
