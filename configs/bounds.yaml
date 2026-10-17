@@ -1,0 +1,67 @@
+# Physical bounds for calibration (Round 12). The sim runs free: these are not targets.
+# A bound only marks a state that is impossible on Earth; a parameter changes only to fix a
+# broken bound, by the smallest global change that fixes it. Read by the run recorder
+# (deluge/data/bounds.py, output.bounds_file) and scripts/acceptance/bounds.py. Nothing here
+# enters the simulation.
+
+# --- Population density ceilings (people per km2 of cell, about 26,700 km2 per cell) ----------------
+# Historical maxima on Earth, at the scale of a region (a cell), for people living by that mode.
+# A settlement's density may not exceed the ceiling of the most intensive mode it practises
+# (at least knowledge.use_share of its people). A mode's ceiling is its base, or the highest
+# value of a technique the settlement holds in raised_by.
+# The world's people may not exceed the sum over habitable cells of area x the highest ceiling
+# of any mode and technique known anywhere that year.
+density_ceilings:
+  forage:
+    # The densest recorded foragers (Northwest Coast, California, e.g. Chumash) reach about 1-3
+    # people/km2 over their territories; most foragers live at 0.01-0.5.
+    # Kelly, R. L. (2013), The Lifeways of Hunter-Gatherers, 2nd ed., ch. 7;
+    # Binford, L. R. (2001), Constructing Frames of Reference (hunter-gatherer database).
+    base: 3.0
+    raised_by: {}
+  herd:
+    # Pastoralists live at about 0.5-5 people/km2 (Mongolian steppe ~1, Maasai ~4 in the 1960s);
+    # 10 is the high end of agro-pastoral East Africa.
+    # Dyson-Hudson, R. and N. (1980), Nomadic pastoralism, Annual Review of Anthropology 9;
+    # Khazanov, A. M. (1984), Nomads and the Outside World.
+    base: 10.0
+    raised_by: {}
+  farm:
+    # Rain-fed hoe farming without plough or irrigation: Rwanda c. 1900, about 1.5-2 million
+    # people on 26,000 km2 (one cell), ~60-75/km2; New Guinea highland valleys similar.
+    # Boserup, E. (1965), The Conditions of Agricultural Growth.
+    base: 80.0
+    raised_by:
+      # Plough or irrigation, before industry: the lower Yangtze c. 1850 (Jiangsu, about 40
+      # million on 100,000 km2, ~400/km2); the Nile valley in antiquity ~150-250 per km2 of
+      # cultivated land. Ho Ping-ti (1959), Studies on the Population of China, 1368-1953;
+      # Scheidel, W. (2001), Death on the Nile.
+      plough: 400.0
+      irrigation: 400.0
+      # Industrial farming: Bangladesh (~1,150/km2 over 148,000 km2) and Java (~1,150/km2 over
+      # 128,000 km2) in the 2020s, the densest farming regions of more than a cell's size.
+      # UN World Population Prospects 2022; BPS Statistics Indonesia.
+      synthetic_fertilizers: 1200.0
+
+# --- Polity floor ----------------------------------------------------------------------------------
+# Polities that ever held at least min_settlements settlements: their median lifespan (years from
+# founding to end, the living counted to the run's end) is at least min_median_lifespan.
+polity_floor:
+  min_settlements: 3
+  min_median_lifespan: 30
+
+# --- Monument ceiling ------------------------------------------------------------------------------
+# Monuments built per run <= surplus person-years / person_years_per_monument. Surplus: the food
+# produced beyond one ration (person-year) per head, summed over settlements and years
+# (model.parquet column "surplus"). 10,000 person-years is about the labour of Stonehenge
+# (Atkinson's estimate of ~30 million hours, at 2,000-3,000 working hours a year), the smallest
+# work that stands for a polity's monument rather than a village's; a smaller value would only
+# loosen the ceiling. (Each monument in the sim costs polities.monument_cost rations.)
+monument_ceiling:
+  person_years_per_monument: 10000
+
+# --- Report only, never tuned -----------------------------------------------------------------------
+report:
+  calendar_offset: 10950            # real year = sim year - offset (year 0 ~ 10,950 BCE; 10,950 = 1 CE)
+  population_years: [3000, 8000, 10950, 12900]
+  origin_years: [1000, 3000, 6000, 12900]  # origin records (events of years 0 to reports.origins_until_year)

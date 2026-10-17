@@ -74,7 +74,7 @@ YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost"
               "techniques_lost", "losses_after_crash", "latent_expired", "polities_founded", "secessions",
               "fragmentations", "mergers", "polity_extinctions", "monuments_built", "battles", "raids",
               "campaigns", "conquests", "capitals_taken", "polities_destroyed", "war_deaths", "sea_crossings",
-              "sea_battles")
+              "sea_battles", "surplus")
 
 
 class DelugeModel(mesa.Model):

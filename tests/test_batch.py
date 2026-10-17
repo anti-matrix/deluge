@@ -53,3 +53,16 @@ def test_batch_runs_and_reports(tmp_path):
     tech = pd.read_parquet(batch / "w3_h1" / "techniques.parquet")
     assert {"first_held", "first_invented"} <= set(tech.columns)
     assert (tech.filter(like="first_held_") >= -1).all().all()
+
+    # Round 12: the bounds table over the batch.
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "acceptance"))
+    import bounds
+
+    results = bounds.evaluate(batch)
+    assert set(results) == {"w3_h1", "w3_h2"}
+    for res in results.values():
+        assert len(res["bounds"]) == 4 and res["bounds"][0]["ok"] and res["bounds"][1]["ok"]
+        assert res["bounds"][3]["ok"] is not None  # monuments against surplus
+        assert res["report"]["chronicle_entries"] > 0 and res["report"]["polity_births"] >= 0
+    assert "## Bounds for the batch" in (batch / "bounds.md").read_text(encoding="utf-8")
+    assert bounds.real_year(0, 10950) == "10,950 BCE" and bounds.real_year(10950, 10950) == "1 CE"

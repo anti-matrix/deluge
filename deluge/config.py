@@ -769,6 +769,7 @@ class OutputConfig:
     batch_workers: int
     batch_run_memory_mb: int
     batch_memory_reserve_mb: int
+    bounds_file: str
 
 
 @dataclass(frozen=True)

@@ -12,13 +12,15 @@ Writes into the run directory (spec section 12):
   technique was held anywhere, invented, and held per lineage: the milestone report);
   ``founders.parquet`` (each founding lineage's start and contact with the teachers) and
   ``settlements.parquet`` (every settlement's lineage, parent, polity, cell and years);
+  ``ceilings.parquet`` (every year: land use and world population at the density ceilings
+  of ``configs/bounds.yaml``, Round 12);
 - ``memory_snapshots/year_NNNNN.parquet`` every ``output.memory_snapshot_every_years`` and at
   the end: every live memory record with its provenance (``memory.parquet``: the same at the
   end); ``memory_ops.parquet`` (the transformation log) at the end;
 - ``checkpoints/year_NNNNN.pkl`` every ``output.checkpoint_every_years`` (the latest
   ``output.checkpoints_kept``): the pickled model and recorder;
 - ``meta.json`` at the end: seeds, config hash, git commit, run time, library versions,
-  checkpoints written and resumed from; ``"complete": true``.
+  checkpoints written and resumed from, the chronicle's length; ``"complete": true``.
 
 If the run directory holds checkpoints and no complete ``meta.json``, the run resumes from
 the latest checkpoint (``--fresh`` starts over). The history is the same either way.
@@ -185,6 +187,16 @@ def settlements_frame(model) -> pd.DataFrame:
                          "ended": t.ended[:n], "population": t.population[:n]})
 
 
+def chronicle_entries(model) -> int:
+    """Length of the browser chronicle of the whole run (entries told one by one plus the
+    generation summaries)."""
+    from deluge.data.chronicle import Chronicle
+
+    view = Chronicle(model)
+    view.sync()
+    return len(view)
+
+
 def write_tables(model, recorder, out_dir: Path) -> None:
     from deluge.brains.network import archive_frame
     from deluge.systems import memory
@@ -195,6 +207,7 @@ def write_tables(model, recorder, out_dir: Path) -> None:
     recorder.lineages_frame().to_parquet(out_dir / "lineages.parquet", index=False)
     recorder.polities_frame().to_parquet(out_dir / "polities.parquet", index=False)
     recorder.first_held_frame(model).to_parquet(out_dir / "techniques.parquet", index=False)
+    recorder.ceilings_frame().to_parquet(out_dir / "ceilings.parquet", index=False)
     model.events.write(out_dir / "events.parquet")
     entity_table(model).to_parquet(out_dir / "entities.parquet", index=False)
     model.lineages.polity_tree(model).to_parquet(out_dir / "polity_tree.parquet", index=False)
@@ -265,6 +278,7 @@ def run(cfg, out_dir: Path, config_path: str, overrides_path: str | None, fresh:
         "runtime_seconds": state["setup_seconds"] + state["step_seconds"],
         "resumed_from_years": state["resumed_from"],
         "checkpoints_written": state["checkpoints_written"],
+        "chronicle_entries": chronicle_entries(model),
         "platform": platform.platform(),
         "versions": versions(),
     }

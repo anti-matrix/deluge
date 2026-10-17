@@ -786,6 +786,7 @@ output:                       # headless runs (scripts/run.py, scripts/batch.py)
   batch_workers: 2            # scripts/batch.py: runs in parallel at most, and further limited by free memory:
   batch_run_memory_mb: 1000   # memory one run is assumed to need
   batch_memory_reserve_mb: 500  # memory left free for the rest of the machine
+  bounds_file: bounds.yaml    # physical bounds (Round 12): ceilings.parquet measures each year against them
 
 viz:                          # browser UI only; no effect on the simulation
   play_interval_ms: 0         # pause between frames while playing

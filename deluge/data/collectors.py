@@ -10,7 +10,10 @@ tables:
   parent, founding year, size, cohesion, pressure, culture vector and the mean of each brain
   output over the years since its previous row;
 - per technique and lineage, the first year a settlement of the lineage held it
-  (``first_held``, the milestone report).
+  (``first_held``, the milestone report);
+- ``ceilings.parquet`` every year (Round 12): the largest density over ceiling of a
+  settlement (density ceilings of ``configs/bounds.yaml``), and the world's people against the sum of
+  cell ceilings (``data/bounds.py``).
 
 The recorder only reads the model. It is pickled with the model in checkpoints, so a
 resumed run continues its tables.
@@ -26,6 +29,7 @@ import pandas as pd
 
 from deluge.agents.settlement import MODES
 from deluge.brains.network import OUTPUTS
+from deluge.data.bounds import Ceilings, bounds_path, load_bounds
 
 MODEL_REPORTERS = (
     "year",
@@ -51,7 +55,7 @@ YEAR_STAT_REPORTERS = ("famine_deaths", "moves", "foundings", "dissolved", "drow
                        "techniques_learned", "techniques_lost", "losses_after_crash", "latent_expired",
                        "polities_founded", "secessions", "fragmentations", "mergers", "polity_extinctions",
                        "monuments_built", "battles", "raids", "campaigns", "conquests", "capitals_taken",
-                       "polities_destroyed", "war_deaths", "sea_crossings", "sea_battles")
+                       "polities_destroyed", "war_deaths", "sea_crossings", "sea_battles", "surplus")
 
 
 def year_stat(name: str, model) -> float:
@@ -103,6 +107,8 @@ class RunRecorder:
         n_lin = len(model.lineages.founders)
         self.people_years = np.zeros(n_lin)  # per lineage, summed over the years so far
         self.drought_people_years = np.zeros(n_lin)  # of them, on cells in drought that year
+        self.ceilings = Ceilings(load_bounds(bounds_path(model.config)), model.knowledge)
+        self.ceiling_rows: list[tuple] = []
 
     def observe(self, model) -> None:
         year = model.year - 1
@@ -124,10 +130,30 @@ class RunRecorder:
         dry = model.shocks.rain_factor[t.cell[ids]] < 1.0
         self.people_years += np.bincount(lin, weights=pop, minlength=n_lin)
         self.drought_people_years += np.bincount(lin, weights=pop * dry, minlength=n_lin)
+        self._ceilings(model, year, ids, pop)
         if year % self.lineages_every == 0:
             self._lineages(model, year, ids, lin, held, n_lin)
         if year % self.polities_every == 0:
             self._polities(model, year, pids)
+
+    def _ceilings(self, model, year: int, ids, pop) -> None:
+        """One row a year: the largest density over ceiling of a settlement (its cell and
+        density), the world's people and the sum of cell ceilings (data/bounds.py)."""
+        t, area = model.settlements, model.cell_area_km2
+        habitable = int(np.count_nonzero(np.maximum.reduce([model.capacity[m] for m in MODES]) > 0))
+        if len(ids) == 0:
+            self.ceiling_rows.append((year, 0.0, 0.0, -1, 0.0, 0.0))
+            return
+        knows = t.knows[ids]
+        ratio = self.ceilings.ratio(pop, t.shares[ids], knows, area, model.config.knowledge.use_share)
+        i = int(np.argmax(ratio))
+        world = self.ceilings.world(knows.any(axis=0), habitable, area)
+        self.ceiling_rows.append((year, float(pop.sum()), world, int(t.cell[ids[i]]), float(ratio[i]),
+                                  float(pop[i] / area)))
+
+    def ceilings_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(self.ceiling_rows, columns=["year", "population", "world_ceiling", "max_cell",
+                                                        "max_ratio", "max_density"])
 
     def _lineages(self, model, year: int, ids, lin, held, n_lin: int) -> None:
         t, P = model.settlements, model.polities

@@ -145,6 +145,7 @@ def run(model) -> None:
     shares = shift_modes(model, ids, k)
 
     production = pop * food_per_head(shares, k, pop, d) * production_multiplier(model, ids)
+    model.stats["surplus"] += float(np.maximum(production - pop, 0.0).sum())  # reporting: rations beyond one a head
     spoilage = np.clip(d.spoilage * g.multiplier(knows, "spoilage"), 0.0, 1.0)
     available = production + t.store[ids] * (1.0 - spoilage)
     ratio = available / np.maximum(pop, 1e-12)
