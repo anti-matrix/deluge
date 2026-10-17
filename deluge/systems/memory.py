@@ -76,6 +76,7 @@ matches one without memory.
 
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -217,11 +218,18 @@ def capacity(model, pids) -> np.ndarray:
     return np.floor(k + 1e-9).astype(np.int64)
 
 
+def _weakest(state: MemoryState, store: list[int]) -> int:
+    """The store's record with the least (vividness, id)."""
+    records = state.records
+    vivid = [records[m].vividness for m in store]
+    low = min(vivid)
+    return min(m for m, v in zip(store, vivid) if v == low)
+
+
 def _trim(state: MemoryState, pid: int, cap: int) -> None:
     store = state.stores[pid]
     while len(store) > cap:
-        weakest = min(store, key=lambda m: (state.records[m].vividness, m))
-        state._remove_from_store(weakest)
+        state._remove_from_store(_weakest(state, store))
 
 
 def _insert(model, state: MemoryState, pid: int, rec: Memory, cap: int) -> bool:
@@ -231,7 +239,7 @@ def _insert(model, state: MemoryState, pid: int, rec: Memory, cap: int) -> bool:
     state.records[rec.mem_id] = rec
     store.append(rec.mem_id)
     if len(store) > cap:
-        weakest = min(store, key=lambda m: (state.records[m].vividness, m))
+        weakest = _weakest(state, store)
         state._remove_from_store(weakest)
         return weakest != rec.mem_id
     return True
@@ -269,7 +277,9 @@ def _record_events(model) -> None:
     if start == n:
         return
     vmax = cfg.vividness_max
-    caps: dict[int, int] = {}
+    pids = P.alive_ids()
+    caps = dict(zip(pids.tolist(), capacity(model, pids).tolist()))  # polities that end this phase keep theirs
+    signature_of: dict[int, tuple] = {}  # actors' signatures this year
     ids = t.alive_ids()
     people = np.bincount(t.polity[ids], weights=t.population[ids], minlength=P.n)
     for i in range(start, n):
@@ -312,7 +322,7 @@ def _record_events(model) -> None:
             strong = v >= cfg.symbol_min_vividness
             symbols = tuple(s for s in (state.symbol(k, strong) for k in keys) if s >= 0)
             if signatures is None:
-                signatures = identity.actor_signatures(model, actors)
+                signatures = identity.actor_signatures(model, actors, signature_of)
             # Amplification by repetition, diminishing: held records sharing the verb and a symbol.
             if symbols:
                 sym = set(symbols)
@@ -325,8 +335,6 @@ def _record_events(model) -> None:
                         r.repeated += gain
             rec = Memory(state._new_id(), tuple(actors), code, place, log.year[i], log.magnitude[i], v, symbols,
                          (i,), signatures, base=v)
-            if p not in caps:
-                caps[p] = int(capacity(model, [p])[0])
             state.created += 1
             verbs.add(code)
             seen.update(actors)
@@ -410,7 +418,23 @@ def _mergeable(state: MemoryState, a: Memory, b: Memory) -> bool:
 def _merge(state: MemoryState, pid: int, mid: int, year: int) -> None:
     rec = state.records[mid]
     store = state.stores[pid]
-    others = [m for m in store if m != mid and _mergeable(state, rec, state.records[m])]
+    records = state.records
+    # ``_mergeable``, its cheapest test first.
+    lo, hi = rec.year, rec.year + rec.year_span
+    actors, symbols, provenance = set(rec.actors), set(rec.symbols), set(rec.provenance)
+    place = rec.place if rec.place >= 0 else None
+    limit = state.cfg.max_provenance
+    others = []
+    for m in store:
+        b = records[m]
+        if m == mid or not (lo <= b.year + b.year_span and b.year <= hi):
+            continue
+        if not (actors.intersection(b.actors) or (place is not None and b.place == place
+                                                  and b.place_level == rec.place_level)
+                or symbols.intersection(b.symbols)):
+            continue
+        if len(provenance.union(b.provenance)) <= limit:
+            others.append(m)
     if not others:
         return
     w = np.array([state.records[m].vividness for m in others])
@@ -489,9 +513,8 @@ def _substitute(state: MemoryState, pid: int, mid: int, year: int) -> None:
     state.log(year, "substituted", pid, mid, a=old, b=new)
 
 
-def _copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, op: str, cap: int,
-          holders) -> int:
-    """A copy of ``rec`` into ``pid``'s store (-1 if it did not fit)."""
+def _new_copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, op: str) -> Memory:
+    """A copy of ``rec`` meant for ``pid``'s store, logged, not yet inserted."""
     new = Memory(state._new_id(), rec.actors, rec.action, rec.place, rec.year, rec.magnitude,
                  rec.vividness * factor, rec.symbols, rec.provenance, rec.signatures, rec.year_span,
                  rec.year_level, rec.place_level, rec.magnitude_rounded, parent=rec.mem_id,
@@ -502,6 +525,13 @@ def _copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, op: s
     verbs.add(rec.action)
     seen.update(rec.actors)
     state.log(model.year, op, pid, new.mem_id, other=rec.mem_id, a=rec.store)
+    return new
+
+
+def _copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, op: str, cap: int,
+          holders) -> int:
+    """A copy of ``rec`` into ``pid``'s store (-1 if it did not fit)."""
+    new = _new_copy(model, state, rec, pid, factor, op)
     if not _insert(model, state, pid, new, cap):
         return -1
     for s in holders:
@@ -656,18 +686,38 @@ def copy_store(model, parent: int, child: int, members) -> None:
         return
     cap = int(capacity(model, [child])[0])
     mine = set(int(s) for s in members)
-    state.stores.setdefault(child, [])
+    store = state.stores.setdefault(child, [])
     verbs, seen = state.seen.get(parent, (set(), set()))
     state.seen[child] = (set(verbs), set(seen))
+    copies = []
     for mid in list(state.stores.get(parent, ())):
         rec = state.records[mid]
         moving = sorted(rec.holders & mine)
-        new = _copy(model, state, rec, child, 1.0, "copied", cap, moving)
+        copies.append((_new_copy(model, state, rec, child, 1.0, "copied"), moving))
         for s in moving:
             rec.holders.discard(s)
             state.held[s].discard(mid)
-        if new < 0:
+    # Inserting them one by one, each time dropping the weakest when over capacity, keeps
+    # the strongest ``cap`` of the store and the copies by (vividness, id): keep those at once.
+    pool = store + [new.mem_id for new, _ in copies]
+    if len(pool) > cap:
+        vivid = {m: state.records[m].vividness for m in store}
+        vivid.update((new.mem_id, new.vividness) for new, _ in copies)
+        keep = set(sorted(pool, key=lambda m: (vivid[m], m))[len(pool) - cap:])
+    else:
+        keep = None
+    for m in list(store):
+        if keep is not None and m not in keep:
+            state._remove_from_store(m)
+    for new, moving in copies:
+        if keep is not None and new.mem_id not in keep:
+            state.dropped += 1
             continue
+        new.store = child
+        state.records[new.mem_id] = new
+        store.append(new.mem_id)
+        for s in moving:
+            state._hold(s, new.mem_id)
     for d in (state.weights, state.heavy, state.shared, state.legit, state.summary_of, state.scale):
         if parent in d:
             d[child] = d[parent].copy() if hasattr(d[parent], "copy") else d[parent]
@@ -756,6 +806,11 @@ def _overlap(a: dict[int, float], b: dict[int, float]) -> float:
     return lo / hi if hi > 0 else 0.0
 
 
+def _heaviest(weights: dict[int, float], k: int) -> dict[int, float]:
+    """The ``k`` heaviest symbols, heaviest first (ties: the lower symbol)."""
+    return dict(heapq.nsmallest(k, weights.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 def _saturate(x: float, half: float) -> float:
     """x / (x + half), 0 when both are 0."""
     return x / (x + half) if x + half > 0 else 0.0
@@ -769,14 +824,10 @@ def derive(model) -> None:
     year = model.year
     state.weights, state.heavy, state.shared, state.legit, state.summary_of = {}, {}, {}, {}, {}
     state.scale = {}
-    people_lineage: dict[int, int | None] = {}  # actor -> its founding lineage if a group of people, else None
-
-    def lineage_of(x: int) -> int | None:
-        v = people_lineage.get(x, -2)
-        if v == -2:
-            v = _lineage(model, x) if decode(x)[0] in PEOPLE_KINDS else None
-            people_lineage[x] = v
-        return v
+    not_people = -2
+    people_lineage: dict[int, int] = {}  # actor -> its founding lineage (-1: none) if a group of people, else -2
+    records = state.records
+    majority = cfg.shared_majority
 
     for pid in P.alive_ids().tolist():
         mids = state.stores.get(pid, [])
@@ -785,20 +836,23 @@ def derive(model) -> None:
         coverage = state.coverage.get(pid, {})
         own_lineage = int(P.lineage[pid])
         for m in mids:
-            r = state.records[m]
+            r = records[m]
             v = r.vividness
             total_v += v
             for s in r.symbols:
                 weights[s] = weights.get(s, 0.0) + v
-            if coverage.get(m, 0.0) >= cfg.shared_majority:
+            if coverage.get(m, 0.0) >= majority:
                 shared += v
             for x in r.actors:
-                lin = lineage_of(x)
-                if lin is not None and lin != own_lineage:
+                lin = people_lineage.get(x)
+                if lin is None:
+                    lin = _lineage(model, x) if decode(x)[0] in PEOPLE_KINDS else not_people
+                    people_lineage[x] = lin
+                if lin != not_people and lin != own_lineage:
                     outsider += v
                     break
             age += v * (year - r.year)
-        heavy = dict(sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))[: cfg.heavy_symbols])
+        heavy = _heaviest(weights, cfg.heavy_symbols)
         # The store's own scale: the median vividness of its records (references are in its units).
         scale = float(np.median([state.records[m].vividness for m in mids])) if mids else 0.0
         state.weights[pid], state.heavy[pid], state.shared[pid] = weights, heavy, shared
@@ -818,14 +872,19 @@ def derive(model) -> None:
     if state.w["assimilation_weight"] > 0:
         ids = t.alive_ids()
         subjects = ids[(t.subject_of[ids] >= 0) & (t.subject_of[ids] == t.polity[ids])]
+        done: dict[tuple, float] = {}  # (records held, ruler) -> overlap
         for sid in subjects.tolist():
-            mine: dict[int, float] = {}
-            for m in state.held.get(sid, ()):
-                r = state.records[m]
-                for s in r.symbols:
-                    mine[s] = mine.get(s, 0.0) + r.vividness
-            mine = dict(sorted(mine.items(), key=lambda kv: (-kv[1], kv[0]))[: cfg.heavy_symbols])
-            state.subject_overlap[sid] = _overlap(mine, state.heavy.get(int(t.polity[sid]), {}))
+            ruler = int(t.polity[sid])
+            key = (frozenset(state.held.get(sid, ())), ruler)
+            if key not in done:
+                mine: dict[int, float] = {}
+                for m in key[0]:
+                    r = records[m]
+                    for s in r.symbols:
+                        mine[s] = mine.get(s, 0.0) + r.vividness
+                mine = _heaviest(mine, cfg.heavy_symbols)
+                done[key] = _overlap(mine, state.heavy.get(ruler, {}))
+            state.subject_overlap[sid] = done[key]
 
 
 def cohesion_term(model, pids: np.ndarray) -> np.ndarray:

@@ -89,26 +89,33 @@ def core_distances(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return pair_distances(model, ids, model.polities.capital[model.settlements.polity[ids]])
 
 
-def actor_signatures(model, actors) -> tuple:
+def actor_signatures(model, actors, cache: dict | None = None) -> tuple:
     """Appearance and dialect signature of each event actor now, for the memory records
     (spec "In memory"): a settlement's appearance means then its dialect, a polity's those of
     its capital, the teachers' appearance (they have no dialect: NaN); None for entities
-    that are not people and for a lineage. Stored only; nothing reads them back."""
+    that are not people and for a lineage. Stored only; nothing reads them back. ``cache``:
+    signatures already taken at this moment, by entity id (filled in)."""
     from deluge.data.events import decode
 
     t = model.settlements
     n_dia = t.dialect.shape[1]
     out = []
     for a in actors:
+        if cache is not None and a in cache:
+            out.append(cache[a])
+            continue
         kind, local = decode(a)
         if kind == "polity":
             kind, local = "settlement", int(model.polities.capital[local])
         if kind == "settlement":
-            out.append(tuple(np.concatenate((t.appearance_mean[local], t.dialect[local])).round(4).tolist()))
+            sig = tuple(np.concatenate((t.appearance_mean[local], t.dialect[local])).round(4).tolist())
         elif kind == "teachers":
-            out.append(tuple(np.concatenate((model.teachers_appearance, np.full(n_dia, np.nan))).round(4).tolist()))
+            sig = tuple(np.concatenate((model.teachers_appearance, np.full(n_dia, np.nan))).round(4).tolist())
         else:
-            out.append(None)
+            sig = None
+        if cache is not None:
+            cache[a] = sig
+        out.append(sig)
     return tuple(out)
 
 
@@ -138,23 +145,21 @@ def blend(model, host: int, guest: int, people: float | None = None) -> None:
     t.dialect[host] = (1.0 - w) * t.dialect[host] + w * t.dialect[guest]
 
 
-def _contact_means(model, ids: np.ndarray, same_polity: bool):
-    """Population-weighted mean of each settlement's contacts: (has contacts, appearance
-    mean, appearance var, dialect)."""
+def _contact_weights(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each settlement's contacts (``polities.contact_radius``): (ids with -1 read as 0, people
+    in every contact, people in the contacts of its own polity), each (S, k)."""
     t = model.settlements
     occ = np.append(model.occupant, -1)[model.contact_cells[t.cell[ids]]]  # (S, k) settlement ids or -1
-    ok = occ >= 0
-    if same_polity:
-        ok &= t.polity[np.maximum(occ, 0)] == t.polity[ids][:, None]
-    w = np.where(ok, t.population[np.maximum(occ, 0)], 0.0)
-    total = w.sum(axis=1)
-    has = total > 0
-    wn = w / np.maximum(total, 1e-12)[:, None]
     o = np.maximum(occ, 0)
-    mean = np.einsum("sk,skj->sj", wn, t.appearance_mean[o])
-    var = np.einsum("sk,skj->sj", wn, t.appearance_var[o])
-    dialect = np.einsum("sk,skj->sj", wn, t.dialect[o])
-    return has, mean, var, dialect
+    w_all = np.where(occ >= 0, t.population[o], 0.0)
+    w_own = np.where(t.polity[o] == t.polity[ids][:, None], w_all, 0.0)
+    return o, w_all, w_own
+
+
+def _weighted(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(has contacts, weights normalised per row)."""
+    total = w.sum(axis=1)
+    return total > 0, w / np.maximum(total, 1e-12)[:, None]
 
 
 def run(model) -> None:
@@ -164,11 +169,16 @@ def run(model) -> None:
     if len(ids) == 0:
         return
 
-    # Mixing inside polities (appearance), contact convergence for everyone (dialect).
-    has, mean, var, _ = _contact_means(model, ids, same_polity=True)
+    # Mixing inside polities (appearance), contact convergence for everyone (dialect): the
+    # population-weighted means of the contacts.
+    o, w_all, w_own = _contact_weights(model, ids)
+    has, wn = _weighted(w_own)
+    mean = np.einsum("sk,skj->sj", wn, t.appearance_mean[o])
+    var = np.einsum("sk,skj->sj", wn, t.appearance_var[o])
     w = (a.mixing_rate * model.polities.intermarriage[t.polity[ids]] * has)[:, None]
     t.appearance_mean[ids], t.appearance_var[ids] = _mix(t.appearance_mean[ids], t.appearance_var[ids], mean, var, w)
-    has, _, _, dialect = _contact_means(model, ids, same_polity=False)
+    has, wn = _weighted(w_all)
+    dialect = np.einsum("sk,skj->sj", wn, t.dialect[o])
     wd = (a.dialect_contact_rate * has)[:, None]
     t.dialect[ids] = (1.0 - wd) * t.dialect[ids] + wd * dialect
     # Assimilation: subjects' dialect moves toward their ruler's capital.

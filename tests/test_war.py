@@ -185,7 +185,7 @@ def test_reach_cache_follows_the_sea():
 
 
 def test_layered_graph_reach_equals_sea_reach():
-    """``reach_lists`` (the layered BFS kernel, ``war._reach_one``) gives ``sea_reach``'s cells
+    """``reach_lists`` (the bucket-queue kernel, ``war._reach_one``) gives ``sea_reach``'s cells
     and sea counts exactly, for several land radii and sea budgets."""
     m = small_model(years=20)
     m.run()

@@ -18,8 +18,9 @@ per-neighbour head scores each candidate from its target features
 perceived appearance and dialect distance, already at war, a capital). Each polity takes
 its best-scoring target and attacks it with chance ``attack_rate`` x its aggression output
 x score x min(food per head, 1) (its surplus capacity to fight); a campaign rather than a
-raid with chance = its campaign output. A polity already at war with ``max_wars`` polities
-only attacks those. The teachers are not chosen as a target: they hold no stores or land
+raid with chance = its campaign output. Every living polity draws both each year (in id
+order); targets are looked up only for those whose draw could succeed. A polity already at
+war with ``max_wars`` polities only attacks those. The teachers are not chosen as a target: they hold no stores or land
 (``TeachersState.attacked`` stays for a later round).
 
 Strength S = P x mobilization x M_tech x (0.5 + cohesion) x D. Mobilization rises with
@@ -263,96 +264,76 @@ def sea_reach(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) 
 
 
 @njit(cache=True)
-def _relax_over_sea(neighbors, is_sea, cur, seeds, budget, reached, n_reached, buf_a, buf_b):
-    """Lower ``cur`` over sea cells (+1 per sea cell entered, at most ``budget``) from
-    ``seeds`` (cells whose value just fell), level by level; returns the new ``n_reached``."""
-    big = 1 << 30
-    # Seeds by value (a counting sort over 0..budget).
-    count = np.zeros(budget + 2, np.int64)
-    for s in seeds:
-        count[cur[s] + 1] += 1
-    for k in range(budget + 1):
-        count[k + 1] += count[k]
-    ordered = np.empty(len(seeds), np.int64)
-    fill = count.copy()
-    for s in seeds:
-        ordered[fill[cur[s]]] = s
-        fill[cur[s]] += 1
-    i, ns = 0, len(ordered)
-    now, n_now = buf_a, 0  # cells pushed at value k
-    nxt = buf_b
-    for k in range(budget + 1):
-        n_next = 0
-        for phase in range(2):
-            if phase == 0:
-                lo, hi = i, ns
-            else:
-                lo, hi = 0, n_now
-            j = lo
-            while j < hi:
-                c = ordered[j] if phase == 0 else now[j]
-                if phase == 0 and cur[c] != k:
-                    break  # the seeds of value k are done
-                j += 1
-                if cur[c] != k or k + 1 > budget:
-                    continue  # stale entry, or no sea step left
-                for e in range(neighbors.shape[1]):
-                    m = neighbors[c, e]
-                    if m >= 0 and is_sea[m] and k + 1 < cur[m]:
-                        if cur[m] == big:
-                            reached[n_reached] = m
-                            n_reached += 1
-                        cur[m] = k + 1
-                        nxt[n_next] = m
-                        n_next += 1
-            if phase == 0:
-                i = j
-        now, nxt = nxt, now
-        n_now = n_next
-        if i >= ns and n_now == 0:
-            break
-    return n_reached
-
-
-@njit(cache=True)
 def _reach_one(neighbors, is_sea, origin, land_steps, budget):
     """(targets, sea) from ``origin``: every cell a path entering at most ``land_steps`` land
     cells and at most ``budget`` sea cells reaches (the origin itself counts as neither), with
-    the fewest sea cells crossed; targets ascending. Layer by layer: the cells reached with at
-    most l land cells entered, closed over sea steps, then one more land step."""
+    the fewest sea cells crossed; targets ascending.
+
+    A bucket queue over states (cell, land cells entered), by sea cells crossed and then land
+    cells entered: a state is expanded only if no state of the same cell with no more sea
+    and no more land cells was expanded before it (whatever it reaches, that one reaches with
+    no more of either). A cell's value is the sea count of its first expanded state."""
     n = is_sea.shape[0]
     big = 1 << 30
+    nl = land_steps + 1
     cur = np.full(n, big, np.int64)
-    reached = np.empty(n, np.int64)
-    buf_a = np.empty(n, np.int64)
-    buf_b = np.empty(n, np.int64)
-    cur[origin] = 0
-    reached[0] = origin
-    n_reached = _relax_over_sea(neighbors, is_sea, cur, np.array([origin], np.int64), budget, reached, 1,
-                                buf_a, buf_b)
-    changed = np.empty(n, np.int64)
-    for _ in range(land_steps):
-        old = cur.copy()
-        n_changed = 0
-        for r in range(n_reached):
-            c = reached[r]
-            v = old[c]
-            for e in range(neighbors.shape[1]):
-                m = neighbors[c, e]
-                if m >= 0 and not is_sea[m] and v < cur[m]:
-                    if cur[m] == big:
-                        reached[n_reached] = m
-                        n_reached += 1
-                    if cur[m] == old[m]:
-                        changed[n_changed] = m
-                        n_changed += 1
-                    cur[m] = v
-        if n_changed == 0:
+    best_l = np.full(n, nl, np.int64)  # fewest land cells entered among the cell's expanded states
+    n_reached = 0
+    # States pending at sea count k (``now``) and k + 1 (``nxt``), one list per land count; the
+    # fewest land cells each cell is pending with at each of the two counts (``pend``, valid
+    # where ``pend_at`` holds that count), so a cell is listed at most once per list.
+    now = np.empty((nl, n), np.int64)
+    nxt = np.empty((nl, n), np.int64)
+    n_now = np.zeros(nl, np.int64)
+    n_nxt = np.zeros(nl, np.int64)
+    pend = np.full((2, n), nl, np.int64)
+    pend_at = np.full((2, n), -1, np.int64)
+    now[0, 0] = origin
+    n_now[0] = 1
+    pend[0, origin] = 0
+    pend_at[0, origin] = 0
+    for k in range(budget + 1):
+        p, q = k & 1, (k + 1) & 1
+        for l in range(nl):
+            i = 0
+            while i < n_now[l]:  # land steps add to list l + 1 only, so n_now[l] is fixed here
+                c = now[l, i]
+                i += 1
+                if l >= best_l[c]:
+                    continue
+                if cur[c] == big:
+                    cur[c] = k
+                    n_reached += 1
+                best_l[c] = l
+                for e in range(neighbors.shape[1]):
+                    m = neighbors[c, e]
+                    if m < 0:
+                        continue
+                    if is_sea[m]:
+                        if k < budget and l < best_l[m] and (pend_at[q, m] != k + 1 or l < pend[q, m]):
+                            pend_at[q, m] = k + 1
+                            pend[q, m] = l
+                            nxt[l, n_nxt[l]] = m
+                            n_nxt[l] += 1
+                    elif l + 1 < nl and l + 1 < best_l[m] and (pend_at[p, m] != k or l + 1 < pend[p, m]):
+                        pend_at[p, m] = k
+                        pend[p, m] = l + 1
+                        now[l + 1, n_now[l + 1]] = m
+                        n_now[l + 1] += 1
+        if n_nxt.sum() == 0:
             break
-        n_reached = _relax_over_sea(neighbors, is_sea, cur, changed[:n_changed].copy(), budget, reached,
-                                    n_reached, buf_a, buf_b)
-    targets = np.sort(reached[:n_reached])
-    return targets, cur[targets]
+        now, nxt = nxt, now
+        n_now, n_nxt = n_nxt, n_now
+        n_nxt[:] = 0
+    targets = np.empty(n_reached, np.int64)  # ascending: a scan over the cells, no sort
+    sea = np.empty(n_reached, np.int64)
+    j = 0
+    for c in range(n):
+        if cur[c] != big:
+            targets[j] = c
+            sea[j] = cur[c]
+            j += 1
+    return targets, sea
 
 
 def reach_lists(model, cells: np.ndarray, land_steps: int, sea_steps: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
@@ -527,9 +508,24 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
     w = model.config.war
     t, P = model.settlements, model.polities
     rng = model.streams["war"]
-    ids = t.alive_ids()
-    if len(ids) == 0:
+    pids = P.alive_ids()
+    if len(pids) == 0:
         return []
+    # Each living polity draws whether it attacks (chance attack_rate x aggression x its best
+    # target's score x food) and whether by campaign. A score is at most 1, so a polity whose
+    # draw is at least attack_rate x aggression x food cannot attack: targets are found and
+    # scored only for the others. A polity with no target in reach does not attack.
+    brains = model.brains
+    out = brains.output[pids]
+    fed = np.clip(F.fed[pids], 0.0, 1.0)
+    attack_draw = rng.random(len(pids))
+    campaign = rng.random(len(pids)) < out[:, OUT["campaign"]]
+    rate = w.attack_rate * out[:, OUT["aggression"]]
+    maybe = attack_draw < rate * fed
+    if not maybe.any():
+        return []
+    ids = t.alive_ids()
+    ids = ids[np.isin(t.polity[ids], pids[maybe])]
     # Foreign settlements in reach (``war_contacts``), one attacking settlement per (polity,
     # target): over land if one is, else the shortest crossing (then the lowest id).
     pol = t.polity[ids]
@@ -547,29 +543,12 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
         src, x, a, b, sea = src[allowed], x[allowed], a[allowed], b[allowed], sea[allowed]
         if len(a) == 0:
             return []
-    # Candidates come by attacker id. Each attacker draws whether it attacks (chance attack_rate
-    # x aggression x its best target's score x food) and whether by campaign. A score is at most
-    # 1, so an attacker whose draw is at least attack_rate x aggression x food cannot attack:
-    # only the others' targets are scored (the same values: every step is per candidate).
-    brains = model.brains
-    first = np.flatnonzero(np.r_[True, a[1:] != a[:-1]])
-    attackers = a[first]
-    out = brains.output[attackers]
-    fed = np.clip(F.fed[attackers], 0.0, 1.0)
-    attack_draw = rng.random(len(attackers))
-    campaign = rng.random(len(attackers)) < out[:, OUT["campaign"]]
-    rate = w.attack_rate * out[:, OUT["aggression"]]
-    maybe = attack_draw < rate * fed
-    if not maybe.any():
-        return []
-    sel = np.repeat(maybe, np.diff(np.r_[first, len(a)]))
-    src, x, a, b, sea = src[sel], x[sel], a[sel], b[sel], sea[sel]
     sa, sd = strengths(model, F, a, b, x)
     p_win = win_chance(sa, sd, w.win_steepness)
     score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a])
     order = np.lexsort((-score, a))
     best = order[np.r_[True, a[order][1:] != a[order][:-1]]]  # top score per attacker, attacker id order
-    k = np.flatnonzero(maybe)
+    k = np.searchsorted(pids, a[best])  # the attackers' rows in pids
     attack = attack_draw[k] < rate[k] * score[best] * fed[k]
     return [(int(a[j]), int(b[j]), int(src[j]), int(x[j]), bool(c), int(sea[j]))
             for j, go, c in zip(best.tolist(), attack.tolist(), campaign[k].tolist()) if go]

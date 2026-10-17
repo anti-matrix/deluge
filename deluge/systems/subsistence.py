@@ -59,17 +59,24 @@ def food_per_head(shares: np.ndarray, k: np.ndarray, pop, cfg) -> np.ndarray:
     return np.minimum(shares * a[None, :], k / np.maximum(per, 1e-12)).sum(axis=1)
 
 
-def fed_capacity(shares: np.ndarray, k: np.ndarray, cfg, iterations: int = 40) -> np.ndarray:
-    """Population each row's mode mix feeds at one ration per head (food per head falls
-    with population, so bisection on it)."""
-    lo = np.zeros(len(shares))
-    hi = k.sum(axis=1) + 1.0  # beyond the summed capacities food per head < 1
-    for _ in range(iterations):
-        mid = 0.5 * (lo + hi)
-        fed = food_per_head(shares, k, np.maximum(mid, 1e-9), cfg)
-        lo = np.where(fed >= 1.0, mid, lo)
-        hi = np.where(fed >= 1.0, hi, mid)
-    return lo
+def fed_capacity(shares: np.ndarray, k: np.ndarray, cfg) -> np.ndarray:
+    """Population each row's mode mix feeds at one ration per head: the largest n with
+    food per head >= 1, i.e. sum_m min(c_m n, K_m) >= n (c_m = share_m a_m). A sum of
+    minima is the minimum over subsets S of modes of C_S n + K_notS, so n = the least
+    K_notS / (1 - C_S) over the subsets with C_S < 1 (0 when all c_m sum to less than 1)."""
+    a, _ = mode_parameters(cfg)
+    c = shares * a[None, :]
+    subsets = _mode_subsets(c.shape[1])
+    c_in = c @ subsets.T  # (S, subsets)
+    k_out = k @ (1.0 - subsets).T
+    with np.errstate(divide="ignore"):
+        bound = np.where(c_in < 1.0, k_out / (1.0 - c_in), np.inf)
+    return bound.min(axis=1)
+
+
+def _mode_subsets(n_modes: int) -> np.ndarray:
+    """(2^n_modes, n_modes) 0/1 rows: every subset of the modes."""
+    return ((np.arange(2 ** n_modes)[:, None] >> np.arange(n_modes)[None, :]) & 1).astype(float)
 
 
 def expected_growth(shares: np.ndarray, k: np.ndarray, pop: np.ndarray, cfg) -> np.ndarray:

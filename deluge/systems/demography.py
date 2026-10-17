@@ -122,19 +122,20 @@ def sea_cells_crossed(model, sid: int, origin: int, dest: int) -> int:
 
 def expected_food(model, sid: int, cells: np.ndarray, people: float) -> np.ndarray:
     """Food per head ``people`` of settlement ``sid`` could expect on each cell, with its
-    own modes and techniques."""
+    own modes and techniques (one technique row for every cell)."""
     t = model.settlements
-    knows = np.repeat(t.knows[sid][None, :], len(cells), axis=0)
-    k = mode_capacity(model, knows, cells)
-    shares = np.repeat(t.shares[sid][None, :], len(cells), axis=0)
-    return food_per_head(shares, k, people, model.config.demography)
+    k = mode_capacity(model, t.knows[sid], cells)
+    return food_per_head(t.shares[sid], k, people, model.config.demography)
 
 
-def cell_utility(model, sid: int, cells: np.ndarray, steps: np.ndarray, people: float) -> np.ndarray:
+def cell_utility(model, sid: int, cells: np.ndarray, steps: np.ndarray, people: float,
+                 expected: np.ndarray | None = None) -> np.ndarray:
+    """Utility of each cell for band ``sid`` (``expected``: its expected food per head
+    there, when already computed)."""
     m = model.config.migration
-    expected = expected_food(model, sid, cells, people)
-    occupied = np.append(model.occupant >= 0, False)
-    crowd = occupied[model.geom.neighbors[cells]].sum(axis=1)
+    if expected is None:
+        expected = expected_food(model, sid, cells, people)
+    crowd = (np.append(model.occupant, -1)[model.geom.neighbors[cells]] >= 0).sum(axis=1)
     with np.errstate(divide="ignore"):
         return np.log(expected) - m.distance_cost * steps - m.crowding_cost * crowd
 
@@ -147,11 +148,12 @@ def best_free_cell(model, sid: int, people: float, min_ratio: float, origin: int
     cells, steps = cells[free], steps[free]
     if len(cells) == 0:
         return -1, -np.inf
-    ok = expected_food(model, sid, cells, people) >= min_ratio
+    expected = expected_food(model, sid, cells, people)
+    ok = expected >= min_ratio
     if not ok.any():
         return -1, -np.inf
     cells, steps = cells[ok], steps[ok]
-    u = cell_utility(model, sid, cells, steps, people)
+    u = cell_utility(model, sid, cells, steps, people, expected[ok])
     i = int(np.argmax(u))
     return int(cells[i]), float(u[i])
 

@@ -142,10 +142,15 @@ class KnowledgeGraph:
             out[:, self.unlocks[t]] |= knows[:, t]
         return out
 
-    def prerequisites_met(self, knows: np.ndarray) -> np.ndarray:
-        """(S, T) bool: every prerequisite of the technique is held."""
-        need = self.prereq.sum(axis=1)
-        return (knows.astype(np.int64) @ self.prereq.T.astype(np.int64)) == need[None, :]
+    def prerequisites_held(self, knows: np.ndarray) -> np.ndarray:
+        """(S, T) float: how many of the technique's prerequisites are held (exact counts)."""
+        return knows.astype(float) @ self.prereq.T.astype(float)
+
+    def prerequisites_met(self, knows: np.ndarray, held: np.ndarray | None = None) -> np.ndarray:
+        """(S, T) bool: every prerequisite of the technique is held (``held``: the counts of
+        ``prerequisites_held``, when already computed)."""
+        held = self.prerequisites_held(knows) if held is None else held
+        return held == self.prereq.sum(axis=1)[None, :]
 
 
 def production_multiplier(model, ids: np.ndarray) -> np.ndarray:
@@ -216,9 +221,10 @@ def neighbour_counts(model, ids: np.ndarray, flags: np.ndarray) -> np.ndarray:
     """(S, T) number of adjacent settlements with each flag set (``flags`` is (S, T)
     over the same settlements)."""
     t = model.settlements
-    per_cell = np.zeros((model.geom.n_cells + 1, flags.shape[1]), dtype=np.int64)
+    per_cell = np.zeros((model.geom.n_cells + 1, flags.shape[1]), dtype=np.uint8)
     per_cell[t.cell[ids]] = flags
-    return per_cell[model.geom.neighbors[t.cell[ids]]].sum(axis=1)  # -1 reads the zero padding row
+    # -1 reads the zero padding row; at most 6 neighbours, so uint8 sums are exact.
+    return per_cell[model.geom.neighbors[t.cell[ids]]].sum(axis=1, dtype=np.uint8).astype(np.int64)
 
 
 def work_deposits(model, ids: np.ndarray, in_use: np.ndarray) -> None:
@@ -315,9 +321,8 @@ def run(model) -> None:
     work_deposits(model, ids, knows & used)
 
     # Invention.
-    prereq_share = np.where(g.prereq.sum(axis=1) > 0,
-                            (knows.astype(float) @ g.prereq.T.astype(float)) / np.maximum(g.prereq.sum(axis=1), 1),
-                            1.0)
+    held = g.prerequisites_held(knows)
+    prereq_share = np.where(g.prereq.sum(axis=1) > 0, held / np.maximum(g.prereq.sum(axis=1), 1), 1.0)
     dol = knows[:, g.index("division_of_labor")]
     odds = (k.invention_scale * g.invention_rate[None, :]
             * (pop[:, None] / k.invention_reference_population) ** k.invention_population_exponent
@@ -333,7 +338,7 @@ def run(model) -> None:
     openness = model.openness_of(ids)
     rate = k.diffusion_rate * openness * g.multiplier(knows, "diffusion")
     p = 1.0 - (1.0 - np.clip(rate, 0.0, 1.0))[:, None] ** contacts
-    adopted = (~knows & ~invented & access & g.prerequisites_met(knows) & (contacts > 0)
+    adopted = (~knows & ~invented & access & g.prerequisites_met(knows, held) & (contacts > 0)
                & (rng.random(knows.shape) < p))
 
     gained = invented | adopted
