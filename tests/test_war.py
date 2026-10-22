@@ -222,8 +222,9 @@ def test_battle_across_sea_is_logged_as_a_crossing():
     assert m.events.origin[crossed[0]] == int(m.settlements.cell[sa])  # where the crossing set out from
     name = chronicle.Namer(m)
     text = chronicle.line(r, name)
-    target = name(entity("settlement", sb))
-    assert f"{name(entity('polity', a))} crossed the sea and landed at {target}" in text and "(2 sea cells)" in text
+    src, target = name(entity("settlement", sa)), name(entity("settlement", sb))
+    assert f"{name(entity('polity', a))} crossed the sea from {src} to attack {target} of " in text
+    assert "(2 sea cells)" in text
     assert m.stats["sea_battles"] == 1
 
 
@@ -378,7 +379,7 @@ def test_capital_capture_destroys_a_small_polity():
     name = chronicle.Namer(m)
     lines = chronicle.lines(m, 10)  # a capital lost and a polity ended are always told
     assert any(f"{name(entity('polity', b))} lost {name(entity('settlement', sb))} to" in s for s in lines)
-    assert any(f"{name(entity('polity', b))} came to an end" in s for s in lines)
+    assert any(f"{name(entity('polity', a))} destroyed {name(entity('polity', b))}" in s for s in lines)
 
 
 def test_capital_capture_moves_the_capital_of_a_large_polity():

@@ -41,9 +41,10 @@ from deluge.data.events import ACTIONS, entity
 # UI and the chronicle); they are re-exported here for the reports.
 from deluge.naming import (Speaker, data_for, entity_detail, load_data, name, phonotactic,  # noqa: F401
                            syllable_count)
+from deluge.roles import run_key
 from deluge.systems.memory import PLACE_REGION
 
-REMEMBERED_FIELDS = ("action", "actors", "place", "place_level", "year", "year_span")
+REMEMBERED_FIELDS = ("action", "actors", "roles", "place", "place_level", "year", "year_span")
 
 
 def people_dialect(model, g: int) -> np.ndarray:
@@ -67,13 +68,14 @@ def happened(model, sp: Speaker, events) -> list[dict]:
     count and its summed size."""
     ev = model.events
     d = sp.data
+    count_kinds = model.config.chronicle.run_count_kinds
     order = sorted(events, key=lambda i: (ev.year[i], i))
     runs: list[list[int]] = []
-    stays: dict[tuple, int] = {}  # contacts that passed on nothing: one "stayed with" from the first to the last
+    stays: dict[tuple, int] = {}  # contacts that passed on nothing: one "stayed at" from the first to the last
     prev = None  # the key of the event before, while its run is the last one
     for i in order:
-        key = (ev.action[i], ev.actors[i], ev.place[i])
-        if len(ev.actors[i]) <= 2 and ACTIONS[ev.action[i]] in d["empty_templates"]:
+        key = run_key(ev.action[i], ev.actors[i], ev.place[i], count_kinds)
+        if len(ev.actors[i]) <= 2 and ACTIONS[ev.action[i]] in d["stays"]:
             if key in stays:
                 runs[stays[key]].append(i)
             else:
@@ -91,14 +93,11 @@ def happened(model, sp: Speaker, events) -> list[dict]:
     for k_run, run in enumerate(runs):
         i, last = run[0], run[-1]
         a, b = int(ev.year[i]), int(ev.year[last])
-        time = d["times"]["run"].format(year=a, last=b) if b > a else sp.time(a)
-        text = sp.sentence(ev.action[i], ev.actors[i], sp.event_place(i), time)
-        if len(run) > 1 and k_run not in stay_runs:
-            text = text[:-1] + d["run"].format(count=sp.number(len(run))) + "."
-        amount = d["amounts"].get(ACTIONS[ev.action[i]])
-        if amount:
-            total = sum(ev.magnitude[k] for k in run)
-            text = text[:-1] + f" ({amount.format(m=f'{total:,.0f}')})."
+        if k_run in stay_runs:
+            time = d["times"]["run"].format(year=a, last=b) if b > a else sp.time(a)
+            text = sp.tell(ev.action[i], ev.actors[i], sp.event_slots(i), sp.event_place(i), time)
+        else:
+            text = sp.run(run)
         out.append({"event": int(i), "events": [int(k) for k in run], "year": a, "last_year": b,
                     "action": ACTIONS[ev.action[i]],
                     "actors": [{"entity": int(x), "name": sp.entity(x)} for x in ev.actors[i]],
@@ -111,14 +110,17 @@ def remembered(sp: Speaker, fields: dict) -> dict:
     unknown = set(fields) - set(REMEMBERED_FIELDS)
     if unknown:
         raise KeyError(f"remembered() reads only {REMEMBERED_FIELDS}, got {sorted(unknown)}")
-    place = sp.place(fields["place"], fields["place_level"])
+    level = int(fields["place_level"])
+    place = sp.place(fields["place"], level) if fields["place"] >= 0 and level <= PLACE_REGION else ""
     time = sp.time(fields["year"], fields["year_span"])
+    actors = fields["actors"]
+    roles = sp.roles(fields["action"], actors, fields["roles"])
     return {"action": ACTIONS[fields["action"]],
-            "actors": [{"entity": int(a), "name": sp.entity(a)} for a in fields["actors"]],
-            "place": {"level": ("cell", "region", "none")[min(int(fields["place_level"]), 2)],
-                      "id": int(fields["place"]), "name": place},
+            "actors": [{"entity": int(a), "name": sp.entity(a), "role": r} for a, r in zip(actors, roles)],
+            "place": {"level": ("cell", "region", "none")[min(level, 2)], "id": int(fields["place"]),
+                      "name": place},
             "year": int(fields["year"]), "year_span": int(fields["year_span"]),
-            "text": sp.sentence(fields["action"], fields["actors"], place, time)}
+            "text": sp.tell(fields["action"], actors, fields["roles"], place, time)}
 
 
 def record_fields(rec) -> dict:

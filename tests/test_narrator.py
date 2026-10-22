@@ -43,7 +43,7 @@ def test_phrase_table_covers_every_technique_mineral_and_verb(ran):
     data = narrator.data_for(ran)
     assert set(data["techniques"]) == set(ran.knowledge.names)
     assert set(data["minerals"]) == set(MINERALS)
-    assert set(data["templates"]) == set(ACTIONS)
+    assert set(data["sentences"]) == set(ACTIONS)
     assert set(data["technologies"]) >= set(ran.config.teachers.technologies)
     for trad in data["names"]["traditions"].values():
         for k in ("initials", "consonants", "clusters", "vowels", "codas", "endings"):
@@ -163,8 +163,8 @@ def test_runs_stays_counts_and_agreement(ran):
     out = narrator.happened(m, sp, list(range(start, len(ev))))
     try:
         assert len(out) == 3
-        assert "stayed with" in out[0]["text"] and "from year 5 to 8" in out[0]["text"].lower()
-        assert "from year 6 to 7" in out[1]["text"].lower() and "(two times)" in out[1]["text"] and "3,000 dead" in out[1]["text"]
+        assert "stayed at" in out[0]["text"] and "from year 5 to 8" in out[0]["text"].lower()
+        assert "from year 6 to 7" in out[1]["text"].lower() and " two times (" in out[1]["text"] and "3,000 dead" in out[1]["text"]
         assert "in year 9" in out[2]["text"].lower()
     finally:
         for col in (ev.year, ev.action, ev.actors, ev.place, ev.magnitude, ev.link, ev.people, ev.polity_people,
@@ -174,10 +174,10 @@ def test_runs_stays_counts_and_agreement(ran):
     arts = [entity("artifact", i) for i in range(2)]
     if len(m.teachers_state.kind) >= 2 and len({sp.entity(a) for a in arts}) == 1:
         assert sp.counted(arts)[0].startswith("two gifts of")
-    text = sp.sentence(ACTION_CODE["founded"], [entity("polity", 0), entity("polity", 1)], "here", "in year 1")
-    assert " were founded" in text
-    text = sp.sentence(ACTION_CODE["founded"], [entity("settlement", 0), entity("settlement", 1)], "here", "in year 1")
-    assert " was founded" in text
+    text = sp.sentence(ACTION_CODE["founded"], [entity("polity", 0), entity("settlement", 0)], "", "in year 1")
+    assert " were founded at " in text
+    text = sp.sentence(ACTION_CODE["depleted"], [entity("deposit", 0)], "", "in year 1")
+    assert " was used up" in text
 
 
 def test_origins_list_current_records_first(ran):

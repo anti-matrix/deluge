@@ -890,3 +890,7 @@ chronicle:                    # the browser chronicle (deluge/data/chronicle.py)
   always_actions: [built]     # always told (monuments)
   first_actions: [learned, taught]  # techniques among their actors: told the first time anywhere and per lineage
   crossing_actions: [crossed] # told the first time a lineage reaches another landmass, and per sea tier anywhere
+  # Runs: an event told like the one before it (same verb, the same actors, the same place) at most
+  # this many years later joins that one's entry, told once with its count and span.
+  run_gap_years: 25
+  run_count_kinds: [monument] # actors made anew by each event: a run matches them by kind only

@@ -17,6 +17,12 @@ the people of its actors' polities, the cells it names), never what an entity is
   than the one it set out from, per lineage, and per sea tier anywhere (the tier: the
   techniques' sea_steps, the smallest that covers the sea cells crossed).
 
+Sentences are built from the actors' roles (``deluge/roles.py``). A told event that repeats
+the one before it with the same key (``roles.run_key``: verb, actors, place; actors of
+``run_count_kinds`` by kind only) within ``run_gap_years`` joins that one's entry: a run, told
+once with its count and span ("From year 1194 to 1940, the Mafeish people raised 594
+monuments at Feshedad"). Firsts are told alone.
+
 Every other event is counted in a summary per generation (``generation_years``) and lineage,
 by action, kind of first actor and technique (``summaries`` in the phrase table), once the
 generation is over. Entries are kept in time order; a view shows the newest
@@ -34,6 +40,7 @@ import numpy as np
 
 from deluge.data.events import ACTION_CODE, ACTIONS, ENTITY_KINDS, decode, entity
 from deluge.naming import Speaker
+from deluge.roles import run_key
 
 N_KINDS = len(ENTITY_KINDS)
 KIND = {k: i for i, k in enumerate(ENTITY_KINDS)}
@@ -63,13 +70,7 @@ class Namer:
 
 def line(record: dict, name: Namer) -> str:
     """One raw event (``EventLog.record``) as the narrator's sentence, with its size."""
-    sp = name.sp
-    place = sp.event_place(record["event"]) if "event" in record else sp.place(record["place"])
-    text = sp.sentence(ACTION_CODE[record["action"]], record["actors"], place, sp.time(record["year"]))
-    form = sp.data["amounts"].get(record["action"])
-    if form:
-        text = text[:-1] + f" ({form.format(m=f'{record['magnitude']:,.0f}')})."
-    return text
+    return name.sp.event(record["event"])
 
 
 def _kinds_locals(ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -110,6 +111,9 @@ class Chronicle:
         self._groups = np.zeros(0, dtype=np.int64)
         self._new: list[tuple[np.ndarray, ...]] = []
         self.suffix: dict[int, list[str]] = {}  # event -> what the chronicle adds (firsts)
+        self.runs: dict[int, list[int]] = {}  # an entry's event -> the events of its run (when more than one)
+        self._open: dict[tuple, tuple[int, int]] = {}  # run key -> (its entry's event, its last year)
+        self.run_kinds = tuple(cfg.run_count_kinds)
         self.summaries: list[dict] = []
         self._text: dict[tuple[int, int], str] = {}
         self._pending: list[np.ndarray] = []  # routine rows not yet summed: (gen, lineage, action, kind, detail, actor)
@@ -129,7 +133,7 @@ class Chronicle:
         if self._type[k] == 0:
             i = int(self._ref[k])
             return {"event": i, "year": int(self._year[k]), "groups": int(self._groups[k]),
-                    "suffix": self.suffix.get(i, [])}
+                    "suffix": self.suffix.get(i, []), "events": self.runs.get(i, [i])}
         return {"event": -1, **self.summaries[int(self._ref[k])], "groups": int(self._groups[k])}
 
     @property
@@ -241,7 +245,7 @@ class Chronicle:
         self._crossings(i0, n, action, years, mag, owner, suffix)
         told[[r for r in suffix]] = True
         self.suffix.update((i0 + r, s) for r, s in suffix.items())
-        rows = np.flatnonzero(told)
+        rows = self._join_runs(i0, np.flatnonzero(told), action, years)
         self._new.append((years[rows], np.zeros(len(rows), dtype=np.int64), i0 + rows, groups[rows]))
         rest = np.flatnonzero(~told)
         if len(rest):
@@ -249,6 +253,30 @@ class Chronicle:
             rows = np.column_stack([years[rest] // cfg.generation_years, owner[rest], action[rest], kinds[0][rest],
                                     detail[rest], a[0][rest]])
             self._pending.append(rows)
+
+    def _join_runs(self, i0: int, rows: np.ndarray, action, years) -> np.ndarray:
+        """Told events that repeat the run before them (``run_key``, within ``run_gap_years``)
+        join its entry; the rest start entries. Firsts are told alone."""
+        log, gap = self.model.events, self.cfg.run_gap_years
+        keep = []
+        for r in rows.tolist():
+            i = i0 + r
+            if i in self.suffix:
+                keep.append(r)
+                continue
+            key = run_key(action[r], log.actors[i], log.place[i], self.run_kinds)
+            y = int(years[r])
+            open_ = self._open.get(key)
+            if open_ is not None and y - open_[1] <= gap:
+                self.runs.setdefault(open_[0], [open_[0]]).append(i)
+                self._open[key] = (open_[0], y)
+                continue
+            self._open[key] = (i, y)
+            keep.append(r)
+        if len(self._open) > 4 * max(len(keep), 1000):  # runs that can no longer grow
+            y = int(years[-1]) if len(years) else 0
+            self._open = {k: v for k, v in self._open.items() if y - v[1] <= gap}
+        return np.asarray(keep, dtype=np.int64)
 
     def _firsts(self, i0: int, action, kinds, local, owner, suffix: dict) -> None:
         """The first event anywhere, and per lineage, with each technique among its actors."""
@@ -384,11 +412,12 @@ class Chronicle:
         language (cached)."""
         if not isinstance(entry, dict):
             entry = self.entry(int(entry))
-        key = (0, entry["event"]) if entry["event"] >= 0 else (1, (entry["year"], entry["lineage"]))
+        events = entry.get("events") or [entry["event"]]
+        key = (0, entry["event"], len(events)) if entry["event"] >= 0 else (1, (entry["year"], entry["lineage"]))
         t = self._text.get(key)
         if t is None:
             if entry["event"] >= 0:
-                t = self.sp.event(entry["event"])
+                t = self.sp.run(events)
                 if entry["suffix"]:
                     t = t[:-1] + "".join(entry["suffix"]) + "."
             else:

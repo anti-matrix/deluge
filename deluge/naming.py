@@ -31,7 +31,8 @@ import yaml
 
 from deluge.agents.teachers import ARTIFACT_KINDS
 from deluge.config import DEFAULT_CONFIG_PATH
-from deluge.data.events import ACTIONS, ENTITY_KINDS, decode
+from deluge.data.events import ACTIONS, ENTITY_KINDS, PEOPLE_KINDS, decode
+from deluge.roles import FIELD, table_for
 from deluge.world.worlddata import MINERALS
 
 PLACE_CELL, PLACE_REGION = 0, 1  # place levels (``systems/memory.py``: PLACE_CELL, PLACE_REGION)
@@ -340,37 +341,84 @@ class Speaker:
         kinds = self.data["plural_kinds"]
         return kind in kinds or ("first_kind" in kinds and kind == ENTITY_KINDS[0])
 
-    def sentence(self, action: int, actors, place: str, time: str) -> str:
-        """One sentence from a verb, actors in order, a place and a time phrase; actors the
-        verb's shape leaves out are added at the end, in order; identical names are counted."""
+    # --- sentences from roles (``deluge/roles.py``) -------------------------------------------------
+
+    def roles(self, action: int, actors, slots) -> list[str | None]:
+        """Each actor's role by its slot; None for a slot of another verb (or none)."""
+        rt = table_for(self.data)
+        slots = list(slots) + [None] * (len(actors) - len(slots))
+        return [rt.role(s, a) if s is not None and s[0] == action else None for s, a in zip(slots, actors)]
+
+    def tell(self, action: int, actors, slots, place: str = "", time: str | None = None, count: int = 1) -> str:
+        """One sentence of ``action`` from its actors' roles (``slots``: each actor's slot), where
+        it happened (a place phrase, "" for none) and when; ``count`` > 1 tells a run. A set of
+        roles with no shape of the verb is told in the loose form (``loose``)."""
         d = self.data
-        verb = ACTIONS[action]
-        template = d["templates"][verb]
-        if len(actors) <= 2 and verb in d["empty_templates"]:
-            template = d["empty_templates"][verb]
-        names = [self.entity(a) for a in actors]
-        used = {int(k) for k in "0123456789" if "{" + k + "}" in template}
-        if "{rest}" in template:
-            used |= set(range(2, len(names)))
-        if "{from_}" in template and len(names) > 2:
-            used.add(2)
-        padded = names + [d["someone"]] * 10
-        rest = d["joiner"].join(self.counted(actors[2:])) if len(names) > 2 else d["nothing"]
-        from_ = f" from {names[2]}" if len(names) > 2 else ""
-        be = d["be"]["many" if actors and self.many(actors[0]) else "one"]
-        text = template.format(*padded, rest=rest, from_=from_, place=place, time=time, be=be)
-        others = [a for k, a in enumerate(actors) if k not in used]
-        if others:
-            text += d["with_others"].format(others=d["joiner"].join(self.counted(others)))
-        text = text[:1].upper() + text[1:]
-        return text + "."
+        rt = table_for(d)
+        by_role: dict[str, list[int]] = {}
+        for a, r in zip(actors, self.roles(action, actors, slots)):
+            if r is None or not rt.fits(r, a):
+                return self.loose(action, actors, place, time)
+            by_role.setdefault(r, []).append(a)
+        shape, own_run = rt.shape(action, frozenset(by_role), count)
+        if shape is None:
+            return self.loose(action, actors, place, time)
+        names = {r: d["joiner"].join(self.counted(v)) for r, v in by_role.items()}
+        towns = [a for a in actors if decode(a)[0] == "settlement"]
+        if place and any(place == d["places"]["cell"].format(name=self.entity(a)) for a in towns):
+            place = ""  # the place bears the name of a settlement the sentence names
+        lead = next((f for f in FIELD.findall(shape) if f in by_role), None)
+        many = lead is not None and (len(by_role[lead]) > 1 or self.many(by_role[lead][0]))
+        text = shape.format(**names, at=f" {place}" if place else "", be=d["be"]["many" if many else "one"],
+                            count=f"{count:,}")
+        if count > 1 and not own_run:
+            text += d["run"].format(count=self.number(count))
+        if time:
+            text = f"{time}, {text}"
+        return text[:1].upper() + text[1:] + "."
+
+    def loose(self, action: int, actors, place: str = "", time: str | None = None) -> str:
+        """The loose form: "Of the Kavar and the Vahza, and a battle at Adtova, in the first age"."""
+        d = self.data
+        f = d["loose"]
+        agents = [a for a in actors if decode(a)[0] in PEOPLE_KINDS]
+        things = [a for a in actors if decode(a)[0] not in PEOPLE_KINDS]
+        deed = f["deeds"][ACTIONS[action]]
+        if things:
+            deed = f["things"].format(deed=deed, things=d["joiner"].join(self.counted(things)))
+        if place:
+            deed = f"{deed} {place}"
+        parts = [f["people"].format(agents=d["joiner"].join(self.counted(agents))), f["deed"].format(deed=deed)] \
+            if agents else [deed]
+        if time:
+            parts.append(time)
+        text = ", ".join(parts)
+        return text[:1].upper() + text[1:] + "."
+
+    def sentence(self, action: int, actors, place: str = "", time: str | None = None, via: int = -1) -> str:
+        """An event's sentence from its verb and actors in log order (``via``: the verb of the
+        event it is part of)."""
+        return self.tell(action, actors, table_for(self.data).slots(action, actors, via), place, time)
+
+    def event_slots(self, i: int) -> list[tuple]:
+        ev = self.model.events
+        link = ev.link[i]
+        return table_for(self.data).slots(ev.action[i], ev.actors[i], ev.action[link] if link >= 0 else -1)
 
     def event(self, i: int, amount: bool = True) -> str:
         """Event ``i`` of the log as one sentence, with its size (``amounts``)."""
+        return self.run([i], amount)
+
+    def run(self, events, amount: bool = True) -> str:
+        """A run of one event (same verb, groups of people and place) told once: the first
+        event's roles, the run's years and count, the summed size."""
         ev = self.model.events
-        text = self.sentence(ev.action[i], ev.actors[i], self.event_place(i), self.time(ev.year[i]))
-        verb = ACTIONS[ev.action[i]]
-        form = self.data["amounts"].get(verb) if amount else None
+        i, last = events[0], events[-1]
+        a, b = int(ev.year[i]), int(ev.year[last])
+        time = self.data["times"]["run"].format(year=a, last=b) if b > a else self.time(a)
+        text = self.tell(ev.action[i], ev.actors[i], self.event_slots(i), self.event_place(i), time, len(events))
+        form = self.data["amounts"].get(ACTIONS[ev.action[i]]) if amount else None
         if form:
-            text = text[:-1] + f" ({form.format(m=f'{ev.magnitude[i]:,.0f}')})."
+            total = sum(ev.magnitude[k] for k in events)
+            text = text[:-1] + f" ({form.format(m=f'{total:,.0f}')})."
         return text

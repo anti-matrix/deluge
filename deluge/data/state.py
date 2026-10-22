@@ -5,7 +5,8 @@ memory stores and records, the event log, the teachers, the RNG streams, the col
 data, ...) and everything reachable from it, exactly: floats by their bits, dicts in their
 insertion order, sets sorted. Left out: private attributes (leading underscore: Mesa's
 internals and the sim's caches, which hold nothing a later year reads that is not
-recomputed), the Mesa grid and agent objects (agents are digested by id and cell; their state
+recomputed), dataclass fields marked ``reports_only`` (kept for the reports, never read by
+the simulation: the roles of a memory record's actors), the Mesa grid and agent objects (agents are digested by id and cell; their state
 lives in the tables), and bound methods. The config enters by the hash of the sections the
 simulation reads (``simulation_config_hash``).
 """
@@ -101,7 +102,7 @@ def _feed(h, x, seen: set) -> None:
         seen.add(id(x))
         h.update(type(x).__name__.encode())
         if dataclasses.is_dataclass(x):
-            items = [(f.name, getattr(x, f.name)) for f in dataclasses.fields(x)]
+            items = [(f.name, getattr(x, f.name)) for f in dataclasses.fields(x) if not f.metadata.get("reports_only")]
         elif hasattr(x, "__dict__"):
             items = sorted((k, v) for k, v in vars(x).items() if not k.startswith("_"))
         else:

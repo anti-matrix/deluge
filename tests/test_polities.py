@@ -292,7 +292,7 @@ def test_tribute_elites_and_monuments():
     assert P.prestige[pid] > 0
     name = chronicle.Namer(m)
     line = chronicle.line(built[0], name)
-    assert f"{name(entity('polity', pid))} built a monument" in line
+    assert f"{name(entity('polity', pid))} raised a monument" in line
 
 
 def test_no_monuments_without_megalithic_construction():
@@ -360,7 +360,7 @@ def test_polity_layer_and_chronicle():
         assert m.geom.hex_distance(t.cell[members], c).min() <= r
     view = chronicle.Chronicle(m)
     view.sync()
-    assert " people (A) were founded from " in view.markdown()  # a polity founded: always told
+    assert " people (A) were founded at " in view.markdown()  # a polity founded: always told
     assert len(view.select(groups={0})) > 0
     df = m.datacollector.get_model_vars_dataframe()
     assert {"n_polities", "mean_cohesion", "secessions", "fragmentations", "mergers"} <= set(df.columns)

@@ -81,7 +81,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from deluge.data.events import ACTIONS, PEOPLE_KINDS, decode, entity
+from deluge.data.events import ACTIONS, ENTITY_KINDS, PEOPLE_KINDS, decode, entity
 from deluge.systems import identity
 
 SUMMARY = ("heaviest_symbol", "outsider_share", "mean_age")
@@ -119,6 +119,11 @@ class Memory:
     action_votes: dict = field(default_factory=dict)
     place_votes: dict = field(default_factory=dict)
     actor_votes: dict = field(default_factory=dict)
+    # Per actor, the slot it held in its original event: (verb, kind of that event's first
+    # actor, verb of the event it was part of or -1, position). A substituted actor takes over the slot of the one it replaced; a
+    # fused record keeps the slots of the actors that won the vote. Read only by the reports
+    # (so left out of the state digest, ``data/state.py``).
+    roles: tuple = field(default=(), metadata={"reports_only": True})
 
     def tally(self) -> None:
         """Start the tallies from the record's own fields, at its vividness."""
@@ -310,7 +315,7 @@ def _record_events(model) -> None:
             continue
         place = log.place[i]
         keys = [("entity", a) for a in actors] + ([("cell", place)] if place >= 0 else []) + [("event", i)]
-        signatures = None
+        signatures = roles = None
         for p in pols:
             total = float(people[p]) if p < len(people) else 0.0
             share = 1.0 if p in whole else (affected.get(p, 0.0) / total if total > 0 else 1.0)
@@ -333,8 +338,12 @@ def _record_events(model) -> None:
                         gain = min(r.vividness + cfg.repeat_gain * v * np.log1p(1.0 / r.repeats), vmax) - r.vividness
                         r.vividness += gain
                         r.repeated += gain
+            if roles is None:
+                first = actors[0] % len(ENTITY_KINDS) if actors else -1
+                via = log.action[log.link[i]] if log.link[i] >= 0 else -1
+                roles = tuple((code, first, via, k) for k in range(len(actors)))
             rec = Memory(state._new_id(), tuple(actors), code, place, log.year[i], log.magnitude[i], v, symbols,
-                         (i,), signatures, base=v)
+                         (i,), signatures, base=v, roles=roles)
             state.created += 1
             verbs.add(code)
             seen.update(actors)
@@ -459,9 +468,17 @@ def _fuse(state: MemoryState, pid: int, mid: int, other: int, year: int) -> None
     sig_of = dict(zip(b.actors, b.signatures))
     sig_of.update(zip(a.actors, a.signatures))
     a.action = _ranked(action_votes)[0]
+    # Each actor's slot: the one of the winning verb if it held one, else the more vivid record's.
+    role_of: dict = {}
+    for r in (b, a):
+        for x, s in zip(r.actors, r.roles):
+            old = role_of.get(x)
+            if old is None or (s is not None and (s[0] == a.action) >= (old[0] == a.action)):
+                role_of[x] = s
     a.place, a.place_level = _ranked(place_votes)[0]
     actors = [x for x in _ranked(actor_votes) if x in sig_of][: cfg.max_actors]
     a.actors, a.signatures = tuple(actors), tuple(sig_of[x] for x in actors)
+    a.roles = tuple(role_of.get(x) for x in actors)
     a.action_votes, a.place_votes, a.actor_votes = action_votes, place_votes, actor_votes
     # Year: the span covering both (spans are relative to each record's age, never fixed bins).
     start = min(a.year, b.year)
@@ -520,7 +537,7 @@ def _new_copy(model, state: MemoryState, rec: Memory, pid: int, factor: float, o
                  rec.year_level, rec.place_level, rec.magnitude_rounded, parent=rec.mem_id,
                  base=rec.base * factor, repeats=rec.repeats, invocations=rec.invocations,
                  action_votes=dict(rec.action_votes), place_votes=dict(rec.place_votes),
-                 actor_votes=dict(rec.actor_votes))
+                 actor_votes=dict(rec.actor_votes), roles=rec.roles)
     verbs, seen = state.seen.setdefault(pid, (set(), set()))
     verbs.add(rec.action)
     seen.update(rec.actors)

@@ -865,6 +865,8 @@ class ChronicleConfig:
     always_actions: tuple[str, ...]
     first_actions: tuple[str, ...]
     crossing_actions: tuple[str, ...]
+    run_gap_years: int
+    run_count_kinds: tuple[str, ...]
 
 
 @dataclass(frozen=True)

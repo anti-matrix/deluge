@@ -127,40 +127,114 @@ times:
   span: "in the years {year} to {last}"
   first_age: "in the first age"
   run: "from year {year} to {last}"
-someone: someone
-nothing: nothing             # {rest} when the verb has no third actor
-with_others: ", with {others}"
 joiner: " and "
+# Verbs whose events with only their first two actors (a contact that passed on nothing) are told once
+# from the first to the last, in "What happened".
+stays: [taught, gave]
 
-# One sentence shape per verb: {0}, {1}, ... are the actors in order, {rest} the actors from the
-# third on, {from_} " from" the third actor when there is one, {place} and {time} as above.
-templates:
-  arrived: "{time}, {0} came to {1} {place}, by {2}"
-  taught: "{time}, {0} taught {1} {rest}"
-  displayed: "{time}, {0} showed {1} {2}"
-  departed: "{time}, {0} left {1} {place}, by {2}"
-  gave: "{time}, {0} gave {1} {rest}"
-  used: "{time}, {1} made use of {0}"
-  broke: "{time}, {0} held by {1} broke"
-  fought: "{time}, {0} fought {1} {place}"
-  won: "{time}, {0} raided {1} {place}"
-  lost: "{time}, {0} lost {1} to {2}"
-  moved: "{time}, {0} moved and settled {place}"
-  founded: "{time}, {0} {be} founded from {1} {place}"
-  built: "{time}, {0} built {1} {place}"
-  starved: "{time}, {0} went hungry"
-  died: "{time}, {0} came to an end"
-  joined: "{time}, {0} joined {1}"
-  learned: "{time}, {0} learned {1}{from_}"
-  forgot: "{time}, {0} forgot {1}"
-  depleted: "{time}, {0} {be} used up"
-  took: "{time}, {0} took {1} from {2}"
-  crossed: "{time}, {0} crossed the sea and landed {place}"
-# The shape for a verb when the event has only its first two actors (a teaching contact that passed on nothing).
-empty_templates:
-  taught: "{time}, {0} stayed with {1}"
-  gave: "{time}, {0} stayed with {1}"
-# Verb agreement: {be} in a template reads as one of these, by the first actor (spoken of as many people or one).
+# Roles (deluge/roles.py). Each actor of an event holds a role, fixed by the slot it holds: per verb,
+# or per "verb/kind of the first actor", or per "verb/kind of the first actor/verb of the event it is
+# part of" (the most specific that exists), one role per position. A role written as a map depends
+# on the actor's own kind; a role ending in "+" takes every actor from that position on. Memory
+# records keep each actor's slot (a substituted actor takes over the slot it replaced).
+roles:
+  arrived: [visitor, host, craft]
+  taught: [instructor, learner, lesson+]
+  displayed: [displayer, witness, shown]
+  departed: [visitor, host, craft]
+  gave: [giver, receiver, gift+]
+  used: [used, user]
+  broke: [broken, keeper]
+  fought: [attacker, defender, attacked]
+  fought/settlement: [attacker, defender]
+  won: [raider, raided, plundered]
+  lost: [loser, capital, taker]
+  lost/settlement: [loser, victor]
+  moved: [mover]
+  founded: [new_settlement, mother]
+  founded/polity: [new_people, {polity: parent_people, settlement: seat}]
+  built: [builder, monument, site]
+  starved: [hungry]
+  died: [ended, destroyer]
+  joined: [joiner_band, host_band]
+  joined/polity: [joiner_people, host_people]
+  learned: [learner, lesson, source]
+  forgot: [forgetter, lesson]
+  depleted: [deposit]
+  took: [taker, taken, former]
+  crossed/polity: [attacker, setout, attacked, defender]
+  crossed/settlement: [crosser, {settlement: mother, polity: owner}]
+  crossed/settlement/founded: [crosser, mother]
+  crossed/settlement/joined: [crosser, host_band]
+# Roles held by things (techniques, crafts, gifts, deposits, monuments); every other role is held by
+# a group of people. A thing is never told as a companion: it stands in its own role.
+thing_roles: [craft, lesson, shown, gift, used, broken, monument, deposit]
+
+# Sentences, per verb: the first shape whose roles are exactly the roles present is used. {role} is the
+# actors holding it (several joined by "and"), {at} where it happened (left out when the place bears
+# the name of a settlement the sentence names), {be} agrees with the first role named. A record whose
+# actors hold no such set of roles of its verb is told in the loose form (below).
+sentences:
+  arrived: ["{visitor} came to {host}{at} by {craft}"]
+  taught: ["{instructor} taught {learner} {lesson}", "{instructor} stayed at {learner}"]
+  displayed: ["{displayer} showed {witness} {shown}"]
+  departed: ["{visitor} left {host}{at} by {craft}"]
+  gave: ["{giver} gave {receiver} {gift}", "{giver} stayed at {receiver}"]
+  used: ["{user} made use of {used}"]
+  broke: ["{broken} kept by {keeper} broke"]
+  fought: ["{attacker} attacked {attacked} of {defender}{at}", "{attacker} attacked {defender}{at}",
+           "{attacker} attacked {attacked}{at}"]
+  won: ["{raider} raided {plundered} of {raided}{at}", "{raider} raided {raided}{at}"]
+  lost: ["{loser} lost {capital} to {taker}", "{loser} {be} beaten back by {victor}{at}", "{loser} lost {capital}"]
+  moved: ["{mover} moved and settled{at}"]
+  founded: ["{mother} founded {new_settlement}{at}", "{new_people} rose from {parent_people}{at}",
+            "{new_people} {be} founded at {seat}", "{new_settlement} {be} founded{at}", "{new_people} arose{at}"]
+  built: ["{builder} raised {monument} at {site}", "{builder} raised {monument}{at}"]
+  starved: ["{hungry} went hungry{at}"]
+  died: ["{destroyer} destroyed {ended}{at}", "{ended} came to an end{at}"]
+  joined: ["{joiner_band} joined {host_band}", "{joiner_people} joined {host_people}{at}"]
+  learned: ["{learner} learned {lesson} from {source}", "{learner} learned {lesson}"]
+  forgot: ["{forgetter} forgot {lesson}"]
+  depleted: ["{deposit} {be} used up"]
+  took: ["{taker} took {taken} from {former}", "{taker} took {taken}"]
+  crossed: ["{attacker} crossed the sea from {setout} to attack {attacked} of {defender}",
+            "{attacker} crossed the sea to attack {attacked}", "{crosser} crossed the sea from {mother}{at}",
+            "{crosser} crossed the sea to join {host_band}", "{crosser} of {owner} crossed the sea and settled{at}",
+            "{crosser} crossed the sea and settled{at}"]
+# Runs of one event (same verb, the same groups of people, the same place; chronicle.run_gap_years):
+# told once over their years. A verb listed here has its own shape with {count}; any other adds "run".
+run_sentences:
+  built: ["{builder} raised {count} monuments at {site}", "{builder} raised {count} monuments{at}"]
+# The loose form, for a record whose roles no longer make a sentence: the groups of people, then what
+# was done (with the things it held), where and when: "Of the Kavar and the Vahza, and a battle at
+# Adtova, in the first age".
+loose:
+  people: "of {agents}"
+  deed: "and {deed}"
+  things: "{deed}, and {things}"
+  deeds:
+    arrived: a coming
+    taught: a teaching
+    displayed: a showing
+    departed: a leaving
+    gave: a giving
+    used: a using
+    broke: a breaking
+    fought: a battle
+    won: a raid
+    lost: a loss
+    moved: a moving
+    founded: a founding
+    built: a building
+    starved: a hunger
+    died: an ending
+    joined: a joining
+    learned: a learning
+    forgot: a forgetting
+    depleted: a using up
+    took: a taking
+    crossed: a crossing of the sea
+# Verb agreement: {be} reads as one of these, by the first role named (spoken of as many people or one).
 be: {one: was, many: were}
 plural_kinds: [polity, lineage, first_kind]  # first_kind: the entity kind listed first in the event log's kinds
 # Several actors with the same name are counted ("two gifts of medicine").
@@ -169,8 +243,9 @@ plural_forms:
   technology: "{count} kinds of {phrase}"
   default: "{name} ({count} times)"
 numbers: [zero, one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve]
-# Runs of identical events (same verb, actors and place in a row) are told once.
-run: " ({count} times)"
+# Runs of one event (same verb, the same groups of people and place) are told once; a verb with no
+# run sentence of its own adds this.
+run: " {count} times"
 # Sizes of what happened (event log magnitudes), only in "What happened".
 amounts:
   arrived: "{m} people there"
