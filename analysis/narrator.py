@@ -35,8 +35,8 @@ from pathlib import Path
 
 import numpy as np
 
-from analysis.provenance import History, origin_records
-from deluge.data.events import ACTIONS, entity
+from analysis.provenance import History, origin_records, substitutions
+from deluge.data.events import ACTIONS, PEOPLE_KINDS, decode, entity
 # The generator, the phrase table and the speaker live in ``deluge/naming.py`` (shared with the
 # UI and the chronicle); they are re-exported here for the reports.
 from deluge.naming import (Speaker, data_for, entity_detail, load_data, name, phonotactic,  # noqa: F401
@@ -115,12 +115,27 @@ def remembered(sp: Speaker, fields: dict) -> dict:
     time = sp.time(fields["year"], fields["year_span"])
     actors = fields["actors"]
     roles = sp.roles(fields["action"], actors, fields["roles"])
+    loose = sp.shape_of(fields["action"], actors, fields["roles"]) is None
     return {"action": ACTIONS[fields["action"]],
-            "actors": [{"entity": int(a), "name": sp.entity(a), "role": r} for a, r in zip(actors, roles)],
+            "actors": [{"entity": int(a), "name": sp.entity(a), "role": r,
+                        "people": decode(a)[0] in PEOPLE_KINDS} for a, r in zip(actors, roles)],
             "place": {"level": ("cell", "region", "none")[min(level, 2)], "id": int(fields["place"]),
                       "name": place},
-            "year": int(fields["year"]), "year_span": int(fields["year_span"]),
+            "year": int(fields["year"]), "year_span": int(fields["year_span"]), "time": time,
+            "form": "loose" if loose else "sentence",
             "text": sp.tell(fields["action"], actors, fields["roles"], place, time)}
+
+
+def record_json(model, sp: Speaker, rec, hist: History) -> dict:
+    """A record as the narrator gives it on (to the bard, ``analysis/bard.py``): what they
+    remember (``remembered``) and what memory changed, with its id and a version that changes
+    whenever any of it does."""
+    import hashlib
+
+    entry = {"record": rec, "substitutions": substitutions(hist, rec.mem_id)}
+    out = {"record": int(rec.mem_id), **remembered(sp, record_fields(rec)), "changed": changes(model, sp, entry)}
+    out["version"] = hashlib.sha1(json.dumps(out, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    return out
 
 
 def record_fields(rec) -> dict:

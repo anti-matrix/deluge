@@ -822,6 +822,7 @@ class VizConfig:
     inspector_symbols: int
     inspector_events: int
     inspector_origins: int
+    myths_polities: int
     inspector_file: str
 
 

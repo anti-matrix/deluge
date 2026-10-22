@@ -1,0 +1,203 @@
+# The bard (analysis/bard.py): a literary pass over the narrator's "What they remember" records,
+# outside the simulation. Read only by analysis/bard.py and the browser UI; no effect on the sim.
+
+settings:
+  backend: formulaic            # formulaic (deterministic, offline) or llm (an OpenAI-compatible chat endpoint)
+  max_records: 8                # a polity's telling: its most vivid records (then the lowest ids), told in time order
+  cache_dir: runs/bard_cache    # every telling, by (record ids, record versions, backend, model); relative to the repo
+  llm:
+    # Any OpenAI-compatible endpoint (a free API tier now, a local Ollama or llama.cpp server later):
+    # POST {base_url}/chat/completions. Empty values are read from the environment variables named below.
+    base_url: ""
+    model: ""
+    api_key: ""
+    base_url_env: DELUGE_BARD_BASE_URL
+    model_env: DELUGE_BARD_MODEL
+    api_key_env: DELUGE_BARD_API_KEY
+    requests_per_day: 10        # calls past this fall back to the formulaic backend
+    timeout_s: 60
+    temperature: 0.7
+    max_tokens: 600
+    instructions: >-
+      You retell what a people remember, in their own voice. You receive only their remembered
+      records, as structured data, and their culture traits. Tell only what the records hold. Add no
+      events, actors, places, causes or outcomes. Keep every name exactly as written. Let the culture
+      traits shape the tone only, never the content. Write as the people would tell it, in 100 to
+      250 words, with no modern words. Each record's "form" says whether it is a plain sentence or a
+      loose memory whose parts no longer fit together; keep loose memories loose.
+  # Tone: which culture trait sets it (a trait at least `threshold`, the higher one if both are);
+  # below both, the plain tone. Tone chooses among formulas, never what is told.
+  tone_traits: {ceremony: ritual_investment, battle: militarism}
+  tone_threshold: 0.6
+
+# --- the formulaic grammar --------------------------------------------------------------------------
+# {subject}: the people or polity telling it; role names as in configs/narrator.yaml ({builder}, ...);
+# {time}, {at}: when and where, as the narrator says them. Options are chosen by a hash of the
+# telling and the record, so the same records always give the same words. Every option list has
+# a plain form; ceremony and battle forms are used when the tone is theirs.
+grammar:
+  openings:
+    first_age:
+      plain: ["In the first age, this was so.", "Hear what was in the first age."]
+      ceremony: ["Let it be said again, as it was said before, of the first age.",
+                 "As it was said at every gathering, so it is said now: in the first age."]
+      battle: ["Hear it, and hear it well: the first age.", "In the first age, hear it."]
+    when:
+      plain: ["When {deed}, this was so.", "Hear what was when {deed}."]
+      ceremony: ["Let it be said again: when {deed}.", "As it was said before, so it is said: when {deed}."]
+      battle: ["Hear it: when {deed}.", "When {deed}, hear of it."]
+    none:
+      plain: ["Hear what {subject} keep."]
+      ceremony: ["Let it be said again, what {subject} keep."]
+      battle: ["Hear what {subject} keep, and hear it well."]
+  # "When ..." from the first record: per verb, by its roles (the first that fits).
+  when:
+    built: ["a monument was raised at {site}", "a monument was raised{at}"]
+    fought: ["{attacker} went against {attacked}", "{attacker} went against {defender}"]
+    founded: ["{new_people} rose from {parent_people}", "{new_settlement} was founded from {mother}",
+              "{new_people} were founded at {seat}"]
+    died: ["{destroyer} ended {ended}", "{ended} came to an end"]
+    took: ["{taker} took {taken}"]
+    learned: ["{learner} learned {lesson}"]
+    taught: ["{instructor} taught {learner} {lesson}"]
+    arrived: ["{visitor} came to {host}"]
+    crossed: ["{attacker} crossed the sea", "{crosser} crossed the sea"]
+    starved: ["{hungry} went hungry"]
+  # How each record after the opening is led in, when its time differs from the one before.
+  lower_after_lead: [From, To]  # first words of lines that are not names: lowercase after a time lead
+  time_lead:
+    plain: ["{Time},", "Then, {time},", "And {time},"]
+    ceremony: ["And it is said that {time},", "{Time}, as it is said,"]
+    battle: ["{Time},", "Hear it: {time},"]
+  # One line per record: per verb, by its roles (the first whose roles are all present and none
+  # left over). A record no line fits is said as the narrator says it ("said").
+  lines:
+    built:
+      plain: ["{builder} raised {monument} at {site}; at {site} it stood.", "{builder} raised {monument} at {site}."]
+      ceremony: ["{builder} raised {monument} at {site}, and they raised it well; at {site} it stood."]
+      battle: ["{builder} raised {monument} at {site}."]
+    fought:
+      plain: ["{attacker} attacked {attacked} of {defender}.",
+              "{attacker} went against {attacked}, and {defender} met them."]
+      ceremony: ["{attacker} attacked {attacked} of {defender}, and this is remembered."]
+      battle: ["{attacker} went against {attacked}; against {attacked} went {attacker}, and {defender} stood.",
+               "{attacker} came against {attacked} of {defender}, and they fought."]
+    fought_two:
+      plain: ["{attacker} attacked {defender}."]
+      battle: ["{attacker} went against {defender}; against {defender} went {attacker}."]
+    took:
+      plain: ["{taker} took {taken} from {former}."]
+      battle: ["{taker} took {taken}; {taken}, from {former}."]
+    died:
+      plain: ["{destroyer} destroyed {ended}.", "{destroyer} ended {ended}; {ended} were no more."]
+      battle: ["{destroyer} destroyed {ended}; {ended} were no more."]
+    died_one:
+      plain: ["{ended} came to an end."]
+      ceremony: ["{ended} came to an end, and it is remembered."]
+    founded:
+      plain: ["{new_people} rose from {parent_people}.", "From {parent_people} rose {new_people}."]
+      ceremony: ["From {parent_people} rose {new_people}; from {parent_people}, it is said."]
+    founded_seat:
+      plain: ["{new_people} were founded at {seat}."]
+    founded_town:
+      plain: ["{mother} founded {new_settlement}.", "From {mother}, {new_settlement} was founded."]
+    learned:
+      plain: ["{learner} learned {lesson} from {source}.", "From {source}, {learner} learned {lesson}."]
+    learned_alone:
+      plain: ["{learner} learned {lesson}."]
+    taught:
+      plain: ["{instructor} taught {learner} {lesson}.", "To {learner}, {instructor} taught {lesson}."]
+      ceremony: ["{instructor} taught {learner} {lesson}; {lesson}, they taught."]
+    arrived:
+      plain: ["{visitor} came to {host} by {craft}."]
+      ceremony: ["{visitor} came to {host} by {craft}; by {craft} they came."]
+    departed:
+      plain: ["{visitor} left {host} by {craft}."]
+      ceremony: ["{visitor} left {host} by {craft}; by {craft} they went."]
+    gave:
+      plain: ["{giver} gave {receiver} {gift}."]
+    starved:
+      plain: ["{hungry} went hungry."]
+      ceremony: ["{hungry} went hungry, and it is remembered."]
+    joined:
+      plain: ["{joiner_people} joined {host_people}."]
+  # Which line set a record uses, by verb and the roles it holds: [line set, roles].
+  line_sets:
+    fought: [[fought, [attacker, defender, attacked]], [fought_two, [attacker, defender]]]
+    died: [[died, [destroyer, ended]], [died_one, [ended]]]
+    founded: [[founded, [new_people, parent_people]], [founded_seat, [new_people, seat]],
+              [founded_town, [mother, new_settlement]]]
+    learned: [[learned, [learner, lesson, source]], [learned_alone, [learner, lesson]]]
+  # A record no line fits, or a loose one: as the narrator says it, then this.
+  said:
+    plain: ["{text}", "{text} So it is told."]
+    ceremony: ["{text} So it is said, and so it is kept."]
+    battle: ["{text}"]
+  loose:
+    plain: ["{text} So much is kept, and no more.", "{text} That much is remembered."]
+    ceremony: ["{text} So much is kept."]
+    battle: ["{text} That much is remembered of it."]
+  # Repetition: after every `every` records, a refrain.
+  refrain:
+    every: 3
+    plain: ["So it was."]
+    ceremony: ["So it is said, and so it is kept."]
+    battle: ["So it went, and so it is told."]
+  closing:
+    plain: ["This is what {subject} keep.", "So {subject} remember it."]
+    ceremony: ["This is kept by {subject}, as it was kept before them."]
+    battle: ["{Subject} remember it, and remember it still."]
+  nothing: ["{Subject} keep nothing of it."]
+
+# --- epithets ---------------------------------------------------------------------------------------
+# Each group of people named in a telling gets one to three fixed epithets, from its own records in
+# the telling (how often it holds a role) and, for the people telling it, their culture traits.
+# The first epithet goes with a name the first time a line names it ("Mebu, of the many stones");
+# the fallback epithet is listed in the export but never said.
+epithets:
+  max: 3
+  # [verb, role, at least this many records, epithet]; a stronger count comes first.
+  records:
+    - [built, builder, 2, of the many stones]
+    - [built, builder, 1, who raised stones]
+    - [built, site, 1, where the stones stand]
+    - [fought, attacker, 2, quick to war]
+    - [fought, attacker, 1, who went against others]
+    - [fought, attacked, 2, often attacked]
+    - [fought, attacked, 1, the attacked]
+    - [fought, defender, 2, often attacked]
+    - [fought, defender, 1, who were attacked]
+    - [died, destroyer, 1, who ended peoples]
+    - [died, ended, 1, who are no more]
+    - [took, taker, 1, taker of towns]
+    - [took, taken, 1, the taken]
+    - [took, former, 1, who lost towns]
+    - [lost, loser, 1, who lost their seat]
+    - [starved, hungry, 1, the hungry]
+    - [founded, parent_people, 2, from whom peoples rose]
+    - [founded, parent_people, 1, from whom a people rose]
+    - [founded, new_people, 1, the risen]
+    - [founded, seat, 1, the first seat]
+    - [founded, mother, 1, mother of towns]
+    - [founded, new_settlement, 1, the new-founded]
+    - [learned, learner, 1, who learned]
+    - [learned, source, 1, who passed on what they knew]
+    - [taught, learner, 1, who were taught]
+    - [taught, instructor, 1, who taught]
+    - [arrived, visitor, 1, who came to them]
+    - [crossed, crosser, 1, who crossed the sea]
+    - [crossed, attacker, 1, who crossed the sea]
+    - [joined, joiner_people, 1, who joined others]
+    - [moved, mover, 1, the wandering]
+    - [gave, receiver, 1, who received gifts]
+  # [trait, "high" or "low", threshold, epithet]: for the people telling it.
+  culture:
+    - [militarism, high, 0.7, warlike]
+    - [militarism, low, 0.3, peaceable]
+    - [ritual_investment, high, 0.7, given to ceremony]
+    - [openness, high, 0.7, open to others]
+    - [openness, low, 0.3, closed to strangers]
+    - [hierarchy, high, 0.7, of high and low]
+    - [mobility_preference, high, 0.7, the roaming]
+    - [mobility_preference, low, 0.3, the settled]
+  fallback: the half-remembered # a group no rule names (named only in loose memories)

@@ -354,15 +354,10 @@ class Speaker:
         it happened (a place phrase, "" for none) and when; ``count`` > 1 tells a run. A set of
         roles with no shape of the verb is told in the loose form (``loose``)."""
         d = self.data
-        rt = table_for(d)
-        by_role: dict[str, list[int]] = {}
-        for a, r in zip(actors, self.roles(action, actors, slots)):
-            if r is None or not rt.fits(r, a):
-                return self.loose(action, actors, place, time)
-            by_role.setdefault(r, []).append(a)
-        shape, own_run = rt.shape(action, frozenset(by_role), count)
-        if shape is None:
+        found = self.shape_of(action, actors, slots, count)
+        if found is None:
             return self.loose(action, actors, place, time)
+        shape, own_run, by_role = found
         names = {r: d["joiner"].join(self.counted(v)) for r, v in by_role.items()}
         towns = [a for a in actors if decode(a)[0] == "settlement"]
         if place and any(place == d["places"]["cell"].format(name=self.entity(a)) for a in towns):
@@ -376,6 +371,18 @@ class Speaker:
         if time:
             text = f"{time}, {text}"
         return text[:1].upper() + text[1:] + "."
+
+    def shape_of(self, action: int, actors, slots, count: int = 1):
+        """(shape, whether a run's own shape, actors by role) of a sentence of these roles, None
+        when they make none (the loose form)."""
+        rt = table_for(self.data)
+        by_role: dict[str, list[int]] = {}
+        for a, r in zip(actors, self.roles(action, actors, slots)):
+            if r is None or not rt.fits(r, a):
+                return None
+            by_role.setdefault(r, []).append(a)
+        shape, own_run = rt.shape(action, frozenset(by_role), count)
+        return None if shape is None else (shape, own_run, by_role)
 
     def loose(self, action: int, actors, place: str = "", time: str | None = None) -> str:
         """The loose form: "Of the Kavar and the Vahza, and a battle at Adtova, in the first age"."""

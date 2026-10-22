@@ -847,6 +847,7 @@ viz:                          # browser UI only; no effect on the simulation
   inspector_symbols: 5        # polity inspector: heaviest symbols shown, events per record, origin records
   inspector_events: 4
   inspector_origins: 12
+  myths_polities: 10          # "Myths of the peoples" export: the founding peoples and the largest living polities
   inspector_file: inspector.yaml  # the inspector's words (relative to this file)
 
 render:                       # static PNG maps only; no effect on the simulation

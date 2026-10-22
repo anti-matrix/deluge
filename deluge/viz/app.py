@@ -284,6 +284,91 @@ def Inspector(session: Session, pid: int, version: int):
 
     content = solara.use_memo(compute, dependencies=[session, pid, version])
     solara.HTML(tag="div", unsafe_innerHTML=content)
+    if 0 <= pid < session.model.polities.n:
+        Bard(session, "polity", pid, version)
+
+
+# --- the bard (analysis/bard.py): on demand only ----------------------------------------------------------
+
+
+def bard_input(session: Session, kind: str, i: int) -> dict:
+    """The bard's input for a polity or a founding lineage (read under the lock)."""
+    from analysis import bard
+
+    with session.lock:
+        model = session.model
+        return bard.polity_input(model, i) if kind == "polity" else bard.lineage_input(model, i)
+
+
+def bard_tell(inp: dict) -> dict:
+    """The bard's telling with the configured backend (outside the lock: an llm call may take
+    time; it falls back to formulaic with a notice when there is no endpoint)."""
+    from analysis import bard
+
+    return bard.tell(inp)
+
+
+@solara.component
+def Bard(session: Session, kind: str, i: int, version: int):
+    """"Tell it as their myth": the bard's telling beside the narrator's plain text, on demand;
+    the bard's input to copy or download."""
+    import json
+
+    from analysis import bard
+    from deluge.viz.copybutton import CopyButton
+
+    inp = solara.use_memo(lambda: bard_input(session, kind, i), dependencies=[session, kind, i, version])
+    told, set_told = solara.use_state({})
+    exported = json.dumps(bard.export_input(inp), ensure_ascii=False, indent=1)
+    mine = told.get((kind, i, tuple(r["version"] for r in inp["records"])))
+
+    def tell():
+        out = bard_tell(inp)
+        set_told({**told, (kind, i, tuple(r["version"] for r in inp["records"])): out})
+
+    with solara.Row(style={"align-items": "center", "flex-wrap": "wrap"}):
+        solara.Button("Tell it as their myth", on_click=tell, disabled=not inp["records"])
+        CopyButton.element(text=exported, label="Copy bard input", title="what an LLM would receive, with the instructions")
+        solara.FileDownload(exported, filename=f"bard_input_{kind}_{i}.json", label="bard_input.json",
+                            mime_type="application/json")
+    if not inp["records"]:
+        solara.Text("Nothing to tell: no record.")
+    if mine:
+        with solara.Columns([1, 1]):
+            with solara.Column():
+                solara.HTML(tag="div", unsafe_innerHTML="<b>What they remember (the narrator)</b>" + "".join(
+                    f'<div style="margin:2px 0">{html.escape(r["text"])}</div>' for r in inp["records"]))
+            with solara.Column():
+                note = f'<div style="color:#a33;font-size:12px">{html.escape(mine["notice"])}</div>' if mine["notice"] else ""
+                solara.HTML(tag="div", unsafe_innerHTML=(
+                    f"<b>{html.escape(mine['label'][:1].upper() + mine['label'][1:])}</b>{note}"
+                    f'<div style="white-space:pre-wrap">{html.escape(mine["text"])}</div>'))
+
+
+def myths_export(session: Session) -> str:
+    """"Myths of the peoples" (markdown): every founding people's origins and the largest living
+    polities, with the bard's tellings made so far (no new call)."""
+    from analysis import bard
+
+    with session.lock:
+        model = session.model
+        P = model.polities
+        pids = sorted(P.alive_ids().tolist(), key=lambda q: (-float(P.population[q]), q))[: VIZ.myths_polities]
+        inputs = [bard.lineage_input(model, g) for g in range(len(model.lineages.founders))]
+        inputs += [bard.polity_input(model, q) for q in pids]
+        return bard.myths_markdown(model, inputs)
+
+
+@solara.component
+def Myths(session: Session, version: int):
+    """Each founding people's origins as their myth, on demand (``Bard``), and the export."""
+    peoples = solara.use_memo(lambda: portrayal.people_names(session.model), dependencies=[session.model])
+    chosen, set_chosen = solara.use_state(peoples[0])
+    with solara.Row():
+        solara.Select("People (their origins)", values=peoples, value=chosen, on_value=set_chosen)
+        solara.FileDownload(lambda: myths_export(session), filename="myths_of_the_peoples.md",
+                            label="Myths of the peoples", mime_type="text/markdown")
+    Bard(session, "lineage", peoples.index(chosen) if chosen in peoples else 0, version)
 
 
 @solara.component
@@ -384,3 +469,5 @@ def Page():
                     Inspector(s, selected_pid.value, f.panels_version if not playing.value else -1)
             with solara.Card("Chronicle"):
                 Chronicle(s, f.panels_version)
+            with solara.Card("Myths of the peoples"):
+                Myths(s, f.panels_version if not playing.value else -1)
