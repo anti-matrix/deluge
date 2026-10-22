@@ -334,12 +334,16 @@ def tooltip(model, snap: dict[str, np.ndarray], cell: int) -> str:
     import html
 
     from deluge.data.events import entity
+    from deluge.gazetteer import gazetteer
     from deluge.naming import Speaker
 
     say = Speaker(model, tags=True)
     x, y = model.geom.xy(cell)
     terrain = "sea" if snap["sea"][cell] else Terrain(int(model.world.terrain.ravel()[cell])).name.lower()
-    lines = [f"<b>{html.escape(say.place(cell))}</b> (cell {x}, {y}): {terrain}, "
+    here = int(snap["settlement"][cell])  # a cell is named only while settled, after its settlement
+    title = say.entity(entity("settlement", here)) if here >= 0 else gazetteer(model).relative(cell, None, say)
+    title = title[:1].upper() + title[1:]
+    lines = [f"<b>{html.escape(title)}</b> (cell {x}, {y}): {terrain}, "
              f"elevation {model.elevation_flat[cell]:,.0f} m"]
     sid = int(snap["settlement"][cell])
     if sid >= 0:

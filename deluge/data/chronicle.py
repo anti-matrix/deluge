@@ -64,8 +64,8 @@ class Namer:
 def line(record: dict, name: Namer) -> str:
     """One raw event (``EventLog.record``) as the narrator's sentence, with its size."""
     sp = name.sp
-    text = sp.sentence(ACTION_CODE[record["action"]], record["actors"], sp.place(record["place"]),
-                       sp.time(record["year"]))
+    place = sp.event_place(record["event"]) if "event" in record else sp.place(record["place"])
+    text = sp.sentence(ACTION_CODE[record["action"]], record["actors"], place, sp.time(record["year"]))
     form = sp.data["amounts"].get(record["action"])
     if form:
         text = text[:-1] + f" ({form.format(m=f'{record['magnitude']:,.0f}')})."

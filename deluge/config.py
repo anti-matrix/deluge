@@ -848,6 +848,8 @@ class ReportsConfig:
     origins_until_year: int
     narrator_file: str
     sample_names: int
+    place_near_cells: int
+    place_far_cells: int
 
 
 @dataclass(frozen=True)

@@ -869,6 +869,11 @@ reports:                      # analysis reports only (analysis/); no effect on 
   origins_until_year: 100     # myths report "Origins" and the narrator: records descending from events in years 0 to this
   narrator_file: narrator.yaml  # analysis/narrator.py: name syllables, technique phrases, templates (relative to this file)
   sample_names: 20            # narrator: settlement names shown per people
+  # Places without a name (deluge/gazetteer.py): told by direction from the nearest named place,
+  # "east of Mebu" up to this many hex steps (a cell is about 165 km across), "far to the east of
+  # Mebu" up to place_far_cells, beyond that by their land.
+  place_near_cells: 2
+  place_far_cells: 6
 
 chronicle:                    # the browser chronicle (deluge/data/chronicle.py); no effect on the simulation
   # Which events are told one by one. Every rule reads only an event's action code, the kinds and

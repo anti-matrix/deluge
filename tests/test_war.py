@@ -222,7 +222,8 @@ def test_battle_across_sea_is_logged_as_a_crossing():
     assert m.events.origin[crossed[0]] == int(m.settlements.cell[sa])  # where the crossing set out from
     name = chronicle.Namer(m)
     text = chronicle.line(r, name)
-    assert f"{name(entity('polity', a))} crossed the sea to" in text and "(2 sea cells)" in text
+    target = name(entity("settlement", sb))
+    assert f"{name(entity('polity', a))} crossed the sea and landed at {target}" in text and "(2 sea cells)" in text
     assert m.stats["sea_battles"] == 1
 
 

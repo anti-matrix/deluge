@@ -92,7 +92,7 @@ def happened(model, sp: Speaker, events) -> list[dict]:
         i, last = run[0], run[-1]
         a, b = int(ev.year[i]), int(ev.year[last])
         time = d["times"]["run"].format(year=a, last=b) if b > a else sp.time(a)
-        text = sp.sentence(ev.action[i], ev.actors[i], sp.place(ev.place[i]), time)
+        text = sp.sentence(ev.action[i], ev.actors[i], sp.event_place(i), time)
         if len(run) > 1 and k_run not in stay_runs:
             text = text[:-1] + d["run"].format(count=sp.number(len(run))) + "."
         amount = d["amounts"].get(ACTIONS[ev.action[i]])
@@ -102,7 +102,7 @@ def happened(model, sp: Speaker, events) -> list[dict]:
         out.append({"event": int(i), "events": [int(k) for k in run], "year": a, "last_year": b,
                     "action": ACTIONS[ev.action[i]],
                     "actors": [{"entity": int(x), "name": sp.entity(x)} for x in ev.actors[i]],
-                    "place": {"cell": int(ev.place[i]), "name": sp.place(ev.place[i])}, "text": text})
+                    "place": {"cell": int(ev.place[i]), "name": sp.event_place(i)}, "text": text})
     return out
 
 

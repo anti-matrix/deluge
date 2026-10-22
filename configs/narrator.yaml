@@ -107,12 +107,21 @@ forms:
   technique: "{phrase}"
   technology: "{phrase}"
   artifact: "a gift of {phrase}"
-  deposit: "the {phrase} of {place}"
+  deposit: "the {phrase} {place}"
   monument: "a monument"
+# Places (deluge/gazetteer.py): a cell is named only while a settlement stands on it ({name}: the
+# settlement's name); a place with no name is told by {direction} and distance from the nearest
+# named place, by its land, or as the sea. Each form says where something happened ("at Mebu").
 places:
-  cell: "{name}"
-  region: "the country of {name}"
-  none: "a place no longer named"
+  cell: "at {name}"
+  region: "in the country of {name}"
+  region_unnamed: "in the country {where}"
+  near: "{direction} of {name}"
+  far: "far to the {direction} of {name}"
+  land: "in the land of {name}"
+  empty_land: "in an unpeopled land"
+  sea: "on the open sea"
+  none: "in a place no longer named"
 times:
   year: "in year {year}"
   span: "in the years {year} to {last}"
@@ -126,19 +135,19 @@ joiner: " and "
 # One sentence shape per verb: {0}, {1}, ... are the actors in order, {rest} the actors from the
 # third on, {from_} " from" the third actor when there is one, {place} and {time} as above.
 templates:
-  arrived: "{time}, {0} came to {1} at {place}, by {2}"
+  arrived: "{time}, {0} came to {1} {place}, by {2}"
   taught: "{time}, {0} taught {1} {rest}"
   displayed: "{time}, {0} showed {1} {2}"
-  departed: "{time}, {0} left {1} at {place}, by {2}"
+  departed: "{time}, {0} left {1} {place}, by {2}"
   gave: "{time}, {0} gave {1} {rest}"
   used: "{time}, {1} made use of {0}"
   broke: "{time}, {0} held by {1} broke"
-  fought: "{time}, {0} fought {1} at {place}"
-  won: "{time}, {0} raided {1} at {place}"
+  fought: "{time}, {0} fought {1} {place}"
+  won: "{time}, {0} raided {1} {place}"
   lost: "{time}, {0} lost {1} to {2}"
-  moved: "{time}, {0} moved to {place}"
-  founded: "{time}, {0} {be} founded from {1} at {place}"
-  built: "{time}, {0} built {1} at {place}"
+  moved: "{time}, {0} moved and settled {place}"
+  founded: "{time}, {0} {be} founded from {1} {place}"
+  built: "{time}, {0} built {1} {place}"
   starved: "{time}, {0} went hungry"
   died: "{time}, {0} came to an end"
   joined: "{time}, {0} joined {1}"
@@ -146,7 +155,7 @@ templates:
   forgot: "{time}, {0} forgot {1}"
   depleted: "{time}, {0} {be} used up"
   took: "{time}, {0} took {1} from {2}"
-  crossed: "{time}, {0} crossed the sea to {place}"
+  crossed: "{time}, {0} crossed the sea and landed {place}"
 # The shape for a verb when the event has only its first two actors (a teaching contact that passed on nothing).
 empty_templates:
   taught: "{time}, {0} stayed with {1}"

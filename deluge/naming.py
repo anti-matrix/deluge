@@ -11,11 +11,13 @@ Nothing here enters the simulation: it only reads model state.
   seeds. The dialect weighs the inventory, so peoples sound different.
 - Canonical names (``proper_name``, ``Speaker.entity``): every entity is named in the speech
   of its own founding people as it was at year 0 (``identity.founding_dialect``): a
-  settlement and a polity in their founding lineage's, a lineage in its own; places, regions
-  and the teachers in a neutral speech (a zero dialect). So a name never changes during a run
-  and is the same in every view. A lineage is "the {name}", a polity "the {name} people", a
-  settlement or a place its name; ``tags`` adds the founding group's letter, e.g.
-  "the Keraithaa (B)".
+  settlement and a polity in their founding lineage's, a lineage in its own; the teachers in
+  a neutral speech (a zero dialect). So a name never changes during a run and is the same in
+  every view. A lineage is "the {name}", a polity "the {name} people", a settlement its name;
+  ``tags`` adds the founding group's letter, e.g. "the Keraithaa (B)".
+- Places (``deluge/gazetteer.py``): a cell is named only while a settlement stands on it, with
+  that settlement's name; an empty cell is told relative to the nearest named place, a region
+  after its most important named place. Every name is made when first needed (``_cache``).
 """
 
 from __future__ import annotations
@@ -33,7 +35,6 @@ from deluge.data.events import ACTIONS, ENTITY_KINDS, decode
 from deluge.world.worlddata import MINERALS
 
 PLACE_CELL, PLACE_REGION = 0, 1  # place levels (``systems/memory.py``: PLACE_CELL, PLACE_REGION)
-PLACE_KEYS = {PLACE_CELL: len(ENTITY_KINDS), PLACE_REGION: len(ENTITY_KINDS) + 1}  # name keys after the kinds
 PEOPLE_NAMED = ("lineage", "polity", "settlement")  # named in their founding people's speech
 
 
@@ -256,12 +257,22 @@ class Speaker:
         g = i if kind == "lineage" else int(self.model.polities.lineage[i])
         return f" ({self.model.lineages.names[g]})"
 
-    def place(self, place: int, level: int = PLACE_CELL) -> str:
-        p = self.data["places"]
+    def place(self, place: int, level: int = PLACE_CELL, at: int | None = None) -> str:
+        """A cell (as it stood when event ``at`` was logged; None: now) or a memory region (now),
+        in words (``deluge/gazetteer.py``)."""
+        from deluge.gazetteer import gazetteer
+
         if place < 0 or level not in (PLACE_CELL, PLACE_REGION):
-            return p["none"]
-        return p["cell" if level == PLACE_CELL else "region"].format(name=proper_name(self.model,
-                                                                                     (PLACE_KEYS[level], place)))
+            return self.data["places"]["none"]
+        if level == PLACE_REGION:
+            return gazetteer(self.model).region(place, self)
+        return gazetteer(self.model).place(place, self, at)
+
+    def event_place(self, i: int) -> str:
+        """Where event ``i`` of the log happened, as it could be said then (``Gazetteer.event_place``)."""
+        from deluge.gazetteer import gazetteer
+
+        return gazetteer(self.model).event_place(i, self)
 
     def people(self, g: int) -> str:
         """A founding lineage, as spoken of (with its tag)."""
@@ -357,7 +368,7 @@ class Speaker:
     def event(self, i: int, amount: bool = True) -> str:
         """Event ``i`` of the log as one sentence, with its size (``amounts``)."""
         ev = self.model.events
-        text = self.sentence(ev.action[i], ev.actors[i], self.place(ev.place[i]), self.time(ev.year[i]))
+        text = self.sentence(ev.action[i], ev.actors[i], self.event_place(i), self.time(ev.year[i]))
         verb = ACTIONS[ev.action[i]]
         form = self.data["amounts"].get(verb) if amount else None
         if form:

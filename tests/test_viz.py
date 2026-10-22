@@ -155,7 +155,8 @@ def test_tooltip_names_terrain_elevation_settlement_polity_lineage_population(gr
     from deluge.naming import Speaker
 
     say = Speaker(m, tags=True)
-    assert f"{say.place(cell)}</b> (cell {x}, {y})" in text and "elevation" in text
+    assert f"{say.entity(entity('settlement', int(m.occupant[cell])))}</b> (cell {x}, {y})" in text
+    assert "elevation" in text
     assert f"{say.entity(entity('settlement', sid))}, of {say.entity(entity('polity', int(t.polity[sid])))}" in text
     assert say.people(int(t.lineage[sid])) in text and "population" in text
     sea = int(np.flatnonzero(m.is_sea)[0])

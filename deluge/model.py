@@ -43,6 +43,7 @@ from deluge.brains import evolution, features, network
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
 from deluge.data.collectors import make_datacollector
 from deluge.data.events import EventLog, entity
+from deluge.gazetteer import OccupancyLog
 from deluge.rng import RngStreams
 from deluge.systems import (capacity, climate, cohesion, decide, demography, identity, knowledge, memory,
                             politics, subsistence, war)
@@ -162,6 +163,9 @@ class DelugeModel(mesa.Model):
                                            n_traits=len(cfg.founders.culture_traits))
         self.settlement_agents: dict[int, Settlement] = {}
         self.occupant = np.full(self.geom.n_cells, -1, dtype=np.int64)  # settlement id per cell
+        # Who stood where, for the names of places only (``deluge/gazetteer.py``); never read by
+        # the simulation (private: left out of the state digest, kept in checkpoints).
+        self._occupancy = OccupancyLog()
         self.forage_health = np.ones(self.geom.n_cells)  # 1 = forage untouched by overuse
         self.lineages = LineageRegistry()
         self.polities = PolityTable(len(cfg.founders.culture_traits), len(MINERALS))
@@ -250,6 +254,7 @@ class DelugeModel(mesa.Model):
         elif polity >= 0:
             t.culture[sid] = self.polities.culture[polity]
         self.occupant[cell] = sid
+        self._occupancy.add(len(self.events), cell, sid)
         self.settlement_agents[sid] = Settlement(self, sid, self.grid[self.geom.xy(cell)])
         return sid
 
@@ -318,6 +323,8 @@ class DelugeModel(mesa.Model):
             raise ValueError(f"cell {cell} is not free land")
         self.occupant[self.settlements.cell[sid]] = -1
         self.occupant[cell] = sid
+        self._occupancy.add(len(self.events), int(self.settlements.cell[sid]), -1)
+        self._occupancy.add(len(self.events), cell, sid)
         self.settlements.cell[sid] = cell
         self.settlement_agents[sid].cell = self.grid[self.geom.xy(cell)]
 
@@ -332,6 +339,7 @@ class DelugeModel(mesa.Model):
         self.teachers_state.settlement_ended(sid, host)
         memory.settlement_ended(self, sid, host)
         self.occupant[t.cell[sid]] = -1
+        self._occupancy.add(len(self.events), int(t.cell[sid]), -1)
         t.ended[sid] = self.year
         t.population[sid] = 0.0
         t.store[sid] = 0.0
@@ -467,10 +475,12 @@ class DelugeModel(mesa.Model):
 
     def __getstate__(self) -> dict:
         """Pickling leaves out the war reach cache (``war.land_reach``), a pure function of
-        the sea that is rebuilt as needed, and the names made for the views (``naming``)."""
+        the sea that is rebuilt as needed, and the names and gazetteer made for the views
+        (``naming``, ``gazetteer``)."""
         state = self.__dict__.copy()
         state.pop("_reach_cache", None)
         state.pop("_names", None)
+        state.pop("_gazetteer", None)
         return state
 
     def __setstate__(self, state: dict) -> None:

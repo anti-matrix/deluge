@@ -29,17 +29,19 @@ from deluge.data.events import ACTIONS, decode
 from deluge.systems.memory import FIELDS, OPS, PLACE_CELL, PLACE_REGION
 
 
-def _place(model, rec) -> str:
+def _place(model, rec, name: Namer) -> str:
+    """A record's place in words as of the report (``deluge/gazetteer.py``), with its cell or
+    region in brackets."""
     if rec.place < 0:
         return "place lost"
     if rec.place_level == PLACE_CELL:
         x, y = model.geom.xy(rec.place)
-        return f"cell ({x}, {y})"
+        return f"{name.sp.place(rec.place)} (cell {x}, {y})"
     if rec.place_level == PLACE_REGION:
         r = model.config.memory.region_cells
         cols = model.memory.region_cols
         ry, rx = divmod(rec.place, cols)
-        return f"region x {rx * r}-{rx * r + r - 1}, y {ry * r}-{ry * r + r - 1}"
+        return f"{name.sp.place(rec.place, PLACE_REGION)} (region x {rx * r}-{rx * r + r - 1}, y {ry * r}-{ry * r + r - 1})"
     return "place lost"
 
 
@@ -53,7 +55,7 @@ def symbol_label(model, name: Namer, s: int) -> str:
         return name(value)
     if kind == "cell":
         x, y = model.geom.xy(value)
-        return f"cell ({x}, {y})"
+        return f"{name.sp.place(value)} (cell {x}, {y})"
     return f"event {value} ({line(model.events.record(value), name)})"
 
 
@@ -85,7 +87,7 @@ def _op_text(model, name: Namer, row) -> str:
 
 def _record(model, name: Namer, hist: History, rec, max_events: int = 6, max_ops: int = 12) -> list[str]:
     actors = ", ".join(name(a) for a in rec.actors) or "no actors"
-    out = [f"- **#{rec.mem_id}** `{ACTIONS[rec.action]}`: {actors}; {_place(model, rec)}; {_year(rec)}; "
+    out = [f"- **#{rec.mem_id}** `{ACTIONS[rec.action]}`: {actors}; {_place(model, rec, name)}; {_year(rec)}; "
            f"magnitude {rec.magnitude:,.0f}; vividness {rec.vividness:.2f}; held by {len(rec.holders)} settlements"]
     prov = list(rec.provenance)
     out.append(f"  - from {len(prov)} original event{'s' if len(prov) != 1 else ''}:")
@@ -223,7 +225,7 @@ def origins_section(model, name: Namer, hist: History) -> list[str]:
                 out += ["", f"#### {h}", ""]
             rec = e["record"]
             actors = ", ".join(name(a) for a in rec.actors) or "no actors"
-            out.append(f"- **#{rec.mem_id}** `{ACTIONS[rec.action]}`: {actors}; {_place(model, rec)}; {_year(rec)}; "
+            out.append(f"- **#{rec.mem_id}** `{ACTIONS[rec.action]}`: {actors}; {_place(model, rec, name)}; {_year(rec)}; "
                        f"vividness {rec.vividness:.2f}; in {e['copies']} record{'s' if e['copies'] != 1 else ''} "
                        f"of polities {', '.join(str(p) for p in sorted(e['stores']))}")
             prov = list(rec.provenance)

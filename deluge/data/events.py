@@ -103,7 +103,7 @@ class EventLog:
         return True
 
     def record(self, i: int) -> dict:
-        return {"year": self.year[i], "action": ACTIONS[self.action[i]], "actors": self.actors[i],
+        return {"event": i, "year": self.year[i], "action": ACTIONS[self.action[i]], "actors": self.actors[i],
                 "place": self.place[i], "magnitude": self.magnitude[i], "link": self.link[i]}
 
     def to_frame(self) -> pd.DataFrame:

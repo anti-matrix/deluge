@@ -354,4 +354,4 @@ def test_chronicle_shows_late_techniques_and_deposits():
     name = chronicle.Namer(m)
     used = [i for i in range(len(m.events)) if m.events.record(i)["action"] == "used"
             and decode(m.events.actors[i][0])[0] == "deposit"]
-    assert any("the coal of " in chronicle.line(m.events.record(i), name) for i in used)
+    assert any("the coal " in chronicle.line(m.events.record(i), name) for i in used)
