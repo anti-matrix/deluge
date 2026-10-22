@@ -808,6 +808,10 @@ class VizConfig:
     monument_color: str
     war_color: str
     war_px: float
+    war_fade_years: int
+    supply_color: str
+    supply_px: float
+    banner_px: float
     teachers_color: str
     teachers_px: float
     map_height_px: int

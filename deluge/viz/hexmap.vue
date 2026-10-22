@@ -14,7 +14,7 @@
 module.exports = {
   data() {
     return {scale: 1, ox: 0, oy: 0, dragging: false, moved: false, lastX: 0, lastY: 0,
-            tip_visible: false, tipX: 0, tipY: 0, hoverCell: -1, hoverTimer: null};
+            tip_visible: false, tipX: 0, tipY: 0, hoverCell: -1, hoverTimer: null, hoverArrow: -1, hoverBanner: -1};
   },
   computed: {
     tipStyle() {
@@ -59,6 +59,9 @@ module.exports = {
         return;
       }
       this.tipX = e.clientX - r.left; this.tipY = e.clientY - r.top;
+      const [kind, k] = this.hitWar(this.tipX, this.tipY);
+      const ha = kind === 'arrow' ? k : -1, hb = kind === 'banner' ? k : -1;
+      if (ha !== this.hoverArrow || hb !== this.hoverBanner) { this.hoverArrow = ha; this.hoverBanner = hb; this.draw(); }
       const cell = this.cellAt(this.tipX, this.tipY);
       this.tip_visible = cell >= 0;
       if (cell !== this.hoverCell) {
@@ -67,7 +70,10 @@ module.exports = {
         if (cell >= 0) this.hoverTimer = setTimeout(() => this.hover(cell), 40);
       }
     });
-    c.addEventListener('mouseleave', () => { this.tip_visible = false; this.hoverCell = -1; });
+    c.addEventListener('mouseleave', () => {
+      this.tip_visible = false; this.hoverCell = -1;
+      if (this.hoverArrow >= 0 || this.hoverBanner >= 0) { this.hoverArrow = -1; this.hoverBanner = -1; this.draw(); }
+    });
   },
   beforeDestroy() {
     if (this.resizeObserver) this.resizeObserver.disconnect();
@@ -195,18 +201,28 @@ module.exports = {
         const s = px(m.square_px || 3);
         ctx.fillStyle = m.square_color || '#000'; ctx.fillRect(x - s, y - s, 2 * s, 2 * s);
       }
-      for (const a of (m.arrows || [])) {              // wars: x1 y1 x2 y2 dashed
-        const [x1, y1, x2, y2, dashed] = a;
-        ctx.strokeStyle = m.arrow_color || '#c00'; ctx.lineWidth = px(m.arrow_px || 2);
+      const lit = this.highlight();                    // linked highlighting (hovered arrow or banner)
+      const supply = m.supply || [], arrows = m.arrows || [];
+      for (let k = 0; k < supply.length; k++) {         // supply lines: x1 y1 x2 y2 opacity attacker arrow
+        const [x1, y1, x2, y2, op] = supply[k], on = lit && lit.supply.has(k);
+        ctx.globalAlpha = lit ? (on ? Math.max(op, 0.9) : op * 0.25) : op;
+        ctx.strokeStyle = m.supply_color || '#700'; ctx.lineWidth = px((m.supply_px || 1) * (on ? 2.5 : 1));
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
+      for (let k = 0; k < arrows.length; k++) {         // campaigns: x1 y1 x2 y2 dashed alpha attacker defender supply
+        const [x1, y1, x2, y2, dashed, alpha] = arrows[k], on = lit && lit.arrows.has(k);
+        ctx.globalAlpha = lit ? (on ? 1 : alpha * 0.2) : alpha;
+        ctx.strokeStyle = m.arrow_color || '#c00'; ctx.lineWidth = px((m.arrow_px || 2) * (on ? 1.8 : 1));
         ctx.setLineDash(dashed ? [px(6), px(4)] : []);
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
         ctx.setLineDash([]);
-        const ang = Math.atan2(y2 - y1, x2 - x1), hl = px(9);
+        const ang = Math.atan2(y2 - y1, x2 - x1), hl = px(on ? 12 : 9);
         ctx.beginPath(); ctx.moveTo(x2, y2);
         ctx.lineTo(x2 - hl * Math.cos(ang - 0.4), y2 - hl * Math.sin(ang - 0.4));
         ctx.lineTo(x2 - hl * Math.cos(ang + 0.4), y2 - hl * Math.sin(ang + 0.4));
         ctx.closePath(); ctx.fillStyle = m.arrow_color || '#c00'; ctx.fill();
       }
+      ctx.globalAlpha = 1;
       const path = m.path || [];
       if (path.length) {                               // the teachers' path and position
         ctx.strokeStyle = m.path_color || '#000'; ctx.lineWidth = px(m.path_px || 2);
@@ -224,6 +240,83 @@ module.exports = {
         const p = new Path2D(); this.hexPath(p, this.selected, 1.0);
         ctx.strokeStyle = '#ff0'; ctx.lineWidth = px(3); ctx.stroke(p);
       }
+      this.drawBanners(ctx, r, lit);
+    },
+    // Linked highlighting: a hovered arrow lights its banners and supply line; a hovered banner
+    // lights all its polity's arrows and supply lines.
+    highlight() {
+      const m = this.marks || {}, arrows = m.arrows || [], banners = m.banners || [];
+      if (this.hoverArrow >= 0 && this.hoverArrow < arrows.length) {
+        const a = arrows[this.hoverArrow];
+        const b = new Set(); banners.forEach((f, k) => { if (f[3] === a[6] || f[3] === a[7]) b.add(k); });
+        return {arrows: new Set([this.hoverArrow]), supply: new Set(a[8] >= 0 ? [a[8]] : []), banners: b};
+      }
+      if (this.hoverBanner >= 0 && this.hoverBanner < banners.length) {
+        const pid = banners[this.hoverBanner][3], A = new Set(), S = new Set();
+        arrows.forEach((a, k) => { if (a[6] === pid || a[7] === pid) { A.add(k); if (a[8] >= 0) S.add(a[8]); } });
+        return {arrows: A, supply: S, banners: new Set([this.hoverBanner])};
+      }
+      return null;
+    },
+    // War banners, in screen pixels: a flag on the capital in the lineage colour, a sword with the
+    // number of attacks made, a shield with the number suffered.
+    drawBanners(ctx, r, lit) {
+      const m = this.marks || {}, banners = m.banners || [], s = m.banner_px || 11;
+      this.bannerRects = [];
+      ctx.setTransform(r, 0, 0, r, 0, 0);
+      ctx.font = `bold ${Math.round(0.95 * s)}px sans-serif`; ctx.textBaseline = 'middle';
+      for (let k = 0; k < banners.length; k++) {
+        const [x, y, color, , made, against] = banners[k];
+        const [sx, sy] = this.toScreen(x, y), parts = [];
+        if (made > 0) parts.push(['sword', String(made)]);
+        if (against > 0) parts.push(['shield', String(against)]);
+        let w = 0.3 * s;
+        for (const [, n] of parts) w += 0.9 * s + ctx.measureText(n).width + 0.35 * s;
+        const h = 1.35 * s, top = sy - 2.3 * s, on = lit && lit.banners.has(k);
+        ctx.globalAlpha = lit && !on ? 0.35 : 1;
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, top); ctx.stroke();                // the pole
+        ctx.fillStyle = color; ctx.fillRect(sx, top, w, h);
+        ctx.lineWidth = on ? 2.5 : 1; ctx.strokeStyle = on ? '#ff0' : '#222'; ctx.strokeRect(sx, top, w, h);
+        let ix = sx + 0.3 * s;
+        const cy = top + h / 2;
+        for (const [icon, n] of parts) {
+          const cx = ix + 0.4 * s;
+          ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 1.6;
+          if (icon === 'sword') {
+            ctx.beginPath(); ctx.moveTo(cx, cy - 0.5 * s); ctx.lineTo(cx, cy + 0.25 * s);           // blade
+            ctx.moveTo(cx - 0.28 * s, cy + 0.2 * s); ctx.lineTo(cx + 0.28 * s, cy + 0.2 * s);     // guard
+            ctx.moveTo(cx, cy + 0.2 * s); ctx.lineTo(cx, cy + 0.5 * s); ctx.stroke();             // grip
+          } else {
+            ctx.beginPath(); ctx.moveTo(cx - 0.36 * s, cy - 0.42 * s); ctx.lineTo(cx + 0.36 * s, cy - 0.42 * s);
+            ctx.lineTo(cx + 0.36 * s, cy); ctx.quadraticCurveTo(cx + 0.3 * s, cy + 0.35 * s, cx, cy + 0.5 * s);
+            ctx.quadraticCurveTo(cx - 0.3 * s, cy + 0.35 * s, cx - 0.36 * s, cy); ctx.closePath(); ctx.fill();
+          }
+          const tx = ix + 0.9 * s;
+          ctx.lineWidth = 2.5; ctx.strokeStyle = '#000'; ctx.strokeText(n, tx, cy); ctx.fillText(n, tx, cy);
+          ix = tx + ctx.measureText(n).width + 0.35 * s;
+        }
+        this.bannerRects.push([sx, top, w, h]);
+      }
+      ctx.globalAlpha = 1;
+    },
+    // The banner or arrow under the pointer (screen pixels), banners first.
+    hitWar(px, py) {
+      const m = this.marks || {};
+      for (let k = (this.bannerRects || []).length - 1; k >= 0; k--) {
+        const [x, y, w, h] = this.bannerRects[k];
+        if (px >= x - 2 && px <= x + w + 2 && py >= y - 2 && py <= y + h + 2) return ['banner', k];
+      }
+      const arrows = m.arrows || [];
+      let best = -1, bd = 6;
+      for (let k = 0; k < arrows.length; k++) {
+        const [x1, y1, x2, y2] = arrows[k], [ax, ay] = this.toScreen(x1, y1), [bx, by] = this.toScreen(x2, y2);
+        const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+        const t = L > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0;
+        const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+        if (d < bd) { bd = d; best = k; }
+      }
+      return best >= 0 ? ['arrow', best] : [null, -1];
     },
   },
 };

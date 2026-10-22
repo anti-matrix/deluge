@@ -9,7 +9,8 @@ lineage and population, click a claimed cell to inspect its polity. Layers: poli
 by population density, technology level or subsistence output), terrain, population
 density, subsistence mode, cohesion, a chosen technique's spread, founding group, mineral
 deposits, techniques known; overlays: capitals, monuments, the teachers' path during the
-contact phase, active wars as arrows between capitals (dashed across the sea). Side panels:
+contact phase, the war display (campaign arrows, supply lines, war banners; each switched on
+its own, hover to light up one war). Side panels:
 population per founding group, polity count, sea level and subsistence modes over time, a
 lineage tree snapshot (polity names on hover), the polity inspector and the chronicle, every
 entity named as in the reports (``deluge/naming.py``).
@@ -68,6 +69,7 @@ class View:
     layer: str = "polity"
     shade_by: str = VIZ.polity_shade_by[0]
     technique: str = "agriculture"
+    war: tuple = portrayal.WAR_OVERLAYS  # the parts of the war display switched on
 
 
 @dataclass
@@ -84,15 +86,14 @@ class Frame:
     seconds: float = 0.0
 
 
-def build_frame(model: DelugeModel, view: View, wars: portrayal.WarTracker, previous: Frame | None,
-                panels_too: bool) -> Frame:
+def build_frame(model: DelugeModel, view: View, previous: Frame | None, panels_too: bool) -> Frame:
     """Everything the page draws for the model's current year (call between steps)."""
     t0 = time.perf_counter()
     f = Frame(year=portrayal.shown_year(model))
     f.colors = b64(portrayal.cell_colors(model, VIZ, view.layer, view.shade_by, view.technique), "uint8")
     f.lines = [{"segments": b64(seg.reshape(-1), "float32"), "width": w, "color": c}
                for seg, w, c in portrayal.line_sets(model, VIZ, view.layer)]
-    f.marks = portrayal.marks(model, VIZ, wars)
+    f.marks = portrayal.marks(model, VIZ, view.war)
     f.cells = portrayal.cell_snapshot(model)
     f.status = portrayal.status_text(model)
     if panels_too or previous is None:
@@ -126,18 +127,17 @@ class Session:
     def __init__(self, model: DelugeModel) -> None:
         self.model = model
         self.lock = threading.Lock()
-        self.wars = portrayal.WarTracker()
         self.frames = 0
 
     def frame(self, view: View, previous: Frame | None, panels_too: bool = True) -> Frame:
         with self.lock:
-            return build_frame(self.model, view, self.wars, previous, panels_too)
+            return build_frame(self.model, view, previous, panels_too)
 
     def step(self, years: int, view: View, previous: Frame | None, panels_too: bool) -> Frame:
         with self.lock:
             advance(self.model, years)
             self.frames += 1
-            return build_frame(self.model, view, self.wars, previous, panels_too)
+            return build_frame(self.model, view, previous, panels_too)
 
 
 _initial: list = []
@@ -196,11 +196,17 @@ def LayerSelect(view: solara.Reactive[View], refresh):
     legend = portrayal.legend_html(VIZ, v.layer, portrayal.people_names(initial_model()), v.technique)
     if legend:
         solara.HTML(tag="div", unsafe_innerHTML=legend)
+    solara.SelectMultiple("War overlays", values=list(v.war), all_values=list(portrayal.WAR_OVERLAYS),
+                          on_value=lambda value: setter("war")(tuple(o for o in portrayal.WAR_OVERLAYS if o in value)))
     solara.HTML(tag="div", unsafe_innerHTML=(
         '<div style="font-size:12px;margin-top:4px">Overlays: <b>dots</b> capitals, <b>squares</b> monuments, '
         f'<span style="color:{VIZ.teachers_color}">dotted line and triangle</span>: the teachers during the contact '
-        f'phase, <span style="color:{VIZ.war_color}">arrows</span>: active wars, attacker to defender (dashed: '
-        'across the sea). Wheel or +/- to zoom, drag to pan, click a cell to inspect its polity.</div>'))
+        f'phase. War: <span style="color:{VIZ.war_color}">arrows</span> from the settlement an attack set out from '
+        f'to the one attacked (dashed: across the sea; fading over {VIZ.war_fade_years} years), '
+        f'<span style="color:{VIZ.supply_color}">thin lines</span>: supply from the attacker\'s capital, as faint as '
+        'its reach is stretched; <b>flags</b> on capitals at war: a sword for attacks made, a shield for attacks '
+        'suffered, with their counts. Hover an arrow or a flag to light up its war. Wheel or +/- to zoom, drag to '
+        'pan, click a cell to inspect its polity.</div>'))
 
 
 @solara.component

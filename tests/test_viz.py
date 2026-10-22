@@ -111,36 +111,22 @@ def test_polity_borders_thick_between_groups_thin_within_and_no_enclave_outlines
 
 def test_marks_show_capitals_monuments_wars_and_the_teachers(grown):
     m = grown
-    wars = portrayal.WarTracker()
-    mk = portrayal.marks(m, VIZ, wars)
+    mk = portrayal.marks(m, VIZ)
     assert len(mk["dots"]) == len(m.polities.alive_ids())
     palette = portrayal.lineage_palette(VIZ)
     assert {d[2] for d in mk["dots"]} <= set(palette)
     for a in mk["arrows"]:
-        assert len(a) == 5 and isinstance(a[4], bool)
-    assert len(mk["arrows"]) <= len(m.wars)
+        assert len(a) == 9 and isinstance(a[4], bool) and 0 < a[5] <= 1
+    # Each part of the war display can be switched off on its own.
+    for part, key in (("arrows", "arrows"), ("supply lines", "supply"), ("banners", "banners")):
+        others = tuple(o for o in portrayal.WAR_OVERLAYS if o != part)
+        assert portrayal.marks(m, VIZ, others)[key] == []
     # The teachers during the contact phase: a path and their position.
     early = small_model(years=30)
     app.advance(early, 3)
     if early.teachers_state.present:
         mk = portrayal.marks(early, VIZ)
         assert mk["here"] is not None and mk["path"]
-
-
-def test_war_tracker_reads_direction_and_sea_crossings():
-    from deluge.data.events import entity
-
-    m = small_model(years=2)
-    w = portrayal.WarTracker()
-    i = len(m.events)
-    m.events.log(1, "fought", [entity("polity", 2), entity("polity", 1), entity("settlement", 0)], 0, 5000.0)
-    m.events.log(1, "crossed", [entity("polity", 2), entity("settlement", 0), entity("settlement", 1),
-                                entity("polity", 1)], 0, 2.0, link=i)
-    w.update(m)
-    assert w.last[(1, 2)] == (1, 2, 1, True)
-    m.events.log(2, "fought", [entity("polity", 1), entity("polity", 2), entity("settlement", 0)], 0, 5000.0)
-    w.update(m)
-    assert w.last[(1, 2)] == (2, 1, 2, False)
 
 
 def test_tooltip_names_terrain_elevation_settlement_polity_lineage_population(grown):

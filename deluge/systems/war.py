@@ -662,11 +662,28 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
             model.log_event("won", [("polity", a), ("polity", b), ("settlement", x)], cell, loot)
         if link < 0 and len(model.events) > before:
             link = before
+    crossed = -1
     if sea > 0:
         model.stats["sea_battles"] += 1
+        before = len(model.events)
         model.log_crossing(sea, [("polity", a), ("settlement", src), ("settlement", x), ("polity", b)], cell, link,
                            int(t.cell[src]))
+        crossed = before if len(model.events) > before else -1
+    note_campaign(model, F, a, b, src, x, cell, link, crossed)
     return won
+
+
+def note_campaign(model, F, a: int, b: int, src: int, x: int, cell: int, link: int, crossed: int) -> None:
+    """The attack for the war display (``data/campaigns.py``); nothing reads it back."""
+    log = getattr(model, "_campaigns", None)
+    if log is None:
+        return
+    t = model.settlements
+    capital_cell = int(F.capital_cell[a])
+    decay = float(np.exp(-model.geom.hex_distance(capital_cell, cell) * model.unit_km / F.reach[a]))
+    log.add(decay, year=model.year, attacker=a, defender=b, src=src, target=x, src_cell=int(t.cell[src]),
+            target_cell=cell, capital=int(model.polities.capital[a]), capital_cell=capital_cell, event=link,
+            crossed=crossed)
 
 
 def fight(model) -> None:

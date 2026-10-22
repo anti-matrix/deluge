@@ -18,8 +18,11 @@ NumPy: one RGB colour per cell for the chosen layer (``cell_colors``), the polit
   techniques usable per cell.
 
 Overlays: capitals (dots in the group's colour), monuments, the teachers' path and position
-during the contact phase, and active wars as arrows from attacker to defender capital,
-dashed when the last battle crossed the sea (``WarTracker``). One lineage palette
+during the contact phase, and the war display (``war_display``, each part switched on its
+own): campaign arrows from the settlement an attack set out from to the one attacked (dashed
+when it crossed the sea, fading over a few years), supply lines from the attacker's capital to
+where it set out (as faint as its logistics decay), and war banners on the capitals at war
+(a sword for attacks made, a shield for attacks suffered, with their counts). One lineage palette
 (``lineage_palette``) serves every lineage-coloured element. Everything here only reads
 model state.
 """
@@ -32,7 +35,7 @@ from matplotlib.colors import to_rgb
 
 from deluge.agents.settlement import MODES
 from deluge.config import VizConfig
-from deluge.data.events import ACTION_CODE, decode
+from deluge.data.events import ACTION_CODE
 from deluge.world.render import SEA_COLOR, TERRAIN_COLORS
 from deluge.world.worlddata import MINERALS, Terrain
 
@@ -243,40 +246,76 @@ def line_sets(model, vcfg: VizConfig, layer: str) -> list[tuple[np.ndarray, floa
 # --- overlays -----------------------------------------------------------------------------------------
 
 
-class WarTracker:
-    """Reads the event log as it grows: per polity pair at war, who attacked in its last
-    battle and whether that battle crossed the sea."""
-
-    def __init__(self) -> None:
-        self.cursor = 0
-        self.last: dict[tuple[int, int], tuple[int, int, int, bool]] = {}  # pair -> (year, attacker, defender, sea)
-
-    def update(self, model) -> None:
-        ev = model.events
-        n = min(len(ev.year), len(ev.action), len(ev.actors), len(ev.link))
-        fought, crossed = ACTION_CODE["fought"], ACTION_CODE["crossed"]
-        for i in range(self.cursor, n):
-            code = ev.action[i]
-            if code != fought and code != crossed:
-                continue
-            actors = [decode(a) for a in ev.actors[i]]
-            if not actors or actors[0][0] != "polity":
-                continue
-            a = actors[0][1]
-            b = next((x for kind, x in actors[1:] if kind == "polity"), -1)
-            if b < 0:
-                continue
-            pair = (min(a, b), max(a, b))
-            if code == fought:
-                self.last[pair] = (ev.year[i], a, b, False)
-            elif pair in self.last:
-                y, a0, b0, _ = self.last[pair]
-                self.last[pair] = (y, a0, b0, True)
-        self.cursor = n
+WAR_OVERLAYS = ("arrows", "supply lines", "banners")
 
 
-def marks(model, vcfg: VizConfig, wars: WarTracker | None = None) -> dict:
-    """Overlay marks in map units: capitals, monuments, the teachers' path and position, wars."""
+def war_display(model, vcfg: VizConfig, year: int | None = None) -> dict:
+    """The war display of ``year`` (default: the shown year), from the campaign log
+    (``data/campaigns.py``), in map units:
+
+    - ``arrows``: one per attack of the last ``war_fade_years`` years (the latest per attacker,
+      set-out settlement and target), [x1, y1, x2, y2, dashed, alpha, attacker, defender,
+      supply, row]: from the settlement it set out from to the one attacked; dashed if and only
+      if the attack's sea crossing is in the log, linked (``link``) to the attack's battle
+      event; alpha falls from 1 in the battle's year to 0 after ``war_fade_years``; supply: the
+      index of its supply line, -1 for none; row: the attack's row in the campaign log;
+    - ``supply``: [x1, y1, x2, y2, opacity, attacker, arrow] from the attacker's capital (then)
+      to where the attack set out, opacity the logistics decay it fought at; none when it set
+      out from the capital;
+    - ``banners``: per living polity among those attacks, [x, y, colour, polity, attacks it
+      made, attacks against it] at its capital."""
+    out = {"arrows": [], "supply": [], "banners": []}
+    log = getattr(model, "_campaigns", None)
+    if log is None or not len(log):
+        return out
+    year = shown_year(model) if year is None else int(year)
+    fade = max(int(vcfg.war_fade_years), 1)
+    c = log.columns(since_year=year - fade + 1)
+    first = len(log) - len(c["year"])  # the log row of the window's first attack
+    keep = c["year"] <= year
+    c = {k: v[keep] for k, v in c.items()}
+    if not len(c["year"]):
+        return out
+    ev = model.events
+    crossed_code = ACTION_CODE["crossed"]
+    n_ev = min(len(ev.action), len(ev.link))
+    # The latest attack per (attacker, set-out cell, target cell).
+    latest: dict[tuple[int, int, int], int] = {}
+    for k in range(len(c["year"])):
+        latest[(int(c["attacker"][k]), int(c["src_cell"][k]), int(c["target_cell"][k]))] = k
+    pos = model.geom.positions
+    P = model.polities
+    palette = lineage_palette(vcfg)
+    made: dict[int, int] = {}
+    against: dict[int, int] = {}
+    for k in sorted(latest.values()):
+        a, b = int(c["attacker"][k]), int(c["defender"][k])
+        x = int(c["crossed"][k])
+        dashed = 0 <= x < n_ev and ev.action[x] == crossed_code and int(ev.link[x]) == int(c["event"][k])
+        alpha = 1.0 - (year - int(c["year"][k])) / fade
+        s, t, cap = int(c["src_cell"][k]), int(c["target_cell"][k]), int(c["capital_cell"][k])
+        supply = -1
+        if int(c["src"][k]) != int(c["capital"][k]):
+            supply = len(out["supply"])
+            out["supply"].append([float(pos[cap, 0]), float(pos[cap, 1]), float(pos[s, 0]), float(pos[s, 1]),
+                                  float(c["decay"][k]), a, len(out["arrows"])])
+        out["arrows"].append([float(pos[s, 0]), float(pos[s, 1]), float(pos[t, 0]), float(pos[t, 1]), bool(dashed),
+                              round(float(alpha), 4), a, b, supply, first + k])
+        made[a] = made.get(a, 0) + 1
+        against[b] = against.get(b, 0) + 1
+    t = model.settlements
+    for p in sorted(set(made) | set(against)):
+        if P.ended[p] >= 0:
+            continue
+        cell = int(t.cell[P.capital[p]])
+        out["banners"].append([float(pos[cell, 0]), float(pos[cell, 1]), palette[int(P.lineage[p])], p,
+                               made.get(p, 0), against.get(p, 0)])
+    return out
+
+
+def marks(model, vcfg: VizConfig, overlays=WAR_OVERLAYS) -> dict:
+    """Overlay marks in map units: capitals, monuments, the teachers' path and position, and the
+    war display (``war_display``) of the ``overlays`` switched on."""
     P, t = model.polities, model.settlements
     pos = model.geom.positions
     palette = lineage_palette(vcfg)
@@ -289,7 +328,12 @@ def marks(model, vcfg: VizConfig, wars: WarTracker | None = None) -> dict:
     squares = [[float(pos[c, 0]), float(pos[c, 1])] for c in np.unique(mon.cell[alive]).tolist()]
     out = {"dots": dots, "squares": squares, "dot_px": vcfg.capital_px, "square_px": vcfg.monument_px,
            "square_color": vcfg.monument_color, "arrow_color": vcfg.war_color, "arrow_px": vcfg.war_px,
-           "path_color": vcfg.teachers_color, "path_px": vcfg.teachers_px, "arrows": [], "path": [], "here": None}
+           "supply_color": vcfg.supply_color, "supply_px": vcfg.supply_px, "banner_px": vcfg.banner_px,
+           "path_color": vcfg.teachers_color, "path_px": vcfg.teachers_px, "path": [], "here": None}
+    war = war_display(model, vcfg)
+    out["arrows"] = war["arrows"] if "arrows" in overlays else []
+    out["supply"] = war["supply"] if "supply lines" in overlays else []
+    out["banners"] = war["banners"] if "banners" in overlays else []
     ts = model.teachers_state
     if ts.present or (ts.visits and not ts.departed):
         cells = [int(t.cell[v["settlement"]]) for v in ts.visits if v.get("settlement", -1) >= 0]
@@ -298,15 +342,6 @@ def marks(model, vcfg: VizConfig, wars: WarTracker | None = None) -> dict:
             x, y = ts.agent.cell.coordinate
             c = model.geom.cid(int(x), int(y))
             out["here"] = [float(pos[c, 0]), float(pos[c, 1])]
-    if wars is not None:
-        wars.update(model)
-        for pair, year in sorted(model.wars.items()):
-            y, a, b, sea = wars.last.get(pair, (year, pair[0], pair[1], False))
-            if P.ended[a] >= 0 or P.ended[b] >= 0:
-                continue
-            ca, cb = int(t.cell[P.capital[a]]), int(t.cell[P.capital[b]])
-            out["arrows"].append([float(pos[ca, 0]), float(pos[ca, 1]), float(pos[cb, 0]), float(pos[cb, 1]),
-                                  bool(sea and y == year)])
     return out
 
 

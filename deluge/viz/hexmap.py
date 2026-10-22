@@ -2,8 +2,9 @@
 
 Python sends, per frame, one RGB colour per cell (base64, flat cell-id order), line sets
 (borders: base64 float32 segments in hex units) and marks (capitals, monuments, the
-teachers' path, wars as arrows); the browser keeps the hex geometry, so zoom (wheel or
-buttons), pan (drag) and hover need no round trip. Hovering a cell calls ``on_hover(cell)``
+teachers' path, the war display: campaign arrows, supply lines, banners); the browser keeps
+the hex geometry, so zoom (wheel or buttons), pan (drag), hover and the war display's linked
+highlighting (hover an arrow or a banner) need no round trip. Hovering a cell calls ``on_hover(cell)``
 and shows the ``tooltip`` HTML Python sets back; clicking calls ``on_click(cell)``.
 """
 

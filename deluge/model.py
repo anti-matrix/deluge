@@ -41,6 +41,7 @@ from deluge.agents.settlement import MODES, Settlement, SettlementTable
 from deluge.agents.teachers import TeachersState
 from deluge.brains import evolution, features, network
 from deluge.config import DEFAULT_CONFIG_PATH, Config, load_config
+from deluge.data.campaigns import CampaignLog
 from deluge.data.collectors import make_datacollector
 from deluge.data.events import EventLog, entity
 from deluge.gazetteer import OccupancyLog
@@ -166,6 +167,7 @@ class DelugeModel(mesa.Model):
         # Who stood where, for the names of places only (``deluge/gazetteer.py``); never read by
         # the simulation (private: left out of the state digest, kept in checkpoints).
         self._occupancy = OccupancyLog()
+        self._campaigns = CampaignLog()  # every attack, for the war display only (``data/campaigns.py``)
         self.forage_health = np.ones(self.geom.n_cells)  # 1 = forage untouched by overuse
         self.lineages = LineageRegistry()
         self.polities = PolityTable(len(cfg.founders.culture_traits), len(MINERALS))

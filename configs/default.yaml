@@ -831,8 +831,12 @@ viz:                          # browser UI only; no effect on the simulation
   capital_px: 4.0             # overlays (sizes in screen pixels, at any zoom)
   monument_px: 2.5
   monument_color: "#000000"
-  war_color: "#d00000"        # active wars: arrows from the attacker's capital to the defender's
-  war_px: 1.8
+  war_color: "#d00000"        # campaign arrows: from the settlement an attack set out from to the one attacked
+  war_px: 1.8                 # (dashed when it crossed the sea), fading over war_fade_years after the battle
+  war_fade_years: 5
+  supply_color: "#7a0000"     # supply lines: the attacker's capital to where the attack set out, opacity =
+  supply_px: 1.0              # the logistics decay it fought at
+  banner_px: 11.0             # war banners: a flag in the lineage colour on each capital at war
   teachers_color: "#ff00ff"   # the teachers' path and position during the contact phase
   teachers_px: 2.0
   map_height_px: 620
