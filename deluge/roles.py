@@ -22,7 +22,7 @@ import re
 from deluge.data.events import ACTIONS, ENTITY_KINDS, PEOPLE_KINDS, decode
 
 FIELD = re.compile(r"\{(\w+)\}")
-SPECIAL = {"at", "be", "count"}
+SPECIAL = {"at", "to", "be", "count"}
 
 
 class RoleTable:

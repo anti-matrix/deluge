@@ -122,6 +122,17 @@ places:
   empty_land: "in an unpeopled land"
   sea: "on the open sea"
   none: "in a place no longer named"
+# The same places as where something went ({to} in a sentence): "crossed the sea from Mebu to an unpeopled land".
+destinations:
+  cell: "to {name}"
+  region: "to the country of {name}"
+  region_unnamed: "to the country {where}"
+  near: "to the land {direction} of {name}"
+  far: "to the land far to the {direction} of {name}"
+  land: "to the land of {name}"
+  empty_land: "to an unpeopled land"
+  sea: "to the open sea"
+  none: "to a place no longer named"
 times:
   year: "in year {year}"
   span: "in the years {year} to {last}"
@@ -198,9 +209,14 @@ sentences:
   depleted: ["{deposit} {be} used up"]
   took: ["{taker} took {taken} from {former}", "{taker} took {taken}"]
   crossed: ["{attacker} crossed the sea from {setout} to attack {attacked} of {defender}",
-            "{attacker} crossed the sea to attack {attacked}", "{crosser} crossed the sea from {mother}{at}",
+            "{attacker} crossed the sea to attack {attacked}", "{crosser} crossed the sea from {mother}{to}",
             "{crosser} crossed the sea to join {host_band}", "{crosser} of {owner} crossed the sea and settled{at}",
             "{crosser} crossed the sea and settled{at}"]
+# A conquest in the chronicle: the taking of a settlement, the loss of a seat and the end of a people,
+# of one year, victor and settlement, told as one sentence (the size: the end's, else the taking's).
+conquest:
+  destroyed: "{taker} took {taken} and destroyed {former}"
+  seat: "{taker} took {taken}, the seat of {former}"
 # Runs of one event (same verb, the same groups of people, the same place; chronicle.run_gap_years):
 # told once over their years. A verb listed here has its own shape with {count}; any other adds "run".
 run_sentences:
@@ -240,23 +256,24 @@ plural_kinds: [polity, lineage, first_kind]  # first_kind: the entity kind liste
 # Several actors with the same name are counted ("two gifts of medicine").
 plural_forms:
   artifact: "{count} gifts of {phrase}"
+  monument: "{count} monuments"
   technology: "{count} kinds of {phrase}"
   default: "{name} ({count} times)"
 numbers: [zero, one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve]
 # Runs of one event (same verb, the same groups of people and place) are told once; a verb with no
 # run sentence of its own adds this.
 run: " {count} times"
-# Sizes of what happened (event log magnitudes), only in "What happened".
+# Sizes of what happened (event log magnitudes), only in "What happened"; a pair is [one, many].
 amounts:
-  arrived: "{m} people there"
+  arrived: ["{m} person there", "{m} people there"]
   fought: "{m} dead"
   starved: "{m} dead"
-  moved: "{m} people"
-  founded: "{m} people"
-  joined: "{m} people"
-  took: "{m} people"
-  died: "{m} people left"
-  crossed: "{m} sea cells"
+  moved: ["{m} person", "{m} people"]
+  founded: ["{m} person", "{m} people"]
+  joined: ["{m} person", "{m} people"]
+  took: ["{m} person", "{m} people"]
+  died: ["{m} person left", "{m} people left"]
+  crossed: ["{m} sea cell", "{m} sea cells"]
 # The chronicle (deluge/data/chronicle.py): what it adds to an event's sentence, and its summaries.
 chronicle:
   first_anywhere: ", the first anywhere to know {phrase}"

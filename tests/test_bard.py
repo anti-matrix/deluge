@@ -103,7 +103,14 @@ def test_epithets_are_stable_and_traceable(ran):
                 trait = culture[e["epithet"]][0]
                 assert eid == inp["subject"]["entity"] and f"{trait} {inp['culture'][trait]:.2f}" in e["from"]
             else:
-                assert e["epithet"] == data["epithets"]["fallback"] and e.get("fallback")
+                raise AssertionError(f"epithet with no rule: {e}")
+    # A group no rule names has no epithet (and is told by its name alone).
+    named = {a["entity"] for r in inp["records"] for a in r["actors"] if a["people"]}
+    for eid in named - set(eps):
+        assert not any(a["entity"] == eid and a["role"] is not None and r["form"] == "sentence"
+                       and any(v == r["action"] and ro == a["role"] for v, ro, _, _ in data["epithets"]["records"])
+                       for r in inp["records"] for a in r["actors"])
+    assert "fallback" not in data["epithets"]
 
 
 class _Mock(BaseHTTPRequestHandler):
@@ -207,3 +214,52 @@ def test_ui_tells_on_demand_with_no_endpoint(ran, monkeypatch, tmp_path):
     assert len(list(tmp_path.glob("*.json"))) == before
     md = app.myths_export(session)
     assert md.startswith("# Myths of the peoples") and "What they remember (the narrator)" in md
+
+
+def test_lineage_myths_draw_on_the_whole_memory(ran):
+    from analysis.provenance import held_records
+
+    s = bard.load()["settings"]
+    for g in range(len(ran.lineages.names)):
+        inp = bard.lineage_input(ran, g)
+        held, n = held_records(ran, g)
+        assert bool(inp["records"]) == bard.has_records(ran, "lineage", g) == bool(held)
+        if not held:
+            continue
+        score = {e["record"].mem_id: e["vividness"] * e["share"] for e in held}
+        for section, early in (("first_years", True), ("held", False)):
+            pool = [e for e in held if e["early"] == early]
+            told = [r for r in inp["records"] if r["section"] == section]
+            assert len(told) == min(len(pool), s["first_years_records" if early else "max_records"])
+            if told:  # the most widely held: none left out scores above one told
+                low = min(score[r["record"]] for r in told)
+                ids = {r["record"] for r in told}
+                assert all(score[e["record"].mem_id] <= low for e in pool if e["record"].mem_id not in ids)
+                assert [r["year"] for r in told] == sorted(r["year"] for r in told)
+            for r in told:
+                assert 0 < r["held_by"] <= 1
+        # The first years come first, under their own heading in the telling.
+        sections = [r["section"] for r in inp["records"]]
+        assert sections == sorted(sections, key=lambda x: x != "first_years")
+        if "first_years" in sections:
+            heading = bard.load()["grammar"]["sections"]["first_years"]
+            assert any(h in bard.formulaic(inp) for m in heading.values() for h in m)
+
+
+def test_every_people_and_living_polity_with_a_record_can_be_told(ran):
+    import ipyvuetify as v
+    import solara
+
+    from deluge.viz import app
+
+    session = app.Session(ran)
+    choices = app.myth_choices(session)
+    st, P = ran.memory, ran.polities
+    assert {i for _, k, i in choices if k == "polity"} == {p for p in P.alive_ids().tolist() if st.stores.get(p)}
+    assert [k for _, k, _ in choices][: sum(k == "lineage" for _, k, _ in choices)] == \
+        ["lineage"] * sum(k == "lineage" for _, k, _ in choices)
+    for _, kind, i in choices[:3] + choices[-2:]:
+        box, rc = solara.render(app.Bard(session, kind, i, 0), handle_error=False)
+        button = rc.find(v.Btn, children=["Tell it as their myth"]).widget
+        assert not button.disabled and not rc.find(v.Html, children=["Nothing to tell: no record."])
+        rc.close()

@@ -93,12 +93,13 @@ def _subject(model, kind: str, i: int) -> dict:
             "group": model.lineages.names[g]}
 
 
-def _records(model, recs) -> list[dict]:
+def _records(model, recs, hist=None, extra=None) -> list[dict]:
+    """The records as the narrator gives them, in time order; ``extra``: fields to add per record."""
     from analysis.narrator import History, record_json
     from deluge.naming import Speaker
 
-    sp, hist = Speaker(model), History(model)
-    out = [record_json(model, sp, r, hist) for r in recs]
+    sp, hist = Speaker(model), hist or History(model)
+    out = [{**record_json(model, sp, r, hist), **(extra[k] if extra else {})} for k, r in enumerate(recs)]
     return sorted(out, key=lambda r: (r["year"], r["record"]))
 
 
@@ -112,20 +113,40 @@ def polity_input(model, pid: int, settings: dict | None = None) -> dict:
             "records": _records(model, recs[: s["max_records"]])}
 
 
-def lineage_input(model, g: int) -> dict:
-    """A founding people's telling: its origin records, and its living polities' culture traits
-    (weighted by their people)."""
+def lineage_input(model, g: int, settings: dict | None = None) -> dict:
+    """A founding people's telling, from its whole memory: the records most widely held across
+    its living polities (``max_records``, ranked by vividness times the share of its polities
+    holding them), after them, in a section of their own, the records of the first years
+    (provenance in years 0 to ``reports.origins_until_year``; ``first_years_records``, ranked
+    alike) when any survive; and its living polities' culture traits (weighted by their people).
+    Each record carries its ``section`` ("first_years" or "held") and ``held_by`` (that share)."""
     import numpy as np
 
-    from analysis.narrator import History, origin_records
+    from analysis.provenance import held_records
 
+    s = (settings or load())["settings"]
     P = model.polities
     pids = [p for p in P.alive_ids().tolist() if P.lineage[p] == g]
     w = np.array([max(float(P.population[p]), 1e-9) for p in pids])
     culture = (w @ P.culture[pids]) / w.sum() if pids else np.full(P.culture.shape[1], 0.5)
-    entries = origin_records(model, int(g), History(model))
-    return {"subject": _subject(model, "lineage", int(g)), "culture": _culture(model, culture),
-            "records": _records(model, [e["record"] for e in entries])}
+    held, _ = held_records(model, int(g))
+    ranked = sorted(held, key=lambda e: (-e["vividness"] * e["share"], e["record"].mem_id))
+    first = [e for e in ranked if e["early"]][: s["first_years_records"]]
+    rest = [e for e in ranked if not e["early"]][: s["max_records"]]
+    chosen = [(e, "first_years") for e in first] + [(e, "held") for e in rest]
+    recs = _records(model, [e["record"] for e, _ in chosen],
+                    extra=[{"section": sec, "held_by": round(e["share"], 3)} for e, sec in chosen])
+    order = {"first_years": 0, "held": 1}
+    recs.sort(key=lambda r: order[r["section"]])  # stable: each section in time order
+    return {"subject": _subject(model, "lineage", int(g)), "culture": _culture(model, culture), "records": recs}
+
+
+def has_records(model, kind: str, i: int) -> bool:
+    """Whether a polity (its store) or a founding lineage (any living polity's store) holds a record."""
+    st, P = model.memory, model.polities
+    if kind == "polity":
+        return bool(st.stores.get(int(i)))
+    return any(st.stores.get(p) for p in P.alive_ids().tolist() if P.lineage[p] == i)
 
 
 def llm_content(inp: dict) -> dict:
@@ -179,13 +200,8 @@ def epithets(inp: dict, data: dict | None = None) -> dict[int, list[dict]]:
                     kept.append({"epithet": word, "rank": (0, len(e["records"])),
                                  "from": f"culture trait {trait} {v:.2f} ({'at least' if side == 'high' else 'at most'} "
                                          f"{bound})"})
-        kept = kept[: e["max"]]
-        if not kept:
-            n = sum(1 for r in inp["records"] if any(a["entity"] == eid for a in r["actors"]))
-            kept = [{"epithet": e["fallback"], "fallback": True,
-                     "from": f"no rule holds; named in {n} of the records told, in loose memories only"}]
-        out[eid] = [{"epithet": f["epithet"], "from": f["from"], **({"fallback": True} if f.get("fallback") else {})}
-                    for f in kept]
+        if kept:  # no rule holds: no epithet
+            out[eid] = [{"epithet": f["epithet"], "from": f["from"]} for f in kept[: e["max"]]]
     return out
 
 
@@ -208,6 +224,21 @@ def _pick(options: dict | list, mood: str, *key) -> str:
     return options[zlib.crc32("|".join(str(k) for k in key).encode("utf-8")) % len(options)]
 
 
+def _counted(name: str, n: int, eid: int) -> str:
+    """``n`` identical things, as the narrator counts them ("two monuments"; ``plural_forms`` in
+    configs/narrator.yaml); a form that needs more than the name falls back to its default."""
+    from deluge.data.events import decode
+    from deluge.naming import load_data
+
+    d = load_data(str(REPO / "configs" / "narrator.yaml"))
+    forms = d["plural_forms"]
+    form = forms.get(decode(eid)[0], forms["default"])
+    if "{phrase}" in form:
+        form = forms["default"]
+    words = d["numbers"]
+    return form.format(count=words[n] if n < len(words) else f"{n:,}", name=name)
+
+
 def _cap(s: str) -> str:
     return s[:1].upper() + s[1:]
 
@@ -216,7 +247,7 @@ class _Teller:
     def __init__(self, inp: dict, data: dict) -> None:
         self.inp, self.g, self.s = inp, data["grammar"], data["settings"]
         self.mood = tone(inp["culture"], self.s)
-        self.ep = {k: v[0]["epithet"] for k, v in epithets(inp, data).items() if not v[0].get("fallback")}
+        self.ep = {k: v[0]["epithet"] for k, v in epithets(inp, data).items()}
         self.named: set[int] = set()
         self.key = (inp["subject"]["kind"], inp["subject"]["id"])
 
@@ -225,14 +256,25 @@ class _Teller:
 
     def roles(self, rec: dict, mention: bool = True) -> dict[str, str]:
         by: dict[str, list[str]] = {}
+        things: dict[str, list] = {}  # identical things in one role: counted as the narrator counts them
         for a in rec["actors"]:
             if a["role"] is None:
                 continue
             name = a["name"]
+            if not a["people"]:
+                seen = things.setdefault(a["role"], [])
+                if any(n == name for n, _, _ in seen):
+                    seen[[n for n, _, _ in seen].index(name)][1] += 1
+                    continue
+                seen.append([name, 1, a["entity"]])
             if mention and a["people"] and a["entity"] not in self.named:
                 self.named.add(a["entity"])
                 name = f"{name}, {self.ep[a['entity']]}," if a["entity"] in self.ep else name
             by.setdefault(a["role"], []).append(name)
+        for role, seen in things.items():
+            for name, n, eid in seen:
+                if n > 1:
+                    by[role][by[role].index(name)] = _counted(name, n, eid)
         return {r: " and ".join(v) for r, v in by.items()}
 
     def present(self, rec: dict) -> frozenset:
@@ -287,7 +329,13 @@ class _Teller:
                 [self.pick(g["openings"]["none"], "open").format(subject=subject)]
         prev_time = first["time"] if first_age else None
         every = g["refrain"]["every"]
+        sections = {r.get("section") for r in recs}
+        section = None
         for k, rec in enumerate(recs):
+            # A lineage's telling: the first years under a heading of their own, then the rest.
+            if "first_years" in sections and rec.get("section") != section:
+                section = rec.get("section")
+                lines.append(self.pick(g["sections"][section], "section", section))
             text, timed = self.line(rec, k)
             if not timed and rec["time"] != prev_time:
                 lead = self.pick(g["time_lead"], rec["record"], "time").format(time=rec["time"], Time=_cap(rec["time"]))
@@ -452,7 +500,16 @@ def myths_markdown(model, inputs: list[dict], data: dict | None = None, cache: s
         out += [f"## {_cap(subj['name'])} (group {subj['group']}, {subj['kind']} {subj['id']})", "",
                 "Culture traits: " + ", ".join(f"{k.replace('_', ' ')} {v:.2f}" for k, v in inp["culture"].items()),
                 "", "### What they remember (the narrator)", ""]
-        out += [f"- {r['text']}" for r in inp["records"]] or ["- Nothing."]
+        heads = {"first_years": "Of the first years", "held": "Most widely held across its polities"}
+        section = None
+        for r in inp["records"]:
+            if r.get("section") and r["section"] != section:
+                section = r["section"]
+                out += ["", f"*{heads[section]}:*", ""] if out[-1] else [f"*{heads[section]}:*", ""]
+            share = f" (held by {100 * r['held_by']:.0f}% of its polities)" if "held_by" in r else ""
+            out.append(f"- {r['text']}{share}")
+        if not inp["records"]:
+            out.append("- Nothing.")
         out.append("")
         told = cached_telling(inp, data, cache)
         if told:

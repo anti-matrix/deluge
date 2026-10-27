@@ -28,6 +28,7 @@ call a headless run makes, so a UI run and a headless run with the same seeds ag
 from __future__ import annotations
 
 import html
+import itertools
 import os
 import pickle
 import threading
@@ -121,13 +122,20 @@ def charts(model: DelugeModel) -> list[str]:
     ]
 
 
+_SESSIONS = itertools.count()
+
+
 class Session:
-    """One browser session's model, the lock around it, and the play loop."""
+    """One run shown in the browser: its model, the lock around it, and the play loop."""
 
     def __init__(self, model: DelugeModel) -> None:
         self.model = model
         self.lock = threading.Lock()
         self.frames = 0
+        # The components that keep choices of their own (the chronicle's filter, the myths'
+        # selection, the inspector's tellings) are keyed by this, so a new run rebuilds them
+        # from its own peoples, polities and names.
+        self.key = next(_SESSIONS)
 
     def frame(self, view: View, previous: Frame | None, panels_too: bool = True) -> Frame:
         with self.lock:
@@ -178,9 +186,11 @@ def MapView(session: Session, frame: Frame, selected_cell: solara.Reactive[int],
 
 
 @solara.component
-def LayerSelect(view: solara.Reactive[View], refresh):
+def LayerSelect(view: solara.Reactive[View], refresh, model: DelugeModel):
+    """The map's layer, shade and overlay choices, and the legend: of the active run's model."""
     v = view.value
-    techniques = list(initial_model().knowledge.names)
+    techniques = list(model.knowledge.names)
+    peoples = solara.use_memo(lambda: portrayal.people_names(model), dependencies=[model])
 
     def setter(name):
         def on_value(value):
@@ -193,7 +203,7 @@ def LayerSelect(view: solara.Reactive[View], refresh):
         solara.Select("Shade by", values=list(VIZ.polity_shade_by), value=v.shade_by, on_value=setter("shade_by"))
     if v.layer == "technique":
         solara.Select("Technique", values=techniques, value=v.technique, on_value=setter("technique"))
-    legend = portrayal.legend_html(VIZ, v.layer, portrayal.people_names(initial_model()), v.technique)
+    legend = portrayal.legend_html(VIZ, v.layer, peoples, v.technique)
     if legend:
         solara.HTML(tag="div", unsafe_innerHTML=legend)
     solara.SelectMultiple("War overlays", values=list(v.war), all_values=list(portrayal.WAR_OVERLAYS),
@@ -365,16 +375,43 @@ def myths_export(session: Session) -> str:
         return bard.myths_markdown(model, inputs)
 
 
+def myth_choices(session: Session) -> list[tuple[str, str, int]]:
+    """Who can be told (label, kind, id): every founding lineage and every living polity that
+    holds any memory record; the lineages first, then the polities by people."""
+    from analysis import bard
+    from deluge.data.events import entity
+    from deluge.naming import Speaker
+
+    with session.lock:
+        model = session.model
+        P = model.polities
+        say = Speaker(model, tags=True)
+        names = portrayal.people_names(model)
+        out = [(names[g], "lineage", g) for g in range(len(names))
+               if bard.has_records(model, "lineage", g)]
+        pids = sorted((p for p in P.alive_ids().tolist() if bard.has_records(model, "polity", p)),
+                      key=lambda q: (-float(P.population[q]), q))
+        out += [(f"{say.entity(entity('polity', p))}, polity {p}", "polity", p) for p in pids]
+        return out
+
+
 @solara.component
 def Myths(session: Session, version: int):
-    """Each founding people's origins as their myth, on demand (``Bard``), and the export."""
-    peoples = solara.use_memo(lambda: portrayal.people_names(session.model), dependencies=[session.model])
-    chosen, set_chosen = solara.use_state(peoples[0])
+    """The myth of any people or living polity with a memory, on demand (``Bard``), and the export."""
+    choices = solara.use_memo(lambda: myth_choices(session), dependencies=[session, version])
+    labels = [c[0] for c in choices]
+    picked, set_chosen = solara.use_state(None)
+    # The first choice until one is picked (the list grows as the run makes its first records).
+    chosen = picked if picked in labels else (labels[0] if labels else None)
     with solara.Row():
-        solara.Select("People (their origins)", values=peoples, value=chosen, on_value=set_chosen)
+        solara.Select("People or polity", values=labels, value=chosen, on_value=set_chosen)
         solara.FileDownload(lambda: myths_export(session), filename="myths_of_the_peoples.md",
                             label="Myths of the peoples", mime_type="text/markdown")
-    Bard(session, "lineage", peoples.index(chosen) if chosen in peoples else 0, version)
+    if chosen in labels:
+        _, kind, i = choices[labels.index(chosen)]
+        Bard(session, kind, i, version)
+    elif not labels:
+        solara.Text("Nothing to tell: no people holds a record yet.")
 
 
 @solara.component
@@ -460,7 +497,7 @@ def Page():
             with solara.Card("Model parameters"):
                 SeedInputs(seeds)
             with solara.Card("Map"):
-                LayerSelect(view, refresh)
+                LayerSelect(view, refresh, model)
             with solara.Card("Year"):
                 solara.Markdown(f.status)
         with solara.Column():
@@ -472,8 +509,9 @@ def Page():
                 with solara.Card("Lineage tree"):
                     solara.HTML(tag="div", unsafe_innerHTML=f.tree)
                 with solara.Card("Polity inspector"):
-                    Inspector(s, selected_pid.value, f.panels_version if not playing.value else -1)
+                    Inspector(s, selected_pid.value, f.panels_version if not playing.value else -1).key(
+                        f"inspector-{s.key}")
             with solara.Card("Chronicle"):
-                Chronicle(s, f.panels_version)
+                Chronicle(s, f.panels_version).key(f"chronicle-{s.key}")
             with solara.Card("Myths of the peoples"):
-                Myths(s, f.panels_version if not playing.value else -1)
+                Myths(s, f.panels_version if not playing.value else -1).key(f"myths-{s.key}")

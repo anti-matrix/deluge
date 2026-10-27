@@ -3,7 +3,9 @@
 
 settings:
   backend: formulaic            # formulaic (deterministic, offline) or llm (an OpenAI-compatible chat endpoint)
-  max_records: 8                # a polity's telling: its most vivid records (then the lowest ids), told in time order
+  max_records: 8                # a polity's telling: its most vivid records (then the lowest ids), told in time order;
+                                # a lineage's: its most widely held (vividness x share of its polities holding them)
+  first_years_records: 8        # a lineage's records of the first years (reports.origins_until_year), ranked alike
   cache_dir: runs/bard_cache    # every telling, by (record ids, record versions, backend, model); relative to the repo
   llm:
     # Any OpenAI-compatible endpoint (a free API tier now, a local Ollama or llama.cpp server later):
@@ -148,12 +150,22 @@ grammar:
     ceremony: ["This is kept by {subject}, as it was kept before them."]
     battle: ["{Subject} remember it, and remember it still."]
   nothing: ["{Subject} keep nothing of it."]
+  # A lineage's telling: the heading of each section, when it has records of the first years.
+  sections:
+    first_years:
+      plain: ["Of the first years."]
+      ceremony: ["Of the first years, as it was said before them."]
+      battle: ["Of the first years, hear it."]
+    held:
+      plain: ["Of the years after."]
+      ceremony: ["Of the years after, as it is said."]
+      battle: ["Of the years after, hear it."]
 
 # --- epithets ---------------------------------------------------------------------------------------
 # Each group of people named in a telling gets one to three fixed epithets, from its own records in
 # the telling (how often it holds a role) and, for the people telling it, their culture traits.
 # The first epithet goes with a name the first time a line names it ("Mebu, of the many stones");
-# the fallback epithet is listed in the export but never said.
+# a group no rule names has no epithet.
 epithets:
   max: 3
   # [verb, role, at least this many records, epithet]; a stronger count comes first.
@@ -200,4 +212,4 @@ epithets:
     - [hierarchy, high, 0.7, of high and low]
     - [mobility_preference, high, 0.7, the roaming]
     - [mobility_preference, low, 0.3, the settled]
-  fallback: the half-remembered # a group no rule names (named only in loose memories)
+

@@ -173,6 +173,22 @@ def name(key: tuple[int, int], dialect, seeds: tuple[int, int], spec: dict) -> s
     return out[:1].upper() + out[1:]
 
 
+def plural(n: float, one: str, many: str | None = None, fmt: str = "{:,.0f}") -> str:
+    """``n`` and its noun, singular when ``n`` shows as 1 ("1 sea cell", "2 sea cells");
+    ``many`` defaults to ``one`` + "s"."""
+    shown = fmt.format(n)
+    return f"{shown} {one if shown == '1' else many or one + 's'}"
+
+
+def number_form(form, n: float, **values) -> str:
+    """A phrase table entry that is one string or a pair [one, many], chosen by ``n`` as shown
+    (``values["m"]`` when given, else ``n`` rounded), then filled with ``values``."""
+    if isinstance(form, list):
+        shown = str(values.get("m", f"{n:,.0f}"))
+        form = form[0] if shown in ("1", "one") else form[1]
+    return form.format(**values)
+
+
 # --- canonical names --------------------------------------------------------------------------------
 
 
@@ -263,8 +279,10 @@ class Speaker:
         in words (``deluge/gazetteer.py``)."""
         from deluge.gazetteer import gazetteer
 
+        from deluge.gazetteer import Place
+
         if place < 0 or level not in (PLACE_CELL, PLACE_REGION):
-            return self.data["places"]["none"]
+            return Place.say(self.data["places"], "none")
         if level == PLACE_REGION:
             return gazetteer(self.model).region(place, self)
         return gazetteer(self.model).place(place, self, at)
@@ -364,8 +382,11 @@ class Speaker:
             place = ""  # the place bears the name of a settlement the sentence names
         lead = next((f for f in FIELD.findall(shape) if f in by_role), None)
         many = lead is not None and (len(by_role[lead]) > 1 or self.many(by_role[lead][0]))
-        text = shape.format(**names, at=f" {place}" if place else "", be=d["be"]["many" if many else "one"],
-                            count=f"{count:,}")
+        from deluge.gazetteer import destination
+
+        to = destination(place, d) if place else ""
+        text = shape.format(**names, at=f" {place}" if place else "", to=f" {to}" if to else "",
+                            be=d["be"]["many" if many else "one"], count=f"{count:,}")
         if count > 1 and not own_run:
             text += d["run"].format(count=self.number(count))
         if time:
@@ -416,6 +437,30 @@ class Speaker:
         """Event ``i`` of the log as one sentence, with its size (``amounts``)."""
         return self.run([i], amount)
 
+    def conquest(self, events) -> str:
+        """A conquest of one year, victor and settlement (the chronicle's joined entry: its took,
+        lost and died events) as one sentence: "In year 1274, the Goxeu people took Geugeu and
+        destroyed the Ares people (20,196 people left)."; with no end of a people, the taking of
+        their seat; with neither, the taking alone."""
+        ev, d = self.model.events, self.data
+        by = {ACTIONS[ev.action[i]]: i for i in events}
+        took, lost, died = by.get("took"), by.get("lost"), by.get("died")
+        if died is None and lost is None:
+            return self.run([took])
+        first = took if took is not None else lost
+        town = ev.actors[first][1]
+        if took is not None:
+            victor, loser = ev.actors[took][0], ev.actors[took][2]
+        else:
+            victor, loser = ev.actors[lost][2], ev.actors[lost][0]
+        names = {"taker": self.entity(victor), "taken": self.entity(town), "former": self.entity(loser)}
+        if died is not None:
+            text, form, m = d["conquest"]["destroyed"], d["amounts"]["died"], float(ev.magnitude[died])
+        else:
+            text, form, m = d["conquest"]["seat"], d["amounts"]["took"], float(ev.magnitude[first])
+        text = f"{self.time(int(ev.year[first]))}, {text.format(**names)}"
+        return text[:1].upper() + text[1:] + f" ({number_form(form, m, m=f'{m:,.0f}')})."
+
     def run(self, events, amount: bool = True) -> str:
         """A run of one event (same verb, groups of people and place) told once: the first
         event's roles, the run's years and count, the summed size."""
@@ -427,5 +472,5 @@ class Speaker:
         form = self.data["amounts"].get(ACTIONS[ev.action[i]]) if amount else None
         if form:
             total = sum(ev.magnitude[k] for k in events)
-            text = text[:-1] + f" ({form.format(m=f'{total:,.0f}')})."
+            text = text[:-1] + f" ({number_form(form, total, m=f'{total:,.0f}')})."
         return text

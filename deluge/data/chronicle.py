@@ -21,7 +21,9 @@ Sentences are built from the actors' roles (``deluge/roles.py``). A told event t
 the one before it with the same key (``roles.run_key``: verb, actors, place; actors of
 ``run_count_kinds`` by kind only) within ``run_gap_years`` joins that one's entry: a run, told
 once with its count and span ("From year 1194 to 1940, the Mafeish people raised 594
-monuments at Feshedad"). Firsts are told alone.
+monuments at Feshedad"). Firsts are told alone. A conquest's took, lost and died events of one
+year, victor and settlement are one entry when any of them is told ("In year 1274, the Goxeu
+people took Geugeu and destroyed the Ares people (20,196 people left)").
 
 Every other event is counted in a summary per generation (``generation_years``) and lineage,
 by action, kind of first actor and technique (``summaries`` in the phrase table), once the
@@ -112,6 +114,7 @@ class Chronicle:
         self._new: list[tuple[np.ndarray, ...]] = []
         self.suffix: dict[int, list[str]] = {}  # event -> what the chronicle adds (firsts)
         self.runs: dict[int, list[int]] = {}  # an entry's event -> the events of its run (when more than one)
+        self.joined: dict[int, list[int]] = {}  # a conquest's entry event -> its took, lost and died events
         self._open: dict[tuple, tuple[int, int]] = {}  # run key -> (its entry's event, its last year)
         self.run_kinds = tuple(cfg.run_count_kinds)
         self.summaries: list[dict] = []
@@ -133,7 +136,7 @@ class Chronicle:
         if self._type[k] == 0:
             i = int(self._ref[k])
             return {"event": i, "year": int(self._year[k]), "groups": int(self._groups[k]),
-                    "suffix": self.suffix.get(i, []), "events": self.runs.get(i, [i])}
+                    "suffix": self.suffix.get(i, []), "events": self.joined.get(i) or self.runs.get(i, [i])}
         return {"event": -1, **self.summaries[int(self._ref[k])], "groups": int(self._groups[k])}
 
     @property
@@ -245,14 +248,51 @@ class Chronicle:
         self._crossings(i0, n, action, years, mag, owner, suffix)
         told[[r for r in suffix]] = True
         self.suffix.update((i0 + r, s) for r, s in suffix.items())
+        folded = self._conquests(i0, action, years, a, kinds, told, groups)
         rows = self._join_runs(i0, np.flatnonzero(told), action, years)
         self._new.append((years[rows], np.zeros(len(rows), dtype=np.int64), i0 + rows, groups[rows]))
-        rest = np.flatnonzero(~told)
+        rest = np.flatnonzero(~told & ~folded)
         if len(rest):
             detail = np.where(kinds[1] == KIND["technique"], local[1], -1)
             rows = np.column_stack([years[rest] // cfg.generation_years, owner[rest], action[rest], kinds[0][rest],
                                     detail[rest], a[0][rest]])
             self._pending.append(rows)
+
+    def _conquests(self, i0: int, action, years, a, kinds, told, groups) -> np.ndarray:
+        """A conquest's taking, the loss of the seat and the end of the people taken, of one
+        year, one victor and one settlement (its cell), told as one entry when any of them is
+        told: the first of them holds the entry (``joined``), the others are folded into it
+        (marked in the returned mask, so no summary counts them). Changes ``told`` and
+        ``groups`` in place."""
+        folded = np.zeros(len(action), dtype=bool)
+        codes = [ACTION_CODE[v] for v in ("took", "lost", "died")]
+        sel = np.flatnonzero(np.isin(action, codes))
+        if len(sel) == 0:
+            return folded
+        log, pol, town = self.model.events, KIND["polity"], KIND["settlement"]
+        took, lost, died = codes
+        by_key: dict[tuple, list[int]] = {}
+        for r in sel.tolist():
+            act = action[r]
+            if act == took and kinds[0][r] == pol and kinds[1][r] == town and kinds[2][r] == pol:
+                victor, loser = a[0][r], a[2][r]
+            elif act == lost and kinds[0][r] == pol and kinds[1][r] == town and kinds[2][r] == pol:
+                victor, loser = a[2][r], a[0][r]
+            elif act == died and kinds[0][r] == pol and kinds[1][r] == pol and kinds[2][r] < 0:
+                victor, loser = a[1][r], a[0][r]
+            else:
+                continue
+            by_key.setdefault((int(years[r]), int(victor), int(loser), int(log.place[i0 + r])), []).append(r)
+        for rows in by_key.values():
+            if len(rows) < 2 or len({int(action[r]) for r in rows}) < len(rows) or not told[rows].any():
+                continue
+            main = rows[0]
+            told[rows] = False
+            told[main] = True
+            folded[rows[1:]] = True
+            groups[main] = np.bitwise_or.reduce(groups[rows])
+            self.joined[i0 + main] = [i0 + r for r in rows]
+        return folded
 
     def _join_runs(self, i0: int, rows: np.ndarray, action, years) -> np.ndarray:
         """Told events that repeat the run before them (``run_key``, within ``run_gap_years``)
@@ -261,7 +301,7 @@ class Chronicle:
         keep = []
         for r in rows.tolist():
             i = i0 + r
-            if i in self.suffix:
+            if i in self.suffix or i in self.joined:
                 keep.append(r)
                 continue
             key = run_key(action[r], log.actors[i], log.place[i], self.run_kinds)
@@ -416,7 +456,9 @@ class Chronicle:
         key = (0, entry["event"], len(events)) if entry["event"] >= 0 else (1, (entry["year"], entry["lineage"]))
         t = self._text.get(key)
         if t is None:
-            if entry["event"] >= 0:
+            if entry["event"] in self.joined:
+                t = self.sp.conquest(self.joined[entry["event"]])
+            elif entry["event"] >= 0:
                 t = self.sp.run(events)
                 if entry["suffix"]:
                     t = t[:-1] + "".join(entry["suffix"]) + "."

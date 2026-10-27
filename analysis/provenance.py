@@ -93,6 +93,36 @@ def origin_records(model, g: int, hist: History, until: int | None = None) -> li
                                                   e["record"].mem_id))
 
 
+def held_records(model, g: int, until: int | None = None) -> tuple[list[dict], int]:
+    """Every record held in founding group ``g``'s living polities' stores, copies alike in
+    every field (the same verb, actors, place, time and provenance: they tell the same thing)
+    as one entry: {"record" (the lowest id), "stores", "vividness" (mean over the copies),
+    "share" (of the group's living polities holding it), "early" (its provenance includes an
+    event of years 0 to ``until``)}; and the number of the group's living polities."""
+    until = model.config.reports.origins_until_year if until is None else until
+    st, P, ev = model.memory, model.polities, model.events
+    pids = [p for p in P.alive_ids().tolist() if P.lineage[p] == g]
+    groups: dict[tuple, dict] = {}
+    for p in pids:
+        for m in st.stores.get(p, ()):
+            r = st.records[m]
+            key = (r.provenance, r.actors, r.action, r.year, r.year_span, r.place, r.place_level)
+            e = groups.get(key)
+            if e is None:
+                groups[key] = e = {"record": r, "stores": [], "viv": []}
+            if p not in e["stores"]:
+                e["stores"].append(p)
+            e["viv"].append(float(r.vividness))
+            if r.mem_id < e["record"].mem_id:
+                e["record"] = r
+    out = []
+    for e in groups.values():
+        r = e["record"]
+        out.append({"record": r, "stores": e["stores"], "vividness": sum(e["viv"]) / len(e["viv"]),
+                    "share": len(e["stores"]) / len(pids), "early": any(ev.year[i] <= until for i in r.provenance)})
+    return out, len(pids)
+
+
 def holds_early(model, rec, until: int) -> bool:
     """Whether a record's current fields still hold something of years 0 to ``until``: its
     year span reaches into them, or it keeps the verb and an actor of one of its original

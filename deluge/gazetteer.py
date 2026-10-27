@@ -35,6 +35,27 @@ ARRIVALS = (ACTION_CODE["founded"], ACTION_CODE["moved"])  # events with which a
 DIRECTIONS = ("east", "north-east", "north", "north-west", "west", "south-west", "south", "south-east")
 
 
+class Place(str):
+    """A place phrase ("east of Mebu") that keeps its form and values, so a sentence can also
+    say it as where something went (``destination``: "to the land east of Mebu")."""
+
+    form: str = ""
+    values: dict = {}
+
+    @classmethod
+    def say(cls, table: dict, form: str, **values) -> Place:
+        out = cls(table[form].format(**values))
+        out.form, out.values = form, values
+        return out
+
+
+def destination(place: str, data: dict) -> str:
+    """A place phrase told as where something went (``destinations`` in the phrase table)."""
+    if isinstance(place, Place) and place.form in data["destinations"]:
+        return data["destinations"][place.form].format(**place.values)
+    return place
+
+
 class OccupancyLog:
     """Arrivals on and departures from cells, in order: (stamp, cell, settlement or -1).
 
@@ -154,9 +175,9 @@ class Gazetteer:
 
             src = int(m.settlements.cell[sid]) if at is None else self._cell_of(sid, at, before)
             form = "near" if d <= cfg.place_near_cells else "far"
-            return form, p[form].format(direction=self.direction(src, cell), name=sp.entity(entity("settlement", sid)))
+            return form, Place.say(p, form, direction=self.direction(src, cell), name=sp.entity(entity("settlement", sid)))
         if m.elevation_flat[cell] < float(m.sea_level_series[min(max(year, 0), len(m.sea_level_series) - 1)]):
-            return "sea", p["sea"]
+            return "sea", Place.say(p, "sea")
         labels = self._land(year)
         occ = self.occupants(np.arange(m.geom.n_cells), at, before)
         if len(exclude):
@@ -166,8 +187,8 @@ class Gazetteer:
             from deluge.data.events import entity
 
             k = int(np.argmin(m.geom.hex_distance(same, cell)))
-            return "land", p["land"].format(name=sp.entity(entity("settlement", int(occ[same[k]]))))
-        return "empty_land", p["empty_land"]
+            return "land", Place.say(p, "land", name=sp.entity(entity("settlement", int(occ[same[k]]))))
+        return "empty_land", Place.say(p, "empty_land")
 
     def _cell_of(self, sid: int, at: int, before: bool) -> int:
         """The cell settlement ``sid`` stood on when event ``at`` was logged."""
@@ -181,12 +202,12 @@ class Gazetteer:
     def place(self, cell: int, sp, at: int | None = None) -> str:
         """A cell's name when event ``at`` was logged (None: now), or where it lies."""
         if cell < 0:
-            return sp.data["places"]["none"]
+            return Place.say(sp.data["places"], "none")
         sid = self.occupant(cell, at)
         if sid >= 0:
             from deluge.data.events import entity
 
-            return sp.data["places"]["cell"].format(name=sp.entity(entity("settlement", sid)))
+            return Place.say(sp.data["places"], "cell", name=sp.entity(entity("settlement", sid)))
         return self.relative(cell, at, sp)
 
     def event_place(self, i: int, sp) -> str:
@@ -197,7 +218,7 @@ class Gazetteer:
         ev = self.model.events
         cell = int(ev.place[i])
         if cell < 0:
-            return sp.data["places"]["none"]
+            return Place.say(sp.data["places"], "none")
         arrival = int(ev.link[i]) if ev.link[i] >= 0 else i
         if ev.action[arrival] not in ARRIVALS:
             return self.place(cell, sp, i)
@@ -223,11 +244,11 @@ class Gazetteer:
 
             pop = m.settlements.population[occ]
             best = int(occ[np.lexsort((occ, -pop))[0]])
-            return p["region"].format(name=sp.entity(entity("settlement", best)))
+            return Place.say(p, "region", name=sp.entity(entity("settlement", best)))
         cx = min(rx * r + r // 2, m.geom.width - 1)
         cy = min(ry * r + r // 2, m.geom.height - 1)
         form, where = self._relative(m.geom.cid(cx, cy), None, sp)
-        return p["region_unnamed"].format(where=where) if form in ("near", "far") else where
+        return Place.say(p, "region_unnamed", where=str(where)) if form in ("near", "far") else where
 
     def name_of(self, cell: int, sp, at: int | None = None) -> str | None:
         """The bare name of a cell (its settlement's), None while nobody stands on it."""

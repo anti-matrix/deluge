@@ -378,8 +378,11 @@ def test_capital_capture_destroys_a_small_polity():
     assert m.stats["capitals_taken"] == 1 and m.stats["polities_destroyed"] == 1
     name = chronicle.Namer(m)
     lines = chronicle.lines(m, 10)  # a capital lost and a polity ended are always told
-    assert any(f"{name(entity('polity', b))} lost {name(entity('settlement', sb))} to" in s for s in lines)
-    assert any(f"{name(entity('polity', a))} destroyed {name(entity('polity', b))}" in s for s in lines)
+    # The conquest's took, lost and died events are one sentence (Round 13b).
+    one = (f"In year {m.year}, {name(entity('polity', a))} took {name(entity('settlement', sb))} and destroyed "
+           f"{name(entity('polity', b))} (")
+    assert sum(s.startswith(one) for s in lines) == 1
+    assert not any(" lost " in s or s.count("destroyed") > 1 for s in lines)
 
 
 def test_capital_capture_moves_the_capital_of_a_large_polity():
