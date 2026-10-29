@@ -13,7 +13,10 @@ Writes into the run directory (spec section 12):
   ``founders.parquet`` (each founding lineage's start and contact with the teachers) and
   ``settlements.parquet`` (every settlement's lineage, parent, polity, cell and years);
   ``ceilings.parquet`` (every year: land use and world population at the density ceilings
-  of ``configs/bounds.yaml``, Round 12);
+  of ``configs/bounds.yaml``, Round 12); Round 14: ``settlement_samples.parquet`` (each
+  settlement's people and capacity), ``frontier.parquet`` (each lineage's farthest settlement
+  over land from its year-0 cell), ``polity_scale.parquet`` (the largest polity) and
+  ``campaigns.parquet`` (every attack, with its dead and the people present);
 - ``memory_snapshots/year_NNNNN.parquet`` every ``output.memory_snapshot_every_years`` and at
   the end: every live memory record with its provenance (``memory.parquet``: the same at the
   end); ``memory_ops.parquet`` (the transformation log) at the end;
@@ -208,6 +211,11 @@ def write_tables(model, recorder, out_dir: Path) -> None:
     recorder.polities_frame().to_parquet(out_dir / "polities.parquet", index=False)
     recorder.first_held_frame(model).to_parquet(out_dir / "techniques.parquet", index=False)
     recorder.ceilings_frame().to_parquet(out_dir / "ceilings.parquet", index=False)
+    recorder.samples_frame().to_parquet(out_dir / "settlement_samples.parquet", index=False)
+    recorder.frontier_frame().to_parquet(out_dir / "frontier.parquet", index=False)
+    recorder.scale_frame().to_parquet(out_dir / "polity_scale.parquet", index=False)
+    if getattr(model, "_campaigns", None) is not None:
+        model._campaigns.frame().to_parquet(out_dir / "campaigns.parquet", index=False)
     model.events.write(out_dir / "events.parquet")
     entity_table(model).to_parquet(out_dir / "entities.parquet", index=False)
     model.lineages.polity_tree(model).to_parquet(out_dir / "polity_tree.parquet", index=False)

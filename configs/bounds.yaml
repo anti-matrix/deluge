@@ -60,8 +60,48 @@ polity_floor:
 monument_ceiling:
   person_years_per_monument: 10000
 
+# --- Growth (Round 14, report only this round: nothing is tuned against these) ----------------------
+# A small humanity in empty land grows near its biological maximum (frontier populations have
+# sustained 1-2.5% a year for a century or more), so growth is bounded where land is full, not
+# in general. Near-capacity growth: a settlement holding at least near_share of its cell's capacity
+# (for its modes and techniques) at the start of a window_years window grows on average at most
+# max_rate a year over it, (P(t + w) / P(t))^(1/w) - 1, measured on the settlement samples
+# (output.settlement_sample_every_years) of windows ending before industry (the first year a
+# settlement holds industry_technique). Frontier growth below near_share is bounded only by the
+# modes' growth maxima. The fastest sustained regional growth before 1800 was about 0.2-0.3% a year
+# (Livi-Bacci, M. (2017), A Concise History of World Population, 6th ed., ch. 1-2).
+near_capacity_growth:
+  report_only: true
+  near_share: 0.5
+  window_years: 500
+  max_rate: 0.002
+  industry_technique: steam_power
+
+# Spread speed: per founding lineage, the frontier (the distance over land, km, from its year-0 cell
+# to its farthest settlement; paths through land cells only, so sea crossings are left out) advances
+# on average at most max_km_per_year over any window_years window. The Neolithic wave of advance
+# moved about 1 km a year (Ammerman, A. J. and Cavalli-Sforza, L. L. (1984), The Neolithic
+# Transition and the Genetics of Populations in Europe; Pinhasi, R. et al. (2005), PLoS Biology 3).
+spread_speed:
+  report_only: true
+  window_years: 500
+  max_km_per_year: 2.0
+
+# Polity scale: the largest polity's people and settlements every output.polity_scale_every_years,
+# with what its capital held (writing among it) and its hierarchy trait. No bound yet.
+
+# --- War deaths (Round 14) -------------------------------------------------------------------------
+# A battle's dead (both sides) are at most the fighting-age share of the target settlement's people
+# plus the attacker's mobilized force within logistics reach of the target (its settlements no
+# farther from the target than its reach, times its mobilization share; mobilization never exceeds
+# the fighting-age share). Before industry about a quarter of a population are men of fighting age
+# (15-49 in a stationary population with life expectancy 25-35: Coale, A. J. and Demeny, P. (1983),
+# Regional Model Life Tables and Stable Populations, 2nd ed.).
+war_deaths:
+  fighting_age_share: 0.25
+
 # --- Report only, never tuned -----------------------------------------------------------------------
 report:
   calendar_offset: 10950            # real year = sim year - offset (year 0 ~ 10,950 BCE; 10,950 = 1 CE)
-  population_years: [3000, 8000, 10950, 12900]
+  population_years: [1000, 2000, 3000, 8000, 10950, 12900]
   origin_years: [1000, 3000, 6000, 12900]  # origin records (events of years 0 to reports.origins_until_year)

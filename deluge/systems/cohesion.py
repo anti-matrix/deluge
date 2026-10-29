@@ -11,8 +11,11 @@ Per living polity, each year, in this order:
    member's perceived appearance and dialect distance from the capital, clipped to [0,
    ``marker_factor_max``] (1 in the founders, whose parameters are zero).
 3. Monuments: once the capital holds megalithic construction, ``monument_max_share`` x
-   the brain's monument output of the treasury goes to a monument fund; each ``monument_cost``
-   saved builds a monument at the capital (a ``built`` event). Every monument standing in
+   the brain's monument output of the treasury goes to a monument fund. One monument at a
+   time is under construction (Round 14): it begins with the first labour put in, needs
+   ``monument_build_years`` x that year's labour (at least ``monument_cost``), and is built at
+   the capital (a ``built`` event) once that much is saved, never sooner than
+   ``monument_build_years`` after it began. Every monument standing in
    the polity's settlements costs ``monument_upkeep`` x its cost a year; those the
    treasury can pay are maintained this year (oldest first), the rest are not. Maintained
    monuments raise cohesion and are counted as prestige.
@@ -131,11 +134,21 @@ def run(model) -> None:
     P.treasury[pids] -= put
     P.monument_fund[pids] += put
     spending[pids] += put
-    for i in np.flatnonzero(P.monument_fund[pids] >= pc.monument_cost).tolist():
-        pid = int(pids[i])
-        while P.monument_fund[pid] >= pc.monument_cost:
-            P.monument_fund[pid] -= pc.monument_cost
-            model.build_monument(pid, int(P.capital[pid]), pc.monument_cost)
+    # At most one monument under construction per polity: it begins when labour is first put
+    # in, needs monument_build_years x that year's labour (at least monument_cost), and is done
+    # once that much is saved and not sooner than monument_build_years after it began.
+    begin = (P.monument_started[pids] < 0) & (put > 0)
+    P.monument_started[pids[begin]] = model.year
+    P.monument_target[pids[begin]] = np.maximum(pc.monument_cost, pc.monument_build_years * put[begin])
+    building = P.monument_started[pids] >= 0
+    done = (building & (P.monument_fund[pids] >= P.monument_target[pids])
+            & (model.year - P.monument_started[pids] >= pc.monument_build_years))
+    for pid in pids[done].tolist():
+        cost = float(P.monument_target[pid])
+        P.monument_fund[pid] -= cost
+        P.monument_started[pid] = -1
+        P.monument_target[pid] = 0.0
+        model.build_monument(pid, int(P.capital[pid]), cost)
     # Upkeep, oldest monuments first, as far as the treasury goes.
     mon = model.monuments
     maintained = np.zeros(npol)

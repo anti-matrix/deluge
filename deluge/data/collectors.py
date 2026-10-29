@@ -58,6 +58,33 @@ YEAR_STAT_REPORTERS = ("famine_deaths", "moves", "foundings", "dissolved", "drow
                        "polities_destroyed", "war_deaths", "sea_crossings", "sea_battles", "surplus")
 
 
+def land_steps(neighbors: np.ndarray, land: np.ndarray, start: int, geom=None) -> np.ndarray:
+    """Hex steps from ``start`` to every cell over land cells only (-1: no land path). If the
+    sea now covers ``start``, the paths start from the nearest land cells (``geom``), at their
+    hex distance from it."""
+    dist = np.full(len(land), -1, dtype=np.int64)
+    if land[start] or geom is None:
+        dist[start] = 0
+        front = np.array([start], dtype=np.int64)
+        k = 0
+    else:
+        cells = np.flatnonzero(land)
+        if len(cells) == 0:
+            return dist
+        d = geom.hex_distance(cells, start)
+        k = int(d.min())
+        front = cells[d == k]
+        dist[front] = k
+    while len(front):
+        k += 1
+        nb = neighbors[front].ravel()
+        nb = np.unique(nb[nb >= 0])
+        nb = nb[land[nb] & (dist[nb] < 0)]
+        dist[nb] = k
+        front = nb
+    return dist
+
+
 def year_stat(name: str, model) -> float:
     return float(model.stats[name])
 
@@ -109,6 +136,18 @@ class RunRecorder:
         self.drought_people_years = np.zeros(n_lin)  # of them, on cells in drought that year
         self.ceilings = Ceilings(load_bounds(bounds_path(model.config)), model.knowledge)
         self.ceiling_rows: list[tuple] = []
+        # Round 14 report-only bounds: settlement samples, frontiers, the largest polity.
+        self.settlement_every = out.settlement_sample_every_years
+        self.frontier_every = out.frontier_every_years
+        self.scale_every = out.polity_scale_every_years
+        self.sample_rows: list[tuple] = []
+        self.frontier_rows: list[tuple] = []
+        self.scale_rows: list[dict] = []
+        t = model.settlements
+        ids = t.alive_ids()
+        self.founding_cell = np.full(n_lin, -1, dtype=np.int64)  # each lineage's year-0 cell (its first band)
+        for sid in sorted(ids.tolist(), reverse=True):
+            self.founding_cell[int(t.lineage[sid])] = int(t.cell[sid])
 
     def observe(self, model) -> None:
         year = model.year - 1
@@ -135,6 +174,68 @@ class RunRecorder:
             self._lineages(model, year, ids, lin, held, n_lin)
         if year % self.polities_every == 0:
             self._polities(model, year, pids)
+        if year % self.settlement_every == 0:
+            self._samples(model, year, ids, pop)
+        if year % self.frontier_every == 0:
+            self._frontiers(model, year, ids, lin, n_lin)
+        if year % self.scale_every == 0:
+            self._scale(model, year, pids)
+
+    def _samples(self, model, year: int, ids, pop) -> None:
+        """Each living settlement's people and its cell's capacity for its modes and techniques
+        (the near-capacity growth bound)."""
+        from deluge.systems.subsistence import fed_capacity, mode_capacity
+
+        t = model.settlements
+        if len(ids) == 0:
+            return
+        k = fed_capacity(t.shares[ids], mode_capacity(model, t.knows[ids], t.cell[ids]), model.config.demography)
+        self.sample_rows.extend(zip([year] * len(ids), ids.tolist(), t.lineage[ids].tolist(), t.cell[ids].tolist(),
+                                    pop.tolist(), k.tolist()))
+
+    def _frontiers(self, model, year: int, ids, lin, n_lin: int) -> None:
+        """Per lineage: the distance over land (paths through land cells of this year only, km)
+        from its year-0 cell to its farthest settlement; settlements no land path reaches are
+        left out (the spread speed bound excludes sea crossings)."""
+        geom = model.geom
+        land = ~model.is_sea
+        cells = model.settlements.cell[ids]
+        for g in range(n_lin):
+            mine = cells[lin == g]
+            start = int(self.founding_cell[g])
+            if len(mine) == 0 or start < 0:
+                self.frontier_rows.append((year, g, float("nan"), 0, len(mine)))
+                continue
+            dist = land_steps(geom.neighbors, land, start, geom)
+            d = dist[mine]
+            reached = d >= 0
+            far = float(d[reached].max()) * model.unit_km if reached.any() else float("nan")
+            self.frontier_rows.append((year, g, far, int(reached.sum()), len(mine)))
+
+    def _scale(self, model, year: int, pids) -> None:
+        """The largest polity by people: its size, its capital's techniques, its hierarchy trait."""
+        if len(pids) == 0:
+            return
+        P, t, g = model.polities, model.settlements, model.knowledge
+        p = int(pids[np.argmax(P.population[pids])])
+        cap = int(P.capital[p])
+        traits = list(model.config.founders.culture_traits)
+        held = [g.names[j] for j in np.flatnonzero(t.knows[cap])]
+        self.scale_rows.append({"year": year, "polity": p, "lineage": int(P.lineage[p]),
+                                "population": float(P.population[p]), "settlements": int(P.n_settlements[p]),
+                                "writing": "writing" in held,
+                                "hierarchy": float(P.culture[p, traits.index("hierarchy")]),
+                                "techniques": len(held), "held": " ".join(held)})
+
+    def samples_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(self.sample_rows, columns=["year", "settlement", "lineage", "cell", "population",
+                                                       "capacity"])
+
+    def frontier_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(self.frontier_rows, columns=["year", "lineage", "frontier_km", "reached", "settlements"])
+
+    def scale_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(self.scale_rows)
 
     def _ceilings(self, model, year: int, ids, pop) -> None:
         """One row a year: the largest density over ceiling of a settlement (its cell and

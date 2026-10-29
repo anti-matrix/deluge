@@ -27,15 +27,16 @@ Strength S = P x mobilization x M_tech x (0.5 + cohesion) x D. Mobilization rise
 militarism and hierarchy; M_tech is the product of the capital's military multipliers
 (bronze, horses, iron, ...) and the teachers' weapons while a member holds them; D =
 exp(-km from the capital / (``logistics_km`` x the capital's raid_range multipliers:
-horses, sailing, writing)). The attacker fights with its whole polity at D; the defender
+horses, sailing, writing)). The attacker fights at D with the people present (Round 14): its
+settlements within that reach of the target and the one the attack sets out from; the defender
 with the target settlement's people in full and the rest of its polity at its own D, times
 the terrain's ``terrain_defense``, the target's defense multiplier (sedentary building) and
 ``home_bonus``.
 
 Resolution: the attacker wins with chance Sa^k / (Sa^k + Sd^k), k = ``win_steepness``. Each
-side loses ``casualty_rate`` x the other's strength (more for the loser), capped; the
-attacker's dead are spread over its settlements by population, the defender's come from the
-target. Military techniques may pass between the two settlements that fought. A raid won
+side loses ``casualty_rate`` x the other's strength (more for the loser), capped (the attacker
+at ``attacker_casualty_cap`` of its mobilized people present); the attacker's dead are spread
+over its settlements present by population, the defender's come from the target. Military techniques may pass between the two settlements that fought. A raid won
 carries off part of the target's store. A campaign won takes the target and possibly its
 neighbours of the same polity, with settlers from the attacking settlement; if the target
 was the loser's capital, the loser loses cohesion and moves its capital, or, with too few
@@ -175,16 +176,43 @@ def forces(model) -> SimpleNamespace:
                            terrain=terrain_table(w.terrain_defense)[model.world.terrain.ravel()])
 
 
-def strengths(model, F, a: np.ndarray, b: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Strength of attacker polities ``a`` and defender polities ``b`` at target settlements ``x``."""
+def present_people(model, F, a: np.ndarray, x: np.ndarray, src: np.ndarray | None = None) -> np.ndarray:
+    """Per attack: the people of attacker ``a``'s settlements present at the battle at target
+    ``x``: those within logistics reach of the target (no farther from it than the reach), and
+    the settlement the attack sets out from (``src``; across the sea it may lie farther)."""
+    t = model.settlements
+    a = np.asarray(a, dtype=np.int64)
+    x = np.asarray(x, dtype=np.int64)
+    out = np.zeros(len(a))
+    if len(a) == 0:
+        return out
+    target_cell = t.cell[x]
+    for p in np.unique(a).tolist():
+        rows = np.flatnonzero(a == p)
+        own = np.array(F.members.get(p, ()), dtype=np.int64)
+        if len(own) == 0:
+            continue
+        km = model.geom.hex_distance(t.cell[own][None, :], target_cell[rows][:, None]) * model.unit_km
+        near = km <= F.reach[p]
+        if src is not None:
+            near |= own[None, :] == np.asarray(src, dtype=np.int64)[rows][:, None]
+        out[rows] = near @ t.population[own]
+    return out
+
+
+def strengths(model, F, a: np.ndarray, b: np.ndarray, x: np.ndarray,
+              src: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Strength of attacker polities ``a`` and defender polities ``b`` at target settlements ``x``
+    (attacks setting out from ``src``): the attacker fights with the people present
+    (``present_people``) at the logistics decay from its capital."""
     w = model.config.war
     t, P, g = model.settlements, model.polities, model.knowledge
     cell = t.cell[x]
     km_a = model.geom.hex_distance(F.capital_cell[a], cell) * model.unit_km
     km_b = model.geom.hex_distance(F.capital_cell[b], cell) * model.unit_km
     n = len(F.people)
-    force = F.people * F.mob * F.tech * (0.5 + P.cohesion[:n])  # per polity, the same products in the same order
-    sa = force[a] * np.exp(-km_a / F.reach[a])
+    per_head = F.mob * F.tech * (0.5 + P.cohesion[:n])  # per polity
+    sa = present_people(model, F, a, x, src) * per_head[a] * np.exp(-km_a / F.reach[a])
     local = t.population[x]
     rest = np.maximum(F.people[b] - local, 0.0) * np.exp(-km_b / F.reach[b])
     sd = ((local + rest) * F.mob[b] * F.tech[b] * (0.5 + P.cohesion[b]) * F.terrain[cell]
@@ -543,7 +571,7 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
         src, x, a, b, sea = src[allowed], x[allowed], a[allowed], b[allowed], sea[allowed]
         if len(a) == 0:
             return []
-    sa, sd = strengths(model, F, a, b, x)
+    sa, sd = strengths(model, F, a, b, x, src)
     p_win = win_chance(sa, sd, w.win_steepness)
     score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a])
     order = np.lexsort((-score, a))
@@ -625,13 +653,15 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
     t, P = model.settlements, model.polities
     rng = model.streams["war"]
     memory.invoke(model, a, (entity("polity", b), entity("settlement", x)))
-    sa, sd = (float(v[0]) for v in strengths(model, F, np.array([a]), np.array([b]), np.array([x])))
+    target_people = float(t.population[x])
+    own = present_settlements(model, F, a, src, int(t.cell[x]))  # the attacker's settlements at the battle
+    present = float(t.population[own].sum())
+    sa, sd = (float(v[0]) for v in strengths(model, F, np.array([a]), np.array([b]), np.array([x]), np.array([src])))
     won = bool(rng.random() < win_chance(sa, sd, w.win_steepness))
     loss_a = min(w.casualty_rate * sd * (1.0 if won else w.loser_casualty_factor),
-                 w.attacker_casualty_cap * F.people[a] * F.mob[a])
+                 w.attacker_casualty_cap * present * F.mob[a])
     loss_d = min(w.casualty_rate * sa * (w.loser_casualty_factor if won else 1.0),
                  w.defender_casualty_cap * float(t.population[x]))
-    own = np.array(F.members[a], dtype=np.int64)
     pop = t.population[own]
     if pop.sum() > 0 and loss_a > 0:
         t.population[own] = pop - loss_a * pop / pop.sum()
@@ -669,11 +699,30 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
         model.log_crossing(sea, [("polity", a), ("settlement", src), ("settlement", x), ("polity", b)], cell, link,
                            int(t.cell[src]))
         crossed = before if len(model.events) > before else -1
-    note_campaign(model, F, a, b, src, x, cell, link, crossed)
+    note_campaign(model, F, a, b, src, x, cell, link, crossed, dead_attacker=loss_a, dead_defender=loss_d,
+                  target_people=target_people, present_people=present, mobilization=float(F.mob[a]))
     return won
 
 
-def note_campaign(model, F, a: int, b: int, src: int, x: int, cell: int, link: int, crossed: int) -> None:
+def within_reach(model, F, a: int, cell: int) -> np.ndarray:
+    """Polity ``a``'s settlements within logistics reach of ``cell``: no farther from it than
+    the reach of ``a``'s capital (the km over which its strength falls to 1/e)."""
+    own = np.array(F.members.get(a, ()), dtype=np.int64)
+    if len(own) == 0:
+        return own
+    km = model.geom.hex_distance(model.settlements.cell[own], cell) * model.unit_km
+    return own[km <= F.reach[a]]
+
+
+def present_settlements(model, F, a: int, src: int, cell: int) -> np.ndarray:
+    """The attacker's settlements at a battle on ``cell``: those within logistics reach of it
+    and the one the attack set out from (across the sea it may lie farther)."""
+    near = within_reach(model, F, a, cell)
+    return near if src in near or src not in F.members.get(a, ()) else np.append(near, src)
+
+
+def note_campaign(model, F, a: int, b: int, src: int, x: int, cell: int, link: int, crossed: int,
+                  **sizes: float) -> None:
     """The attack for the war display (``data/campaigns.py``); nothing reads it back."""
     log = getattr(model, "_campaigns", None)
     if log is None:
@@ -683,7 +732,7 @@ def note_campaign(model, F, a: int, b: int, src: int, x: int, cell: int, link: i
     decay = float(np.exp(-model.geom.hex_distance(capital_cell, cell) * model.unit_km / F.reach[a]))
     log.add(decay, year=model.year, attacker=a, defender=b, src=src, target=x, src_cell=int(t.cell[src]),
             target_cell=cell, capital=int(model.polities.capital[a]), capital_cell=capital_cell, event=link,
-            crossed=crossed)
+            crossed=crossed, **sizes)
 
 
 def fight(model) -> None:

@@ -37,7 +37,9 @@ symbol whose year spans overlap or touch, unless the union of their provenance w
 both; the verb, the place and the actors, up to ``max_actors``, by a vividness-weighted vote
 over every record fused in so far, each record's tally weighing its vividness; symbols the
 more vivid one's, then the other's, up to ``max_symbols``); actor
-substitution by an entity of the store drawn by its total vividness; the
+substitution by an entity of the store drawn by its total vividness; identical records (the
+same verb, actors and place at the same level, with overlapping year spans) always fuse, in
+a store that takes a new record and in every store each generation (``merge_identical``); the
 floor and the capacity (``capacity`` x the capital's ``memory_capacity`` multipliers);
 borrowing between polities in contact and from subject settlements to their rulers, with
 detail loss applied to the copy. Amplification diminishes with its count: the k-th new
@@ -287,6 +289,7 @@ def _record_events(model) -> None:
     signature_of: dict[int, tuple] = {}  # actors' signatures this year
     ids = t.alive_ids()
     people = np.bincount(t.polity[ids], weights=t.population[ids], minlength=P.n)
+    touched: set[int] = set()  # stores that took a new record (their identical records merge)
     for i in range(start, n):
         code = log.action[i]
         actors = log.actors[i]
@@ -350,6 +353,9 @@ def _record_events(model) -> None:
             if _insert(model, state, p, rec, caps[p]):
                 for s in members.get(p) or [int(P.capital[p])]:
                     state._hold(s, rec.mem_id)
+                touched.add(p)
+    for p in sorted(touched):
+        merge_identical(state, p, model.year)
 
 
 # --- transmission operators ---------------------------------------------------------------------
@@ -497,6 +503,35 @@ def _fuse(state: MemoryState, pid: int, mid: int, other: int, year: int) -> None
     state.log(year, "merged", pid, a.mem_id, other=b.mem_id)
     state._remove_from_store(b.mem_id)
     state.dropped -= 1  # fused, not lost
+
+
+def merge_identical(state: MemoryState, pid: int, year: int) -> int:
+    """Identical records of ``pid``'s store fuse (``_fuse``), always: the same verb, the same
+    actors, the same place at the same level, and year spans that overlap. Returns how many
+    fused away."""
+    store = state.stores.get(pid)
+    if not store or len(store) < 2:
+        return 0
+    records = state.records
+    groups: dict[tuple, list[int]] = {}
+    for m in store:
+        r = records[m]
+        groups.setdefault((r.action, frozenset(r.actors), r.place, r.place_level), []).append(m)
+    fused = 0
+    for mids in groups.values():
+        if len(mids) < 2:
+            continue
+        mids.sort(key=lambda m: (records[m].year, m))
+        cur = mids[0]
+        for m in mids[1:]:
+            a, b = records[cur], records[m]
+            if b.year < a.year + a.year_span and a.year < b.year + b.year_span:
+                _fuse(state, pid, cur, m, year)
+                fused += 1
+                cur = cur if cur in records else m
+            else:
+                cur = m
+    return fused
 
 
 def _substitute(state: MemoryState, pid: int, mid: int, year: int) -> None:
@@ -689,6 +724,8 @@ def transmit(model) -> None:
                 state._remove_from_store(mid)
         _trim(state, pid, caps[pid])
     _borrow(model)
+    for pid in P.alive_ids().tolist():
+        merge_identical(state, pid, year)
     _spread(model)
     derive(model)
 
@@ -754,6 +791,7 @@ def absorb(model, big: int, small: int) -> None:
         state.records[mid].store = big
         store.append(mid)
         state.log(model.year, "absorbed", big, mid, a=small)
+    merge_identical(state, big, model.year)
     _trim(state, big, int(capacity(model, [big])[0]))
 
 

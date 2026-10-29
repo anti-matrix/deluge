@@ -188,9 +188,10 @@ def test_amplification_diminishes_with_repetition():
     memory._record_events(m)
     mid = next(x for x in st.stores[pid] if st.records[x].provenance == (first,))
     gains = []
-    for _ in range(30):
+    for k in range(30):
         before = st.records[mid].vividness
-        log_people(m, "starved", [("settlement", sid)], origin, 5000.0)
+        # In other years: identical records of overlapping years would fuse (``merge_identical``).
+        log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year + 2 * (k + 1))
         memory._record_events(m)
         gains.append(st.records[mid].vividness - before)
     assert all(g2 < g1 for g1, g2 in zip(gains, gains[1:]))
@@ -242,7 +243,7 @@ def test_merge_votes_by_vividness():
     other = place(m, free_land(m, origin, 1)[0], pid)
     st = m.memory
     ids = [log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
-           log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
+           log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year + 2),
            log_people(m, "moved", [("settlement", sid), ("settlement", other)], origin, 5000.0, year=m.year + 1)]
     memory._record_events(m)
     from deluge.data.events import ACTION_CODE
@@ -259,7 +260,7 @@ def test_merge_votes_by_vividness():
             pid, sid = lone_polity(m, origin)
             other = place(m, free_land(m, origin, 1)[0], pid)
             ids = [log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
-                   log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year),
+                   log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year + 2),
                    log_people(m, "moved", [("settlement", sid), ("settlement", other)], origin, 5000.0,
                               year=m.year + 1)]
             memory._record_events(m)
@@ -272,7 +273,7 @@ def test_merge_votes_by_vividness():
         rec = next(r for r in st.records.values() if r.store == pid and len(r.provenance) == 3)
         assert rec.action == ACTION_CODE["starved"]  # two records of one verb outvote the more vivid third
         assert rec.actors[0] == entity("settlement", sid)
-        assert rec.year == m.year and rec.year_span == 2  # the span covering all three
+        assert rec.year == m.year and rec.year_span == 3  # the span covering all three
 
 
 def test_substitution_draws_an_entity_of_the_store():
@@ -420,3 +421,51 @@ def test_myths_report_renders(ran):
 
     text = myths.report(ran)
     assert text.startswith("# ") and "## Group" in text and "original event" in text
+
+
+def test_identical_records_always_merge():
+    """Records with the same verb, actors and place (same level) whose years overlap fuse into
+    one, in the store that took them and in every store each generation; others stay apart."""
+    m = held(years=10, more={"memory": {"merge_chance": 0.0, "repeat_gain": 0.0}})
+    origin = interior_cell(m, 3)
+    pid, sid = lone_polity(m, origin)
+    other = place(m, free_land(m, origin, 1)[0], pid)
+    st = m.memory
+    a = log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year)
+    b = log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year)  # identical: fuses
+    c = log_people(m, "starved", [("settlement", sid)], origin, 5000.0, year=m.year + 5)  # another year
+    d = log_people(m, "starved", [("settlement", other)], origin, 5000.0, year=m.year)  # other actors
+    e = log_people(m, "moved", [("settlement", sid)], origin, 5000.0, year=m.year)  # another verb
+    memory._record_events(m)
+    by = {st.records[x].provenance: st.records[x] for x in st.stores[pid]}
+    assert (a, b) in by and (c,) in by and (d,) in by and (e,) in by and len(by) == 4
+    assert any(memory.OPS[r[1]] == "merged" for r in st.ops)
+    # Once the year coarsens so the spans overlap, the record of another year fuses too.
+    rec_c = by[(c,)]
+    rec_c.year, rec_c.year_span = m.year - 2, 10
+    assert memory.merge_identical(st, pid, m.year) == 1
+    assert {st.records[x].provenance for x in st.stores[pid]} == {(a, b, c), (d,), (e,)}
+    # The same place at another level is another record.
+    f = log_people(m, "starved", [("settlement", other)], origin, 5000.0, year=m.year)
+    memory._record_events(m)
+    rec_f = next(st.records[x] for x in st.stores[pid] if f in st.records[x].provenance)
+    assert len(rec_f.provenance) == 2  # identical to d: fused on arrival
+    rec_f.place, rec_f.place_level = st.region(m, origin), memory.PLACE_REGION
+    g = log_people(m, "starved", [("settlement", other)], origin, 5000.0, year=m.year)
+    memory._record_events(m)
+    assert any(st.records[x].provenance == (g,) for x in st.stores[pid])
+
+
+def test_no_store_holds_identical_records_after_a_run():
+    m = small_model(years=300)
+    m.run()
+    st = m.memory
+    for pid, store in st.stores.items():
+        seen: dict = {}
+        for x in store:
+            r = st.records[x]
+            seen.setdefault((r.action, frozenset(r.actors), r.place, r.place_level), []).append(r)
+        for recs in seen.values():
+            recs.sort(key=lambda r: r.year)
+            for r1, r2 in zip(recs, recs[1:]):
+                assert r2.year >= r1.year + r1.year_span, (pid, r1.mem_id, r2.mem_id)

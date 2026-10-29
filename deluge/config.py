@@ -583,6 +583,7 @@ class PolitiesConfig:
     treasury_spoilage: float
     monument_max_share: float
     monument_cost: float
+    monument_build_years: int
     monument_upkeep: float
     secession_base: float
     secession_distance_reference: float
@@ -770,6 +771,9 @@ class OutputConfig:
     batch_run_memory_mb: int
     batch_memory_reserve_mb: int
     bounds_file: str
+    settlement_sample_every_years: int
+    frontier_every_years: int
+    polity_scale_every_years: int
 
 
 @dataclass(frozen=True)

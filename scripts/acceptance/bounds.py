@@ -15,7 +15,15 @@ Bounds:
 - world: world population / the sum of cell ceilings, its largest over the years, at most 1;
 - polity floor: the median lifespan of polities that ever held ``min_settlements`` or more
   settlements (the living counted to the run's end) is at least ``min_median_lifespan``;
-- monuments: monuments built <= surplus person-years / ``person_years_per_monument``.
+- monuments: monuments built <= surplus person-years / ``person_years_per_monument``;
+- war deaths (Round 14): each battle's dead are at most the fighting-age share of the target's
+  people plus the attacker's mobilized force within logistics reach and its starting settlement
+  (``campaigns.parquet``);
+- report only (Round 14): near-capacity growth (settlements at ``near_share`` of their
+  capacity grow at most ``max_rate`` over ``window_years``; ``settlement_samples.parquet``) and
+  spread speed (each lineage's frontier over land advances at most ``max_km_per_year`` over
+  ``window_years``; ``frontier.parquet``); the largest polity every 500 years
+  (``polity_scale.parquet``). Their status is shown, never counted as a broken bound.
 """
 
 from __future__ import annotations
@@ -34,7 +42,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from analysis.runs import Run, batch_runs  # noqa: E402
 from deluge.config import DEFAULT_CONFIG_PATH, load_config, read_overrides  # noqa: E402
-from deluge.data.bounds import load_bounds  # noqa: E402
+from deluge.data.bounds import (battle_death_limit, frontier_speeds, largest_window_rate, load_bounds,  # noqa: E402
+                                 near_capacity_rates)
 
 BOUNDS = REPO_ROOT / "configs" / "bounds.yaml"
 
@@ -83,6 +92,8 @@ def check_bounds(run: Run, bounds: dict) -> list[dict]:
                  "limit": f">= {pf['min_median_lifespan']}",
                  "ok": None if np.isnan(med) else bool(med >= pf["min_median_lifespan"]),
                  "detail": f"{int(big.sum()):,} polities"})
+    rows += growth_rows(run, bounds)
+    rows.append(war_deaths_row(run, bounds))
     model = run.model
     built = int(model.monuments_built.sum())
     if "surplus" in model:
@@ -97,7 +108,102 @@ def check_bounds(run: Run, bounds: dict) -> list[dict]:
     return rows
 
 
+def yearly_population(run: Run) -> dict[str, np.ndarray]:
+    """The world's and each founding group's people, indexed by year (model.parquet)."""
+    m = run.model.sort_values("year")
+    n = int(m.year.max()) + 1
+    out = {}
+    for name, col in [("world", "population")] + [(g, f"pop_{g}") for g in run.groups]:
+        s = np.zeros(n)
+        s[m.year.to_numpy(dtype=np.int64)] = m[col].to_numpy(dtype=float)
+        out[name] = s
+    return out
+
+
+def industry_year(run: Run, technique: str) -> int | None:
+    t = run.techniques
+    hit = t[t.technique == technique]
+    y = int(hit.first_held.iloc[0]) if len(hit) else -1
+    return y if y >= 0 else None
+
+
+def growth_rows(run: Run, bounds: dict) -> list[dict]:
+    """Report-only rows: near-capacity growth (all settlements) and spread speed per lineage."""
+    rows = []
+    g = bounds["near_capacity_growth"]
+    path = run.path / "settlement_samples.parquet"
+    if path.exists():
+        w = near_capacity_rates(pd.read_parquet(path), g["near_share"], g["window_years"],
+                                industry_year(run, g["industry_technique"]))
+        if len(w):
+            i = w.rate.idxmax()
+            over = int((w.rate > g["max_rate"]).sum())
+            rows.append({"bound": f"near-capacity growth, {g['window_years']} years (report only)",
+                         "value": float(w.rate[i]), "limit": f"<= {g['max_rate']}", "ok": None,
+                         "report_ok": bool(w.rate[i] <= g["max_rate"]),
+                         "detail": f"{over:,} of {len(w):,} windows over; median {100 * w.rate.median():.3f}%/yr; "
+                                   f"worst: settlement {int(w.settlement[i])}, years {int(w.year[i]):,}-"
+                                   f"{int(w.year[i]) + g['window_years']:,}, {w.start[i]:,.0f} -> {w.end[i]:,.0f}"})
+        else:
+            rows.append({"bound": f"near-capacity growth, {g['window_years']} years (report only)",
+                         "value": float("nan"), "limit": f"<= {g['max_rate']}", "ok": None,
+                         "detail": "no settlement at the share of its capacity at a window's start"})
+    s = bounds["spread_speed"]
+    path = run.path / "frontier.parquet"
+    if path.exists():
+        sp = frontier_speeds(pd.read_parquet(path), s["window_years"])
+        for lin, name in enumerate(run.groups):
+            mine = sp[sp.lineage == lin]
+            if not len(mine):
+                rows.append({"bound": f"spread speed, {name} (report only)", "value": float("nan"),
+                             "limit": f"<= {s['max_km_per_year']} km/yr", "ok": None, "detail": "no window"})
+                continue
+            i = mine.km_per_year.idxmax()
+            rows.append({"bound": f"spread speed, {name} (report only)", "value": float(mine.km_per_year[i]),
+                         "limit": f"<= {s['max_km_per_year']} km/yr", "ok": None,
+                         "report_ok": bool(mine.km_per_year[i] <= s["max_km_per_year"]),
+                         "detail": f"years {int(mine.year[i]):,}-{int(mine.year[i]) + s['window_years']:,}: "
+                                   f"{mine.from_km[i]:,.0f} -> {mine.to_km[i]:,.0f} km"})
+    return rows
+
+
+def polity_scale(run: Run) -> list[dict]:
+    path = run.path / "polity_scale.parquet"
+    return pd.read_parquet(path).to_dict("records") if path.exists() else []
+
+
+def war_deaths_row(run: Run, bounds: dict) -> dict:
+    share = bounds["war_deaths"]["fighting_age_share"]
+    path = run.path / "campaigns.parquet"
+    c = pd.read_parquet(path) if path.exists() else None
+    if c is None or "present_people" not in c or not len(c):
+        return {"bound": "battle dead / people present", "value": float("nan"), "limit": "<= 1", "ok": None,
+                "detail": "no campaigns.parquet"}
+    dead = c.dead_attacker + c.dead_defender
+    limit = battle_death_limit(c.target_people, c.present_people, c.mobilization, share)
+    ratio = dead / np.maximum(limit, 1e-9)
+    i = int(ratio.idxmax())
+    return {"bound": "battle dead / people present", "value": float(ratio[i]), "limit": "<= 1",
+            "ok": bool(ratio[i] <= 1.0),
+            "detail": f"{int((ratio > 1).sum()):,} of {len(c):,} battles over; worst: year {int(c.year[i]):,}, "
+                      f"{dead[i]:,.0f} dead against {limit[i]:,.0f}"}
+
+
 # --- report only -----------------------------------------------------------------------------------
+
+
+def largest_battle(run: Run) -> dict | None:
+    path = run.path / "campaigns.parquet"
+    if not path.exists():
+        return None
+    c = pd.read_parquet(path)
+    if not len(c):
+        return None
+    dead = c.dead_attacker + c.dead_defender
+    i = int(dead.idxmax())
+    return {"year": int(c.year[i]), "dead": float(dead[i]), "attacker": int(c.attacker[i]),
+            "defender": int(c.defender[i]), "target": int(c.target[i]), "target_people": float(c.target_people[i]),
+            "dead_attacker": float(c.dead_attacker[i]), "dead_defender": float(c.dead_defender[i])}
 
 
 def population_at(run: Run, years) -> dict:
@@ -141,9 +247,22 @@ def report_numbers(run: Run, bounds: dict) -> dict:
         first[r.technique] = {"all": int(r.first_held),
                               **{g: int(getattr(r, f"first_held_{g}")) for g in run.groups}}
     tree = run.polity_tree
+    g = bounds["near_capacity_growth"]
+    pops = yearly_population(run)
+    until = industry_year(run, g["industry_technique"])
+    end = run.final_year
+    ended = np.where(tree.ended >= 0, tree.ended, end)
+    big = tree.peak_settlements >= bounds["polity_floor"]["min_settlements"]
     return {
         "first_held": first,
         "population": population_at(run, rep["population_years"]),
+        "lineage_population": {y: {n: (float(p[y - 1]) if y - 1 < len(p) else None) for n, p in pops.items()}
+                               for y in rep["population_years"] if y <= end},
+        "growth": {n: largest_window_rate(p, g["window_years"], 0.0, until) for n, p in pops.items()},
+        "largest_battle": largest_battle(run),
+        "mergers": int(run.model.mergers.sum()),
+        "polity_scale": polity_scale(run),
+        "median_lifespan": float(np.median((ended - tree.founded)[big])) if big.any() else None,
         "polity_births": int((tree.founded > 0).sum()),
         "monuments": int(run.model.monuments_built.sum()),
         "chronicle_entries": run.meta.get("chronicle_entries"),
@@ -175,7 +294,8 @@ def markdown(results: dict, bounds: dict) -> str:
              "| run | bound | value | bound | status | detail |", "|---|---|---:|---|---|---|"]
     for n, res in results.items():
         for b in res["bounds"]:
-            lines.append(f"| {n} | {b['bound']} | {_fmt(b['value'])} | {b['limit']} | {_ok(b['ok'])} | {b['detail']} |")
+            status = _ok(b["ok"]) if "report_ok" not in b else ("within (report)" if b["report_ok"] else "over (report)")
+            lines.append(f"| {n} | {b['bound']} | {_fmt(b['value'])} | {b['limit']} | {status} | {b['detail']} |")
     lines += ["", "## Bounds for the batch", "", "| bound | worst value | status |", "|---|---:|---|"]
     by_bound: dict[str, list] = {}
     for res in results.values():
@@ -198,7 +318,44 @@ def markdown(results: dict, bounds: dict) -> str:
               + " |", "|---|" + "---:|" * len(years)]
     for n, res in results.items():
         lines.append(f"| {n} | " + " | ".join(_fmt(res["report"]["population"][y]) for y in years) + " |")
-    lines += ["", "### First appearance of each technique (sim year / real year)", ""]
+    lines += ["", "### People per founding group (Round 14)", ""]
+    for n, res in results.items():
+        lp = res["report"].get("lineage_population") or {}
+        if not lp:
+            continue
+        names = list(next(iter(lp.values())))
+        lines += [f"**{n}**", "", "| year | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
+        for y, row in lp.items():
+            lines.append(f"| {int(y):,} | " + " | ".join(_fmt(row[k]) for k in names) + " |")
+        lines.append("")
+    lines += ["### Largest 500-year growth rate (every window before industry, no minimum size)", "",
+              "| run | " + " | ".join(next(iter(results.values()))["report"]["growth"]) + " |",
+              "|---|" + "---:|" * len(next(iter(results.values()))["report"]["growth"])]
+    for n, res in results.items():
+        lines.append(f"| {n} | " + " | ".join("-" if np.isnan(r) else f"{100 * r:.3f}% (from {s:,})"
+                                              for r, s in res["report"]["growth"].values()) + " |")
+    lines += ["", "### Largest battle, mergers, median lifespan (polities with 3+ settlements)", "",
+              "| run | largest battle | mergers | median lifespan |", "|---|---|---:|---:|"]
+    for n, res in results.items():
+        r = res["report"]
+        b = r["largest_battle"]
+        battle = "-" if not b else (f"year {b['year']:,}: {b['dead']:,.0f} dead ({b['dead_attacker']:,.0f} attacker, "
+                                    f"{b['dead_defender']:,.0f} defender; target {b['target_people']:,.0f} people), "
+                                    f"polity {b['attacker']} on {b['defender']}")
+        lines.append(f"| {n} | {battle} | {_fmt(r['mergers'])} | {_fmt(r['median_lifespan'])} |")
+    lines += ["", "### Largest polity every 500 years (report only)", ""]
+    for n, res in results.items():
+        rows = res["report"].get("polity_scale") or []
+        if not rows:
+            continue
+        lines += [f"**{n}**", "", "| year | polity | lineage | people | settlements | writing | hierarchy | techniques |",
+                  "|---:|---:|---:|---:|---:|---|---:|---:|"]
+        for r in rows:
+            lines.append(f"| {int(r['year']):,} | {int(r['polity'])} | {int(r['lineage'])} | {r['population']:,.0f} | "
+                         f"{int(r['settlements']):,} | {'yes' if r['writing'] else 'no'} | {r['hierarchy']:.2f} | "
+                         f"{int(r['techniques'])} |")
+        lines.append("")
+    lines += ["### First appearance of each technique (sim year / real year)", ""]
     for n, res in results.items():
         first = res["report"]["first_held"]
         groups = [g for g in next(iter(first.values())) if g != "all"]

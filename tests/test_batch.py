@@ -61,8 +61,14 @@ def test_batch_runs_and_reports(tmp_path):
     results = bounds.evaluate(batch)
     assert set(results) == {"w3_h1", "w3_h2"}
     for res in results.values():
-        assert len(res["bounds"]) == 4 and res["bounds"][0]["ok"] and res["bounds"][1]["ok"]
-        assert res["bounds"][3]["ok"] is not None  # monuments against surplus
+        by = {b["bound"]: b for b in res["bounds"]}
+        assert by["cell density / ceiling of its mode"]["ok"] and by["world population / sum of cell ceilings"]["ok"]
+        assert by["monuments built"]["ok"] is not None  # monuments against surplus
+        # Round 14: war deaths (a bound) and the report-only rows (never counted as a bound).
+        assert "battle dead / people present" in by
+        assert sum(k.startswith("spread speed, ") for k in by) == 5
+        assert all(b["ok"] is None for k, b in by.items() if "(report only)" in k)
+        assert [r["year"] for r in res["report"]["polity_scale"]] == [0]
         assert res["report"]["chronicle_entries"] > 0 and res["report"]["polity_births"] >= 0
     assert "## Bounds for the batch" in (batch / "bounds.md").read_text(encoding="utf-8")
     assert bounds.real_year(0, 10950) == "10,950 BCE" and bounds.real_year(10950, 10950) == "1 CE"

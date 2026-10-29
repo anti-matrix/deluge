@@ -530,7 +530,10 @@ polities:                     # spec section 8; one polity per founding group at
   treasury_spoilage: 0.2      # share of the treasury lost per year
   monument_max_share: 0.3     # share of the treasury put toward monuments per year = max share x monument output
                               # (only once the capital holds megalithic construction)
-  monument_cost: 100000.0     # rations (labour) per monument (tuning: 5,000 built ~7,800 monuments in 3,000 years)
+  monument_cost: 100000.0     # rations (labour) per monument (tuning: 5,000 built ~7,800 monuments in 3,000 years);
+                              # since Round 14 the least a monument takes
+  monument_build_years: 20    # a monument takes this many years of the builder's labour at the rate it put in when
+                              # it began (at least monument_cost), and is never done sooner; one at a time per polity
   monument_upkeep: 0.01       # share of a monument's cost paid each year to keep it maintained
   # Secession: per settlement per year (never the capital)
   #   p = base x (distance to capital / reference) ** exponent x (1 - cohesion) x (1 + pressure_weight x pressure)
@@ -787,6 +790,9 @@ output:                       # headless runs (scripts/run.py, scripts/batch.py)
   batch_run_memory_mb: 1000   # memory one run is assumed to need
   batch_memory_reserve_mb: 500  # memory left free for the rest of the machine
   bounds_file: bounds.yaml    # physical bounds (Round 12): ceilings.parquet measures each year against them
+  settlement_sample_every_years: 50  # settlement_samples.parquet (Round 14): each living settlement's people and capacity
+  frontier_every_years: 25    # frontier.parquet (Round 14): each lineage's farthest settlement over land from its founding cell
+  polity_scale_every_years: 500  # polity_scale.parquet (Round 14): the largest polity, its size and what it held
 
 viz:                          # browser UI only; no effect on the simulation
   play_interval_ms: 0         # pause between frames while playing

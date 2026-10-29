@@ -16,7 +16,9 @@ Columns:
   (``founders.culture_traits``), 0..1; ``intermarriage``: the evolvable rate at which its
   settlements exchange people (appearance mixing, ``systems/identity.py``).
 - ``cohesion`` (asabiya), ``elite_ratio``, ``pressure`` (structural-demographic),
-  ``frontier`` (f), ``treasury`` (rations), ``monument_fund``, ``tribute`` and
+  ``frontier`` (f), ``treasury`` (rations), ``monument_fund``, the monument under
+  construction (``monument_started``: its first year, -1 for none; ``monument_target``: the
+  labour it needs), ``tribute`` and
   ``spending`` (this year), ``prestige`` (cost of its maintained monuments),
   ``war_recent`` (its battles, decaying: the war term of frontier pressure),
   ``wins_recent`` / ``losses_recent`` (battles won and lost, decaying: brain inputs),
@@ -52,9 +54,9 @@ def marker_index(*names: str) -> list[int]:
 class PolityTable:
     FLOAT_COLUMNS = ("cohesion", "elite_ratio", "pressure", "frontier", "treasury", "monument_fund", "tribute",
                      "spending", "prestige", "intermarriage", "population", "peak_population", "war_recent",
-                     "wins_recent", "losses_recent", "load")
+                     "wins_recent", "losses_recent", "load", "monument_target")
     INT_COLUMNS = ("lineage", "parent", "founded", "ended", "end_cause", "merged_into", "capital", "n_settlements",
-                   "peak_settlements")
+                   "peak_settlements", "monument_started")
     MATRIX_COLUMNS = ("culture", "deposit", "marker")
 
     def __init__(self, n_traits: int, n_minerals: int, capacity: int = 64):
@@ -92,6 +94,7 @@ class PolityTable:
         self.capital[pid] = capital
         self.n_settlements[pid] = 0
         self.peak_settlements[pid] = 0
+        self.monument_started[pid] = -1
         self.culture[pid] = culture
         self.intermarriage[pid] = intermarriage
         self.cohesion[pid] = cohesion
