@@ -16,6 +16,11 @@ Every record is (year, action, actors, place, magnitude):
   target settlement; dead), ``won`` (a raid won; rations taken), ``took`` (conqueror,
   settlement, former polity; people), ``lost`` (a polity losing its capital to the third
   actor).
+- Alliances (Round 14, ``systems/alliances.py``): ``allied`` (two polities, the proposer
+  first; their people), ``joined_war`` (an ally, the polity it came to aid, their enemy, the
+  settlement fought over; the ally's dead), ``alliance_ended`` (the polity whose score fell,
+  the other; years it lasted), ``betrayed`` (the polity that attacked its ally, the ally;
+  years it lasted).
 - ``crossed`` is a sea crossing: a band reaching its new cell over sea (migration, a
   daughter founding, joining kin, migration of the core) or a polity's settlement attacking
   over sea. Its magnitude is the number of sea cells crossed (the fewest any path within
@@ -44,7 +49,7 @@ import pandas as pd
 ACTIONS = (
     "arrived", "taught", "displayed", "departed", "gave", "used", "broke", "fought", "won",
     "lost", "moved", "founded", "built", "starved", "died", "joined", "learned", "forgot", "depleted", "took",
-    "crossed",
+    "crossed", "allied", "joined_war", "alliance_ended", "betrayed",
 )
 ACTION_CODE = {name: i for i, name in enumerate(ACTIONS)}
 ENTITY_KINDS = ("teachers", "lineage", "settlement", "technique", "technology", "artifact", "deposit", "polity",

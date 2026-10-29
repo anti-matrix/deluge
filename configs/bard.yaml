@@ -202,6 +202,11 @@ epithets:
     - [joined, joiner_people, 1, who joined others]
     - [moved, mover, 1, the wandering]
     - [gave, receiver, 1, who received gifts]
+    - [allied, sworn, 1, who swore alliance]
+    - [allied, sworn_with, 1, who swore alliance]
+    - [joined_war, helper, 1, who came to their allies' aid]
+    - [betrayed, betrayer, 1, who broke faith]
+    - [betrayed, wronged, 1, the wronged]
   # [trait, "high" or "low", threshold, epithet]: for the people telling it.
   culture:
     - [militarism, high, 0.7, warlike]

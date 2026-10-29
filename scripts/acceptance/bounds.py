@@ -179,8 +179,10 @@ def war_deaths_row(run: Run, bounds: dict) -> dict:
     if c is None or "present_people" not in c or not len(c):
         return {"bound": "battle dead / people present", "value": float("nan"), "limit": "<= 1", "ok": None,
                 "detail": "no campaigns.parquet"}
-    dead = c.dead_attacker + c.dead_defender
-    limit = battle_death_limit(c.target_people, c.present_people, c.mobilization, share)
+    allies = c.dead_allies.fillna(0.0) if "dead_allies" in c else 0.0
+    dead = c.dead_attacker + c.dead_defender + allies
+    limit = battle_death_limit(c.target_people, c.present_people, c.mobilization, share,
+                               c.allied_mobilized if "allied_mobilized" in c else 0.0)
     ratio = dead / np.maximum(limit, 1e-9)
     i = int(ratio.idxmax())
     return {"bound": "battle dead / people present", "value": float(ratio[i]), "limit": "<= 1",

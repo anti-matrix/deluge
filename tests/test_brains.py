@@ -34,7 +34,7 @@ def scripted(m, pid, target=None, **outputs):
     g[s["b2"][0]] = b2
     g[s["q0"][0]] = q0
     m.brains.genome[pid] = g
-    out, tw, _ = network.forward(lay, g[None, :], np.zeros((1, lay.n_in)))
+    out, tw, _, _ = network.forward(lay, g[None, :], np.zeros((1, lay.n_in)))
     m.brains.output[pid], m.brains.target_w[pid] = out[0], tw[0]
     return pid
 
@@ -48,7 +48,7 @@ def test_batched_forward_matches_one_by_one():
     rng = np.random.default_rng(1)
     g = rng.normal(0.0, 0.5, (7, lay.size)).astype(np.float32)
     x = rng.uniform(-1.0, 1.0, (7, lay.n_in))
-    out, tw, h = network.forward(lay, g, x)
+    out, tw, _, h = network.forward(lay, g, x)
     for i in range(7):
         w = {k: v[0] for k, v in lay.unpack(g[i:i + 1].astype(np.float64)).items()}
         hi = np.tanh(x[i] @ w["w1"] + w["b1"])
@@ -72,7 +72,9 @@ def test_layout_and_marker_mask():
     q = np.arange(lay.size)[s["q"][0]].reshape(s["q"][1])
     assert mask[q[:, lay.target.index("appearance_distance")]].all()
     assert not mask[q[:, lay.target.index("win_chance")]].any()
-    assert mask.sum() == 4 * cfg.hidden + 2 * (cfg.hidden + 1)
+    qa = np.arange(lay.size)[s["qa"][0]].reshape(s["qa"][1])  # Round 14: the alliance head's marker features
+    assert mask[qa[:, lay.alliance.index("appearance_distance")]].all() and not mask[qa[:, lay.alliance.index("bias")]].any()
+    assert mask.sum() == 4 * cfg.hidden + 2 * (cfg.hidden + 1) + 2 * (cfg.hidden + 1)
 
 
 def test_founders_get_independent_random_brains_with_zero_marker_weights():

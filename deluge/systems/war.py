@@ -72,7 +72,7 @@ from deluge.brains.features import target_features
 from deluge.brains.network import OUT, target_scores
 from deluge.data.events import entity
 from deluge.jit import njit
-from deluge.systems import identity, knowledge, memory
+from deluge.systems import alliances, identity, knowledge, memory
 from deluge.systems.cohesion import culture_distance, trait_index
 from deluge.world.worlddata import terrain_table
 
@@ -571,6 +571,11 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
         src, x, a, b, sea = src[allowed], x[allowed], a[allowed], b[allowed], sea[allowed]
         if len(a) == 0:
             return []
+    if model.alliances:  # an ally is no target while the attacker still values the alliance
+        allowed = ~alliances.keeps_faith(model, a, b)
+        src, x, a, b, sea = src[allowed], x[allowed], a[allowed], b[allowed], sea[allowed]
+        if len(a) == 0:
+            return []
     sa, sd = strengths(model, F, a, b, x, src)
     p_win = win_chance(sa, sd, w.win_steepness)
     score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a])
@@ -657,17 +662,44 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
     own = present_settlements(model, F, a, src, int(t.cell[x]))  # the attacker's settlements at the battle
     present = float(t.population[own].sum())
     sa, sd = (float(v[0]) for v in strengths(model, F, np.array([a]), np.array([b]), np.array([x]), np.array([src])))
-    won = bool(rng.random() < win_chance(sa, sd, w.win_steepness))
-    loss_a = min(w.casualty_rate * sd * (1.0 if won else w.loser_casualty_factor),
-                 w.attacker_casualty_cap * present * F.mob[a])
-    loss_d = min(w.casualty_rate * sa * (w.loser_casualty_factor if won else 1.0),
-                 w.defender_casualty_cap * float(t.population[x]))
+    cell = int(t.cell[x])
+    # Allies of either side may join (``alliances.helpers``): their people within reach of the
+    # battle, at the logistics decay from their own capitals.
+    joined = [(c, a, b) for c in alliances.helpers(model, a, b)] + [(c, b, a) for c in alliances.helpers(model, b, a)]
+    help_s, help_own, help_mob = [], [], []
+    for c, _, _ in joined:
+        near = within_reach(model, F, c, cell)
+        people = float(t.population[near].sum())
+        km = float(model.geom.hex_distance(F.capital_cell[c], cell)) * model.unit_km
+        help_s.append(people * F.mob[c] * F.tech[c] * (0.5 + P.cohesion[c]) * np.exp(-km / F.reach[c]))
+        help_own.append(near)
+        help_mob.append(people * F.mob[c])
+    on_a = [i for i, (_, side, _) in enumerate(joined) if side == a]
+    on_b = [i for i, (_, side, _) in enumerate(joined) if side == b]
+    sa_all = sa + sum(help_s[i] for i in on_a)
+    sd_all = sd + sum(help_s[i] for i in on_b)
+    won = bool(rng.random() < win_chance(sa_all, sd_all, w.win_steepness))
+    side_a = min(w.casualty_rate * sd_all * (1.0 if won else w.loser_casualty_factor),
+                 w.attacker_casualty_cap * (present * F.mob[a] + sum(help_mob[i] for i in on_a)))
+    side_d = min(w.casualty_rate * sa_all * (w.loser_casualty_factor if won else 1.0),
+                 w.defender_casualty_cap * float(t.population[x])
+                 + w.attacker_casualty_cap * sum(help_mob[i] for i in on_b))
+    # Each side's dead are shared by strength; without allies, all are the attacker's and the target's.
+    loss_a = side_a * (sa / sa_all if sa_all > 0 else 1.0)
+    loss_d = side_d * (sd / sd_all if sd_all > 0 else 1.0)
+    help_loss = [(side_a if i in on_a else side_d) * help_s[i] / max(sa_all if i in on_a else sd_all, 1e-300)
+                 for i in range(len(joined))]
     pop = t.population[own]
     if pop.sum() > 0 and loss_a > 0:
         t.population[own] = pop - loss_a * pop / pop.sum()
     t.population[x] -= loss_d
     F.people[a] -= loss_a
     F.people[b] -= loss_d
+    for (c, _, _), near, lost in zip(joined, help_own, help_loss):
+        hp = t.population[near]
+        if hp.sum() > 0 and lost > 0:
+            t.population[near] = hp - lost * hp / hp.sum()
+        F.people[c] -= lost
     model.stats["battles"] += 1
     model.stats["campaigns" if campaign else "raids"] += 1
     model.stats["war_deaths"] += loss_a + loss_d
@@ -676,10 +708,16 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
     P.wins_recent[a if won else b] += 1.0
     P.losses_recent[b if won else a] += 1.0
     model.wars[(min(a, b), max(a, b))] = model.year
-    cell = int(t.cell[x])
     link = -1  # the battle's event: fought, else what the win took (won, took)
     if loss_a + loss_d >= w.battle_log_min_losses:
         link = model.log_event("fought", [("polity", a), ("polity", b), ("settlement", x)], cell, loss_a + loss_d)
+    for (c, side, enemy), lost in zip(joined, help_loss):
+        model.stats["joined_wars"] += 1
+        model.stats["war_deaths"] += lost
+        P.war_recent[c] += 1.0
+        model.wars[(min(c, enemy), max(c, enemy))] = model.year
+        model.log_event("joined_war", [("polity", c), ("polity", side), ("polity", enemy), ("settlement", x)], cell,
+                        lost, link)
     exchange_military(model, src, x)
     if won:
         before = len(model.events)
@@ -700,7 +738,8 @@ def battle(model, F, a: int, b: int, src: int, x: int, campaign: bool, sea: int 
                            int(t.cell[src]))
         crossed = before if len(model.events) > before else -1
     note_campaign(model, F, a, b, src, x, cell, link, crossed, dead_attacker=loss_a, dead_defender=loss_d,
-                  target_people=target_people, present_people=present, mobilization=float(F.mob[a]))
+                  target_people=target_people, present_people=present, mobilization=float(F.mob[a]),
+                  dead_allies=float(sum(help_loss)), allied_mobilized=float(sum(help_mob)))
     return won
 
 
@@ -742,6 +781,8 @@ def fight(model) -> None:
         # Skip what this year's earlier battles changed: a polity gone, a target taken.
         if P.ended[a] >= 0 or P.ended[b] >= 0 or t.polity[x] != b or t.polity[src] != a:
             continue
+        if alliances.allied(model, a, b):  # its score for its ally fell: attacking it is a betrayal
+            alliances.betray(model, a, b)
         battle(model, F, a, b, src, x, campaign, sea)
 
 
@@ -753,6 +794,7 @@ def run(model) -> None:
     keep = 1.0 - model.config.brains.features.war_record_decay
     P.wins_recent[: P.n] *= keep
     P.losses_recent[: P.n] *= keep
+    alliances.run(model)
     if w.enabled:
         fight(model)
     year = model.year

@@ -99,11 +99,13 @@ def largest_window_rate(pop, window: int, min_people: float = 0.0, until: int | 
     return float(rates[k]), int(starts[k])
 
 
-def battle_death_limit(target_people, present_people, mobilization, fighting_age_share: float):
+def battle_death_limit(target_people, present_people, mobilization, fighting_age_share: float, allied_mobilized=0.0):
     """Most dead a battle can have (``war_deaths`` in configs/bounds.yaml): the fighting-age share
-    of the target's people plus the attacker's mobilized force within logistics reach."""
+    of the target's people plus the attacker's mobilized force within logistics reach, plus
+    the mobilized people of allies that joined either side."""
     return (fighting_age_share * np.asarray(target_people, dtype=float)
-            + np.asarray(present_people, dtype=float) * np.asarray(mobilization, dtype=float))
+            + np.asarray(present_people, dtype=float) * np.asarray(mobilization, dtype=float)
+            + np.nan_to_num(np.asarray(allied_mobilized, dtype=float)))
 
 
 def near_capacity_rates(samples, near_share: float, window: int, until: int | None = None):

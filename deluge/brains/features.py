@@ -29,6 +29,12 @@ per-neighbour head: a constant, the estimated win chance, the target's stores, t
 fertility of its cell, culture distance from the attacker, perceived appearance and dialect
 distance from the attacker's capital, already at war with its polity, it is its polity's
 capital.
+
+Alliance features of each polity in contact (``ALLIANCE_FEATURES``, Round 14), scored by the
+polity's alliance head (``systems/alliances.py``): a constant, the other's share of the two
+polities' strength, a common enemy, at war with each other, culture distance, perceived
+appearance and dialect distance between the two capitals (marker features: their weights
+start at zero), already allied.
 """
 
 from __future__ import annotations
@@ -52,6 +58,10 @@ TECHNIQUE_CATEGORIES = ("subsistence", "building", "military")
 TARGET_FEATURES = ("bias", "win_chance", "stores", "fertility", "culture_distance", "appearance_distance",
                    "dialect_distance", "at_war", "capital")
 MARKER_TARGET_FEATURES = ("appearance_distance", "dialect_distance")
+
+ALLIANCE_FEATURES = ("bias", "strength_share", "common_enemy", "at_war", "culture_distance", "appearance_distance",
+                     "dialect_distance", "allied")
+MARKER_ALLIANCE_FEATURES = ("appearance_distance", "dialect_distance")
 
 STRENGTH_EPS = 1e-12
 
@@ -176,4 +186,27 @@ def target_features(model, a: np.ndarray, b: np.ndarray, x: np.ndarray, p_win: n
 
     f[:, col["at_war"]] = at_war(model, a, b)
     f[:, col["capital"]] = x == P.capital[b]
+    return f
+
+
+def alliance_features(model, p: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """(n, ALLIANCE_FEATURES) of polity ``q`` as a possible (or present) ally of polity ``p``."""
+    from deluge.systems import politics, war  # they import this module
+
+    P = model.polities
+    p, q = np.asarray(p, dtype=np.int64), np.asarray(q, dtype=np.int64)
+    f = np.zeros((len(p), len(ALLIANCE_FEATURES)))
+    if len(p) == 0:
+        return f
+    col = {name: i for i, name in enumerate(ALLIANCE_FEATURES)}
+    strength = np.maximum(war.polity_strength(model), STRENGTH_EPS)
+    app, dia = identity.pair_distances(model, P.capital[p], P.capital[q])
+    f[:, col["bias"]] = 1.0
+    f[:, col["strength_share"]] = strength[q] / (strength[p] + strength[q])
+    f[:, col["common_enemy"]] = politics.common_enemy(model, p, q)
+    f[:, col["at_war"]] = war.at_war(model, p, q)
+    f[:, col["culture_distance"]] = culture_distance(P.culture[p], P.culture[q])
+    f[:, col["appearance_distance"]] = app
+    f[:, col["dialect_distance"]] = dia
+    f[:, col["allied"]] = [(min(a, b), max(a, b)) in model.alliances for a, b in zip(p.tolist(), q.tolist())]
     return f

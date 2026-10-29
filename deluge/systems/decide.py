@@ -2,7 +2,8 @@
 
 Every living polity's network reads its features (``brains/features.py``) and sets its
 priorities for the year (``model.brains.output``) and the weights its per-neighbour head
-gives each target feature (``model.brains.target_w``), all in one batched pass. A polity
+gives each target feature (``model.brains.target_w``) and each alliance feature
+(``model.brains.alliance_w``), all in one batched pass. A polity
 born later in the year carries its parent's priorities (a new founding polity: its own
 brain's response to zero inputs) until its first decision.
 """
@@ -18,9 +19,10 @@ def run(model) -> None:
     if len(pids) == 0:
         return
     x = features.assemble(model, pids)
-    out, target_w, hidden = network.forward(model.brain_layout, B.genome[pids], x)
+    out, target_w, alliance_w, hidden = network.forward(model.brain_layout, B.genome[pids], x)
     B.output[pids] = out
     B.target_w[pids] = target_w
+    B.alliance_w[pids] = alliance_w
     k = model.config.brains.recurrent_units
     if k:
         B.state[pids] = hidden[:, :k]

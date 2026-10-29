@@ -177,6 +177,10 @@ roles:
   crossed/settlement: [crosser, {settlement: mother, polity: owner}]
   crossed/settlement/founded: [crosser, mother]
   crossed/settlement/joined: [crosser, host_band]
+  allied: [sworn, sworn_with]
+  joined_war: [helper, aided, foe, front]
+  alliance_ended: [leaver, left]
+  betrayed: [betrayer, wronged]
 # Roles held by things (techniques, crafts, gifts, deposits, monuments); every other role is held by
 # a group of people. A thing is never told as a companion: it stands in its own role.
 thing_roles: [craft, lesson, shown, gift, used, broken, monument, deposit]
@@ -212,6 +216,12 @@ sentences:
             "{attacker} crossed the sea to attack {attacked}", "{crosser} crossed the sea from {mother}{to}",
             "{crosser} crossed the sea to join {host_band}", "{crosser} of {owner} crossed the sea and settled{at}",
             "{crosser} crossed the sea and settled{at}"]
+  allied: ["{sworn} and {sworn_with} swore alliance", "{sworn} swore alliance"]
+  joined_war: ["{helper} came to the aid of {aided} against {foe} at {front}",
+               "{helper} came to the aid of {aided} against {foe}", "{helper} came to the aid of {aided}{at}",
+               "{helper} went to war against {foe}{at}"]
+  alliance_ended: ["{leaver} and {left} parted ways", "{leaver} left their alliance"]
+  betrayed: ["{betrayer} broke faith with {wronged}", "{betrayer} broke faith{at}"]
 # A conquest in the chronicle: the taking of a settlement, the loss of a seat and the end of a people,
 # of one year, victor and settlement, told as one sentence (the size: the end's, else the taking's).
 conquest:
@@ -250,6 +260,10 @@ loose:
     depleted: a using up
     took: a taking
     crossed: a crossing of the sea
+    allied: an alliance
+    joined_war: an aid in war
+    alliance_ended: a parting of allies
+    betrayed: a breaking of faith
 # Verb agreement: {be} reads as one of these, by the first role named (spoken of as many people or one).
 be: {one: was, many: were}
 plural_kinds: [polity, lineage, first_kind]  # first_kind: the entity kind listed first in the event log's kinds
@@ -274,6 +288,10 @@ amounts:
   took: ["{m} person", "{m} people"]
   died: ["{m} person left", "{m} people left"]
   crossed: ["{m} sea cell", "{m} sea cells"]
+  allied: ["{m} person", "{m} people"]
+  joined_war: "{m} dead"
+  alliance_ended: ["after {m} year", "after {m} years"]
+  betrayed: ["after {m} year of alliance", "after {m} years of alliance"]
 # The chronicle (deluge/data/chronicle.py): what it adds to an event's sentence, and its summaries.
 chronicle:
   first_anywhere: ", the first anywhere to know {phrase}"
@@ -302,6 +320,10 @@ summaries:
   died/settlement: ["one settlement came to an end", "{actors} settlements came to an end"]
   crossed: ["the sea was crossed once", "the sea was crossed {count} times"]
   crossed/polity: ["one attack crossed the sea", "{count} attacks crossed the sea"]
+  joined_war: ["an ally joined a battle", "allies joined battles {count} times"]
+  allied: ["an alliance was sworn", "{count} alliances were sworn"]
+  alliance_ended: ["allies parted ways", "allies parted ways {count} times"]
+  betrayed: ["an ally broke faith", "allies broke faith {count} times"]
   displayed: ["one thing was shown", "{count} things were shown"]
   broke: ["a gift broke", "{count} gifts broke"]
   depleted: ["a deposit was used up", "{count} deposits were used up"]

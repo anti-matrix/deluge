@@ -55,7 +55,8 @@ YEAR_STAT_REPORTERS = ("famine_deaths", "moves", "foundings", "dissolved", "drow
                        "techniques_learned", "techniques_lost", "losses_after_crash", "latent_expired",
                        "polities_founded", "secessions", "fragmentations", "mergers", "polity_extinctions",
                        "monuments_built", "battles", "raids", "campaigns", "conquests", "capitals_taken",
-                       "polities_destroyed", "war_deaths", "sea_crossings", "sea_battles", "surplus")
+                       "polities_destroyed", "war_deaths", "sea_crossings", "sea_battles", "surplus",
+                       "alliances_formed", "alliances_ended", "betrayals", "joined_wars")
 
 
 def land_steps(neighbors: np.ndarray, land: np.ndarray, start: int, geom=None) -> np.ndarray:

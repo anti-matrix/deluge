@@ -675,6 +675,18 @@ class WarConfig:
 
 
 @dataclass(frozen=True)
+class AlliancesConfig:
+    enabled: bool
+    seek_threshold: float
+    score_threshold: float
+    max_alliances: int
+    rescore_years: int
+    betrayal_grievance: float
+    affinity_weight: float
+    affinity_half_years: float
+
+
+@dataclass(frozen=True)
 class BrainFeaturesConfig:
     log_population_center: float
     log_population_scale: float
@@ -895,6 +907,7 @@ class Config:
     polities: PolitiesConfig
     ancestry: AncestryConfig
     war: WarConfig
+    alliances: AlliancesConfig
     brains: BrainsConfig
     memory: MemoryConfig
     output: OutputConfig

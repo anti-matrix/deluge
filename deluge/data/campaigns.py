@@ -9,7 +9,8 @@ battle's event) and the logistics decay it fought at: exp(-km from the capital t
 target / the capital's reach), the distance term of the attacker's strength. For the war
 deaths bound (Round 14, ``configs/bounds.yaml``): the attacker's and defender's dead, the
 target's people before the battle, the attacker's people within logistics reach of the
-target (settlements no farther from it than the reach) and its mobilization share. Written by the
+target (settlements no farther from it than the reach) and its mobilization share; allies that
+joined either side (Round 14 alliances): their dead and their mobilized people within reach. Written by the
 model, never read by the simulation (private: left out of the state digest, kept in
 checkpoints).
 """
@@ -22,7 +23,8 @@ import numpy as np
 
 INT_COLUMNS = ("year", "attacker", "defender", "src", "target", "src_cell", "target_cell", "capital", "capital_cell",
                "event", "crossed")
-FLOAT_COLUMNS = ("dead_attacker", "dead_defender", "target_people", "present_people", "mobilization")
+FLOAT_COLUMNS = ("dead_attacker", "dead_defender", "target_people", "present_people", "mobilization",
+                 "dead_allies", "allied_mobilized")
 
 
 class CampaignLog:

@@ -46,7 +46,7 @@ def test_every_action_has_roles_shapes_and_a_loose_form(ran):
                 assert role.rstrip("+") in named, (key, role)
     for verb, shapes in data["sentences"].items():
         for s in shapes:
-            assert "with" not in s.split(), s
+            assert "with" not in s.replace("faith with", "faith_with").split(), s  # an idiom, not companions
             assert set(FIELD.findall(s)) - {"at", "to", "be", "count"} <= {r.rstrip("+") for spec in data["roles"].values()
                                                                     for e in spec
                                                                     for r in (e.values() if isinstance(e, dict) else [e])}

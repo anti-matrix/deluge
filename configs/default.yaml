@@ -517,6 +517,10 @@ events:                       # raw event log (spec sections 11 and 12); logged 
     depleted: 0.0             # a mineral deposit used up (only with world.minerals.depletion on)
     took: 0.0                 # a settlement taken by conquest (people); battles are filtered by war.battle_log_min_losses
     crossed: 0.0              # a sea crossing (sea cells crossed)
+    allied: 0.0               # Round 14: an alliance sworn (magnitude: the two polities' people)
+    joined_war: 0.0           # an ally joining a battle (its dead)
+    alliance_ended: 0.0       # an alliance ended by re-scoring (years it lasted)
+    betrayed: 0.0             # an ally attacked (years the alliance lasted)
 
 polities:                     # spec section 8; one polity per founding group at year 0
   contact_radius: 2           # settlements within this many hex steps are in contact (frontier, secession groups, culture drift)
@@ -693,7 +697,19 @@ war:                          # spec section 9; the choice follows the polity br
   assimilation_rate: 0.01
   assimilated_distance: 0.02  # and its culture is this close to its ruler's (euclidean / sqrt(traits))
 
-brains:                       # spec section 10: a fixed-topology MLP per polity, all evaluated in one batch a year
+alliances:                    # Round 14 (systems/alliances.py): driven by the brains' alliance_seeking output and
+  enabled: true               # their per-neighbour alliance head (brains/features.py ALLIANCE_FEATURES)
+  seek_threshold: 0.5         # a polity whose alliance_seeking output is above this proposes, once a year, to the
+                              # polity in contact its alliance head scores best
+  score_threshold: 0.5        # a polity accepts (and keeps) an alliance while its own score for the other is above this
+  max_alliances: 0            # alliances per polity at most; 0: no limit (the default: alliances cost through the
+                              # wars allies join, not a cap; a limit is for experiments)
+  rescore_years: 25           # every this many years each alliance is scored again by both sides
+  betrayal_grievance: 0.5     # grievance added to every settlement of a polity attacked by its ally
+  affinity_weight: 0.5        # merger affinity of allies: + weight x years allied / (years allied + half) (capped at 1)
+  affinity_half_years: 100.0
+
+brains:                      # spec section 10: a fixed-topology MLP per polity, all evaluated in one batch a year
   hidden: 16                  # tanh units; inputs and outputs are listed in brains/features.py and brains/network.py
   recurrent_units: 0          # hidden units fed back as inputs the next year; 0 = off (spec default)
   memory_inputs: 3            # the memory summary (systems/memory.py SUMMARY): must match its length
@@ -893,9 +909,10 @@ chronicle:                    # the browser chronicle (deluge/data/chronicle.py)
   death_share: 0.05           # share_actions: told when magnitude / the smallest population among the
                               # polities of its actors (when logged) is at least this
   page_entries: 200           # entries shown at first, and added by each "show older"
-  polity_actions: [founded, died, joined]  # told when the first actor is a polity: founded, ended, united
+  polity_actions: [founded, died, joined, allied, alliance_ended, betrayed]  # told when the first actor is a polity:
+                              # founded, ended, united; alliances sworn, ended and betrayed (Round 14)
   capital_actions: [lost]     # always told (a polity losing its capital)
-  share_actions: [fought, starved, died, took]  # battles, famines, settlements lost, settlements taken
+  share_actions: [fought, starved, died, took, joined_war]  # battles, famines, settlements lost and taken, allies' battles
   teachers_actions: [arrived, taught, gave, departed]  # told when the first actor is the teachers and the
   teachers_min_magnitude: 1.0 # magnitude is at least this (a teaching contact that passed on nothing is summed)
   always_actions: [built]     # always told (monuments)

@@ -243,7 +243,9 @@ def merge(model, a: int, b: int) -> int:
 
 
 def mergers(model) -> None:
-    if model.memory.w["merger_weight"] == 0.0:  # affinity is zero: skip building the contact pairs
+    from deluge.systems import alliances
+
+    if model.memory.w["merger_weight"] == 0.0 and not model.alliances:  # affinity is zero: skip the contact pairs
         return
     pairs = contact_pairs(model)
     if len(pairs) == 0:
@@ -251,7 +253,9 @@ def mergers(model) -> None:
     threat = common_enemy(model, pairs[:, 0], pairs[:, 1])
     affinity = np.zeros(len(pairs))
     hot = threat > 0  # affinity only matters where there is a common enemy
-    affinity[hot] = shared_memory_overlap(model, pairs[hot, 0], pairs[hot, 1])
+    # Shared memory, and (Round 14) the years two polities have been allied, capped at 1.
+    affinity[hot] = np.minimum(1.0, shared_memory_overlap(model, pairs[hot, 0], pairs[hot, 1])
+                               + alliances.affinity(model, pairs[hot, 0], pairs[hot, 1]))
     odds = model.config.polities.merge_rate * affinity * threat
     if not (odds > 0).any():
         return

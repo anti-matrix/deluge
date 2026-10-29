@@ -76,7 +76,7 @@ YEAR_STATS = ("famine_deaths", "moves", "foundings", "dissolved", "drowned_lost"
               "techniques_lost", "losses_after_crash", "latent_expired", "polities_founded", "secessions",
               "fragmentations", "mergers", "polity_extinctions", "monuments_built", "battles", "raids",
               "campaigns", "conquests", "capitals_taken", "polities_destroyed", "war_deaths", "sea_crossings",
-              "sea_battles", "surplus")
+              "sea_battles", "surplus", "alliances_formed", "alliances_ended", "betrayals", "joined_wars")
 
 
 class DelugeModel(mesa.Model):
@@ -173,14 +173,17 @@ class DelugeModel(mesa.Model):
         self.polities = PolityTable(len(cfg.founders.culture_traits), len(MINERALS))
         self.polity_agents: dict[int, Polity] = {}
         self.brain_layout = network.Layout(features.input_names(cfg.brains), cfg.brains.hidden, network.OUTPUTS,
-                                           features.TARGET_FEATURES)
+                                           features.TARGET_FEATURES, features.ALLIANCE_FEATURES)
         self.brains = network.BrainTable(self.brain_layout, cfg.brains.recurrent_units,
                                          cfg.brains.features.growth_window_years)
         self.brain_fan_in = self.brain_layout.fan_in()
-        self.brain_marker_mask = self.brain_layout.mask(features.MARKER_FEATURES, features.MARKER_TARGET_FEATURES)
+        self.brain_marker_mask = self.brain_layout.mask(features.MARKER_FEATURES, features.MARKER_TARGET_FEATURES,
+                                                        features.MARKER_ALLIANCE_FEATURES)
         self.brain_output_mean = np.zeros(len(network.OUTPUTS))
         self.monuments = Monuments()
         self.wars: dict[tuple[int, int], int] = {}  # polity pair (low id first) -> year of its last battle
+        self.alliances: dict[tuple[int, int], int] = {}  # allied polity pair (low id first) -> year it began
+        self.alliance_history: list[tuple] = []  # ended alliances: (low, high, began, ended, how, by)
         self.wars_active = 0
         self.contact_cells = self.geom.cells_within(cfg.polities.contact_radius)
         self.territory_cells = self.geom.cells_within(cfg.polities.territory_radius)
@@ -278,12 +281,12 @@ class DelugeModel(mesa.Model):
         if parent >= 0:
             P.load[pid] = P.load[parent]
             B.born(pid, evolution.mutate(B.genome[parent], self.config.brains, rng), B.output[parent],
-                   B.target_w[parent], B.state[parent])
+                   B.target_w[parent], B.state[parent], B.alliance_w[parent])
         else:
             genome = evolution.founder_genome(self.brain_fan_in, self.brain_marker_mask, self.config.brains, rng)
-            out, target_w, _ = network.forward(self.brain_layout, genome[None, :],
-                                               np.zeros((1, self.brain_layout.n_in)))
-            B.born(pid, genome, out[0], target_w[0], np.zeros(B.state.shape[1]))
+            out, target_w, alliance_w, _ = network.forward(self.brain_layout, genome[None, :],
+                                                           np.zeros((1, self.brain_layout.n_in)))
+            B.born(pid, genome, out[0], target_w[0], np.zeros(B.state.shape[1]), alliance_w[0])
         self.polity_agents[pid] = Polity(self, pid)
         self.stats["polities_founded"] += 1
         return pid

@@ -54,7 +54,7 @@ def test_run_script_acceptance(tmp_path, small_cfg):
     tree = pd.read_parquet(tmp_path / "a" / "polity_tree.parquet")
     layout = json.loads((tmp_path / "a" / "brains" / "layout.json").read_text(encoding="utf-8"))
     assert list(brains.polity) == list(tree.polity) and list(brains.parent) == list(tree.parent)
-    assert {len(w) for w in brains.weights} == {layout["blocks"]["q0"]["stop"]}
+    assert {len(w) for w in brains.weights} == {max(b["stop"] for b in layout["blocks"].values())}
     mem = pd.read_parquet(tmp_path / "a" / "memory.parquet")
     assert len(mem) > 0 and all(0 <= i < len(ev_a) for prov in mem.provenance for i in prov)
     assert (tmp_path / "a" / "memory_ops.parquet").exists()
