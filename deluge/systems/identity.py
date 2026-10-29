@@ -95,6 +95,28 @@ def pair_distances(model, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.
     return np.tanh(app / cfg.perceived_appearance_reference), np.tanh(dia / cfg.perceived_dialect_reference)
 
 
+def pair_similarities(model, a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Perceived (appearance, dialect) similarity of settlements ``a`` and ``b``: 1 - the perceived
+    distance (``pair_distances``), 0..1; zeros with ``blind_perception`` (nothing is perceived)."""
+    a = np.asarray(a, dtype=np.int64)
+    if model.config.ancestry.blind_perception:
+        return np.zeros(len(a)), np.zeros(len(a))
+    app, dia = pair_distances(model, a, b)
+    return 1.0 - app, 1.0 - dia
+
+
+def kin_prior(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """The appearance prior (``memory.kin_prior``, Round 14) between settlements ``a`` and ``b``:
+    weight x their perceived appearance similarity (zeros when it is off). It is added to alliance
+    scores and taken from war-target scores (``alliances.score``, ``war.choose``) and read nowhere
+    else: no strength, food, fertility or technique."""
+    cfg = model.config.memory.kin_prior
+    a = np.asarray(a, dtype=np.int64)
+    if not cfg.enabled or cfg.weight == 0.0:
+        return np.zeros(len(a))
+    return cfg.weight * pair_similarities(model, a, b)[0]
+
+
 def core_distances(model, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Perceived (appearance, dialect) distance of each settlement from its polity's capital."""
     return pair_distances(model, ids, model.polities.capital[model.settlements.polity[ids]])

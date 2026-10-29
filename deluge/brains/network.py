@@ -121,9 +121,10 @@ def forward(layout: Layout, genomes: np.ndarray, x: np.ndarray
     return out, target, alliance, h
 
 
-def target_scores(features: np.ndarray, weights: np.ndarray) -> np.ndarray:
-    """Score of each candidate target, 0..1: features (n, F) against its polity's weights (n, F)."""
-    return sigmoid((features * weights).sum(axis=1))
+def target_scores(features: np.ndarray, weights: np.ndarray, shift=0.0) -> np.ndarray:
+    """Score of each candidate, 0..1: sigmoid(features (n, F) . its polity's weights (n, F) +
+    ``shift``) (the appearance prior, Round 14, shifts the sum: it multiplies the odds)."""
+    return sigmoid((features * weights).sum(axis=1) + shift)
 
 
 class BrainTable:

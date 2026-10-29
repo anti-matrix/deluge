@@ -35,6 +35,10 @@ polity's alliance head (``systems/alliances.py``): a constant, the other's share
 polities' strength, a common enemy, at war with each other, culture distance, perceived
 appearance and dialect distance between the two capitals (marker features: their weights
 start at zero), already allied.
+
+Kin markers (Round 14), in both heads, their weights starting at zero (``KIN_FEATURES``):
+dialect similarity (1 - the perceived dialect distance; 0 with ``blind_perception``) and shared
+descent (``shared_descent``: how close the two polities are on the descent tree).
 """
 
 from __future__ import annotations
@@ -56,12 +60,15 @@ MARKER_FEATURES = ("appearance_neighbours", "dialect_neighbours", "appearance_pe
 TECHNIQUE_CATEGORIES = ("subsistence", "building", "military")
 
 TARGET_FEATURES = ("bias", "win_chance", "stores", "fertility", "culture_distance", "appearance_distance",
-                   "dialect_distance", "at_war", "capital")
+                   "dialect_distance", "at_war", "capital", "dialect_similarity", "shared_descent")
 MARKER_TARGET_FEATURES = ("appearance_distance", "dialect_distance")
 
 ALLIANCE_FEATURES = ("bias", "strength_share", "common_enemy", "at_war", "culture_distance", "appearance_distance",
-                     "dialect_distance", "allied")
+                     "dialect_distance", "allied", "dialect_similarity", "shared_descent")
 MARKER_ALLIANCE_FEATURES = ("appearance_distance", "dialect_distance")
+# Kin markers (Round 14): their weights start at zero in every founder's genome (drawn like the marker
+# weights), so old brains behave as before until selection changes them.
+KIN_FEATURES = ("dialect_similarity", "shared_descent")
 
 STRENGTH_EPS = 1e-12
 
@@ -186,7 +193,34 @@ def target_features(model, a: np.ndarray, b: np.ndarray, x: np.ndarray, p_win: n
 
     f[:, col["at_war"]] = at_war(model, a, b)
     f[:, col["capital"]] = x == P.capital[b]
+    f[:, col["dialect_similarity"]] = identity.pair_similarities(model, P.capital[a], x)[1]
+    f[:, col["shared_descent"]] = shared_descent(model, a, b)
     return f
+
+
+def shared_descent(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """How close polities ``a`` and ``b`` are on the descent tree, 0..1: exp(-steps /
+    ``descent_steps_scale``), steps = the splits from each to their nearest common ancestor
+    polity, summed (0 for a polity and itself); 0 for polities of different founding peoples."""
+    P = model.polities
+    scale = model.config.brains.features.descent_steps_scale
+    a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
+    out = np.zeros(len(a))
+    chains: dict[int, dict[int, int]] = {}
+
+    def depth(p: int) -> dict[int, int]:  # ancestor -> splits from p
+        if p not in chains:
+            chains[p] = {q: k for k, q in enumerate(model.lineages.polity_ancestry(P, p))}
+        return chains[p]
+
+    for i, (p, q) in enumerate(zip(a.tolist(), b.tolist())):
+        if P.lineage[p] != P.lineage[q]:
+            continue
+        dp, dq = depth(p), depth(q)
+        common = [dp[x] + dq[x] for x in dp.keys() & dq.keys()]
+        if common:
+            out[i] = np.exp(-min(common) / scale)
+    return out
 
 
 def alliance_features(model, p: np.ndarray, q: np.ndarray) -> np.ndarray:
@@ -209,4 +243,6 @@ def alliance_features(model, p: np.ndarray, q: np.ndarray) -> np.ndarray:
     f[:, col["appearance_distance"]] = app
     f[:, col["dialect_distance"]] = dia
     f[:, col["allied"]] = [(min(a, b), max(a, b)) in model.alliances for a, b in zip(p.tolist(), q.tolist())]
+    f[:, col["dialect_similarity"]] = identity.pair_similarities(model, P.capital[p], P.capital[q])[1]
+    f[:, col["shared_descent"]] = shared_descent(model, p, q)
     return f

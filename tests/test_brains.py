@@ -74,7 +74,7 @@ def test_layout_and_marker_mask():
     assert not mask[q[:, lay.target.index("win_chance")]].any()
     qa = np.arange(lay.size)[s["qa"][0]].reshape(s["qa"][1])  # Round 14: the alliance head's marker features
     assert mask[qa[:, lay.alliance.index("appearance_distance")]].all() and not mask[qa[:, lay.alliance.index("bias")]].any()
-    assert mask.sum() == 4 * cfg.hidden + 2 * (cfg.hidden + 1) + 2 * (cfg.hidden + 1)
+    assert mask.sum() == 4 * cfg.hidden + 2 * (cfg.hidden + 1) + 2 * (cfg.hidden + 1) + 4 * (cfg.hidden + 1)  # + kin
 
 
 def test_founders_get_independent_random_brains_with_zero_marker_weights():

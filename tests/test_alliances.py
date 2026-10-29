@@ -60,6 +60,7 @@ def test_a_seeking_polity_proposes_and_the_other_accepts_or_not():
     m2 = held(years=10)
     (p2, q2), _ = neighbours(m2)
     seek(m2, p2, 0.4)
+    seek(m2, q2, 0.0)
     like(m2, p2, True)
     like(m2, q2, True)
     alliances.run(m2)

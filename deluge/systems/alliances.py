@@ -52,11 +52,17 @@ def allies_of(model, p: int) -> list[int]:
 
 
 def score(model, p, q) -> np.ndarray:
-    """Polity ``p``'s alliance score for polity ``q`` (arrays, paired), 0..1."""
+    """Polity ``p``'s alliance score for polity ``q`` (arrays, paired), 0..1: its alliance head,
+    its sum shifted up by the appearance prior (``identity.kin_prior``, zero when off) between
+    their capitals."""
+    from deluge.systems import identity
+
     p, q = np.asarray(p, dtype=np.int64), np.asarray(q, dtype=np.int64)
     if len(p) == 0:
         return np.zeros(0)
-    return target_scores(alliance_features(model, p, q), model.brains.alliance_w[p])
+    P = model.polities
+    return target_scores(alliance_features(model, p, q), model.brains.alliance_w[p],
+                         identity.kin_prior(model, P.capital[p], P.capital[q]))
 
 
 def _end(model, a: int, b: int, how: str, by: int = -1) -> None:

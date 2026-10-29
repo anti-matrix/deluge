@@ -578,7 +578,9 @@ def choose(model, F) -> list[tuple[int, int, int, int, bool, int]]:
             return []
     sa, sd = strengths(model, F, a, b, x, src)
     p_win = win_chance(sa, sd, w.win_steepness)
-    score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a])
+    # The appearance prior (Round 14, ``identity.kin_prior``; zero when off): less eager to attack look-alikes.
+    score = target_scores(target_features(model, a, b, x, p_win), brains.target_w[a],
+                          -identity.kin_prior(model, P.capital[a], x))
     order = np.lexsort((-score, a))
     best = order[np.r_[True, a[order][1:] != a[order][:-1]]]  # top score per attacker, attacker id order
     k = np.searchsorted(pids, a[best])  # the attackers' rows in pids

@@ -69,7 +69,7 @@ def test_the_attacker_fights_only_with_the_settlements_present():
 
 @pytest.fixture(scope="module")
 def warring():
-    m = small_model({"polities": {"secession_base": 0.5}}, years=300)
+    m = small_model({"polities": {"secession_base": 0.5}, "war": {"attack_rate": 5.0}}, years=300)  # warlike: battles happen
     m.run()
     return m
 

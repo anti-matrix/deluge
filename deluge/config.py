@@ -700,6 +700,7 @@ class BrainFeaturesConfig:
     war_record_reference: float
     war_record_decay: float
     temp_anomaly_scale: float
+    descent_steps_scale: float
 
 
 @dataclass(frozen=True)
@@ -730,6 +731,12 @@ class MemoryConsequencesConfig:
     invocation_gain: float
     invocation_symbols: int
     brain_input_weight: float
+
+
+@dataclass(frozen=True)
+class KinPriorConfig:
+    enabled: bool
+    weight: float
 
 
 @dataclass(frozen=True)
@@ -766,6 +773,7 @@ class MemoryConfig:
     summary_weight_medians: float
     summary_age_reference: float
     consequences: MemoryConsequencesConfig
+    kin_prior: KinPriorConfig
 
 
 # --- output and rendering ----------------------------------------------------------------------

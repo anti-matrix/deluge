@@ -733,6 +733,8 @@ brains:                      # spec section 10: a fixed-topology MLP per polity,
     war_record_reference: 3.0 # tanh(recent battles won (lost) / reference)
     war_record_decay: 0.05    # per year the counts of battles won and lost decay by this share
     temp_anomaly_scale: 3.0   # tanh(climate anomaly degC / scale)
+    descent_steps_scale: 4.0  # shared descent of two polities (Round 14): exp(-steps / scale), steps = the splits from
+                              # each to their nearest common ancestor polity, summed; 0 for different founding peoples
 
 memory:                       # spec section 11: generic substrate, copying errors and consequences; no content
   enabled: true               # false: no memory at all (the reference for the control condition)
@@ -794,8 +796,16 @@ memory:                       # spec section 11: generic substrate, copying erro
                               # gains, the k-th time, gain x its starting vividness x log((k + 1) / k)
     invocation_symbols: 3
     brain_input_weight: 1.0   # the memory summary inputs x weight
+  # Scenario switch (Round 14): a prior that people favour those who look like them, on top of whatever the
+  # brains do. With it on, weight x appearance similarity (1 - the perceived appearance difference; 0 with
+  # blind_perception) is added to the alliance head's sum and taken from the target head's sum, before their
+  # sigmoid (it multiplies the odds by exp(+-weight x similarity)). Nothing else reads it: no strength, food,
+  # fertility or technique.
+  kin_prior:
+    enabled: true
+    weight: 0.2
 
-output:                       # headless runs (scripts/run.py, scripts/batch.py); no effect on the simulation
+output:                      # headless runs (scripts/run.py, scripts/batch.py); no effect on the simulation
   runs_dir: runs
   lineages_every_years: 10    # lineages.parquet: one row per founding lineage every this many years
   polities_every_years: 25    # polities.parquet: one row per living polity every this many years

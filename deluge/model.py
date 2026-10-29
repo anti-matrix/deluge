@@ -177,8 +177,10 @@ class DelugeModel(mesa.Model):
         self.brains = network.BrainTable(self.brain_layout, cfg.brains.recurrent_units,
                                          cfg.brains.features.growth_window_years)
         self.brain_fan_in = self.brain_layout.fan_in()
-        self.brain_marker_mask = self.brain_layout.mask(features.MARKER_FEATURES, features.MARKER_TARGET_FEATURES,
-                                                        features.MARKER_ALLIANCE_FEATURES)
+        # Weights drawn with marker_init_sigma (zero): the markers' and (Round 14) the kin markers'.
+        self.brain_marker_mask = self.brain_layout.mask(
+            features.MARKER_FEATURES, features.MARKER_TARGET_FEATURES + features.KIN_FEATURES,
+            features.MARKER_ALLIANCE_FEATURES + features.KIN_FEATURES)
         self.brain_output_mean = np.zeros(len(network.OUTPUTS))
         self.monuments = Monuments()
         self.wars: dict[tuple[int, int], int] = {}  # polity pair (low id first) -> year of its last battle

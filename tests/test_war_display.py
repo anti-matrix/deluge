@@ -22,7 +22,7 @@ from test_war import strait
 
 @pytest.fixture(scope="module")
 def warring():
-    m = small_model({"polities": {"secession_base": 0.5}}, years=300)
+    m = small_model({"polities": {"secession_base": 0.5}, "war": {"attack_rate": 5.0}}, years=300)  # warlike: battles happen
     m.run()
     assert len(m._campaigns) > 0
     return m
