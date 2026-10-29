@@ -201,6 +201,10 @@ module.exports = {
         const s = px(m.square_px || 3);
         ctx.fillStyle = m.square_color || '#000'; ctx.fillRect(x - s, y - s, 2 * s, 2 * s);
       }
+      for (const [x1, y1, x2, y2] of (m.alliances || [])) {  // alliances: thin lines between allied capitals
+        ctx.strokeStyle = m.alliance_color || '#6e6e6e'; ctx.lineWidth = px(m.alliance_px || 1);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
       const lit = this.highlight();                    // linked highlighting (hovered arrow or banner)
       const supply = m.supply || [], arrows = m.arrows || [];
       for (let k = 0; k < supply.length; k++) {         // supply lines: x1 y1 x2 y2 opacity attacker arrow
@@ -266,7 +270,7 @@ module.exports = {
       ctx.setTransform(r, 0, 0, r, 0, 0);
       ctx.font = `bold ${Math.round(0.95 * s)}px sans-serif`; ctx.textBaseline = 'middle';
       for (let k = 0; k < banners.length; k++) {
-        const [x, y, color, , made, against] = banners[k];
+        const [x, y, color, , made, against, bloc] = banners[k];
         const [sx, sy] = this.toScreen(x, y), parts = [];
         if (made > 0) parts.push(['sword', String(made)]);
         if (against > 0) parts.push(['shield', String(against)]);
@@ -278,6 +282,10 @@ module.exports = {
         ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, top); ctx.stroke();                // the pole
         ctx.fillStyle = color; ctx.fillRect(sx, top, w, h);
         ctx.lineWidth = on ? 2.5 : 1; ctx.strokeStyle = on ? '#ff0' : '#222'; ctx.strokeRect(sx, top, w, h);
+        if (bloc) {                                     // the mark its alliance network shares
+          ctx.beginPath(); ctx.arc(sx, top, 0.32 * s, 0, 2 * Math.PI);
+          ctx.fillStyle = bloc; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#222'; ctx.stroke();
+        }
         let ix = sx + 0.3 * s;
         const cy = top + h / 2;
         for (const [icon, n] of parts) {

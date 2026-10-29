@@ -836,6 +836,9 @@ class VizConfig:
     supply_color: str
     supply_px: float
     banner_px: float
+    alliance_color: str
+    alliance_px: float
+    alliance_bloc_colors: tuple[str, ...]
     teachers_color: str
     teachers_px: float
     map_height_px: int

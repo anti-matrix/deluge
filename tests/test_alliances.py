@@ -205,3 +205,46 @@ def test_chronicle_tells_alliances():
     view.sync()
     told = {e["event"] for e in view.entries}
     assert events(m, "allied")[0] in told
+
+
+def test_alliance_display_map_inspector_and_tree():
+    from deluge.viz import app, panels, portrayal
+
+    m = held(years=10)
+    (a, b, c), (sa, sb, sc) = neighbours(m, 3, pop=20000.0)
+    m.year = 7
+    m.wars[(min(a, b), max(a, b))] = m.wars[(min(a, c), max(a, c))] = 6
+    for x in (b, c):
+        seek(m, x)
+        like(m, x, True)
+        m.brains.alliance_w[x, ALLIANCE_FEATURES.index("at_war")] = -40.0
+    like(m, a, False)
+    alliances.run(m)
+    assert alliances.allied(m, b, c)
+    m.brains.output[c, OUT["campaign"]] = 1.0
+    war.battle(m, war.forces(m), a, b, sa, sb, campaign=False)
+    m.year += 1
+    marks = portrayal.marks(m, app.VIZ)
+    pos = m.geom.positions
+    cb, cc = int(m.settlements.cell[m.polities.capital[b]]), int(m.settlements.cell[m.polities.capital[c]])
+    assert [line[4:] for line in marks["alliances"]] == [[min(b, c), max(b, c)]]
+    assert marks["alliances"][0][:2] in ([float(pos[cb, 0]), float(pos[cb, 1])], [float(pos[cc, 0]), float(pos[cc, 1])])
+    assert portrayal.marks(m, app.VIZ, ("arrows",))["alliances"] == []  # switched off in the war overlays
+    banners = {f[3]: f for f in portrayal.war_display(m, app.VIZ)["banners"]}
+    blocs = portrayal.alliance_blocs(m)
+    assert blocs[b] == blocs[c] and a not in blocs  # one network
+    assert banners[b][6] == app.VIZ.alliance_bloc_colors[blocs[b]] and banners[a][6] == ""  # its common mark
+    html = panels.inspector(m, b, app.VIZ)
+    sp = Speaker(m, tags=True)
+    assert "Allies and enemies" in html and f"{sp.entity(entity('polity', c))} (since year 7)" in html
+    assert sp.entity(entity("polity", a)) in html.split('data-allies="wars"')[1]
+    # A betrayal shows among the past alliances.
+    like(m, c, False)
+    alliances.betray(m, c, b)
+    html = panels.inspector(m, b, app.VIZ)
+    past = html.split('data-allies="past"')[1]
+    assert "broken by" in past and sp.entity(entity("polity", c)) in past
+    m.alliances[alliances.key(b, c)] = m.year  # allied again
+    tree = panels.lineage_tree(m, app.VIZ)
+    block = tree.split(f'<g data-polity="{b}" ')[1].split("</title>")[0]
+    assert "allies: " + sp.entity(entity("polity", c)) in block

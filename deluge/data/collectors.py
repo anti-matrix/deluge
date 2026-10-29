@@ -144,6 +144,7 @@ class RunRecorder:
         self.sample_rows: list[tuple] = []
         self.frontier_rows: list[tuple] = []
         self.scale_rows: list[dict] = []
+        self.diplomacy_rows: list[tuple] = []
         t = model.settlements
         ids = t.alive_ids()
         self.founding_cell = np.full(n_lin, -1, dtype=np.int64)  # each lineage's year-0 cell (its first band)
@@ -179,6 +180,7 @@ class RunRecorder:
             self._samples(model, year, ids, pop)
         if year % self.frontier_every == 0:
             self._frontiers(model, year, ids, lin, n_lin)
+            self._diplomacy(model, year)
         if year % self.scale_every == 0:
             self._scale(model, year, pids)
 
@@ -212,6 +214,34 @@ class RunRecorder:
             reached = d >= 0
             far = float(d[reached].max()) * model.unit_km if reached.any() else float("nan")
             self.frontier_rows.append((year, g, far, int(reached.sum()), len(mine)))
+
+    def _diplomacy(self, model, year: int) -> None:
+        """Round 14: polity pairs in contact (all, same founding lineage), alliances (all, same
+        lineage), alliance networks (count, largest) and allies per polity (largest, polities
+        with 4 or more), every ``frontier_every_years``."""
+        from deluge.systems import politics
+
+        P = model.polities
+        pairs = politics.contact_pairs(model)
+        same_contact = int((P.lineage[pairs[:, 0]] == P.lineage[pairs[:, 1]]).sum()) if len(pairs) else 0
+        al = [k for k in model.alliances if P.ended[k[0]] < 0 and P.ended[k[1]] < 0]
+        degree: dict[int, int] = {}
+        for a, b in al:
+            degree[a] = degree.get(a, 0) + 1
+            degree[b] = degree.get(b, 0) + 1
+        from deluge.systems.alliances import networks
+
+        blocs = networks(model)
+        sizes = np.bincount(np.array(list(blocs.values()), dtype=np.int64)) if blocs else np.zeros(0, dtype=np.int64)
+        self.diplomacy_rows.append((year, len(P.alive_ids()), len(pairs), same_contact, len(al),
+                                    sum(P.lineage[a] == P.lineage[b] for a, b in al), len(sizes),
+                                    int(sizes.max()) if len(sizes) else 0, max(degree.values(), default=0),
+                                    sum(d >= 4 for d in degree.values())))
+
+    def diplomacy_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(self.diplomacy_rows, columns=[
+            "year", "polities", "contact_pairs", "contact_pairs_same_lineage", "alliances",
+            "alliances_same_lineage", "networks", "largest_network", "max_allies", "polities_4_plus_allies"])
 
     def _scale(self, model, year: int, pids) -> None:
         """The largest polity by people: its size, its capital's techniques, its hierarchy trait."""

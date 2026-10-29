@@ -158,8 +158,11 @@ def lineage_tree(model, vcfg: VizConfig) -> str:
             other = int(P.merged_into[p])
             how = "; " + words["ended"][END_CAUSES[int(P.end_cause[p])]].format(
                 year=int(P.ended[p]), other=sp.entity(entity("polity", other)) if other >= 0 else "")
+        friends = [b if a == p else a for a, b in sorted(model.alliances) if p in (a, b)]
+        if friends:  # hover shows its allies (Round 14)
+            how += words["tree_allies"].format(list=", ".join(sp.entity(entity("polity", q)) for q in friends))
         x1, x2, y = sx(P.founded[p]), sx(end), sy(r)
-        mark = (f'<line x1="{x2:.1f}" y1="{y - 3:.1f}" x2="{x2:.1f}" y2="{y + 3:.1f}" stroke="{c}" '
+        mark =(f'<line x1="{x2:.1f}" y1="{y - 3:.1f}" x2="{x2:.1f}" y2="{y + 3:.1f}" stroke="{c}" '
                 f'stroke-width="1.2"/>') if ended else ""
         parts.append(f'<g data-polity="{p}" data-end="{end}"><title>{html.escape(label[:1].upper() + label[1:])}, '
                      f'years {years}{html.escape(how)}</title>'
@@ -218,6 +221,33 @@ def _worded_bars(rows, color: str) -> str:
                   f'background:{color}"></span><span style="color:#777">{v:.2f}</span></div>'
                   for label, word, v in rows)
     return f"<div>{out}</div>"
+
+
+def allies_html(model, pid: int, words: dict, sp) -> str:
+    """"Allies and enemies": current allies (since when), current wars, past alliances (how each
+    ended, betrayals named) of polity ``pid`` (``model.alliances``, ``model.alliance_history``,
+    ``model.wars``)."""
+    from deluge.data.events import entity
+
+    def name(q: int) -> str:
+        return sp.entity(entity("polity", int(q)))
+
+    now = sorted((b if a == pid else a, y) for (a, b), y in model.alliances.items() if pid in (a, b))
+    wars = sorted((b if a == pid else a, y) for (a, b), y in model.wars.items() if pid in (a, b))
+    past = [h for h in getattr(model, "alliance_history", []) if pid in (h[0], h[1])]
+    lines = [words["allies_now"].format(list=", ".join(words["ally"].format(name=name(q), year=y) for q, y in now))
+             if now else words["no_allies"],
+             words["wars_now"].format(list=", ".join(words["war"].format(name=name(q), year=y) for q, y in wars))
+             if wars else words["no_wars"]]
+    if past:
+        items = []
+        for a, b, begin, end, how, by in past:
+            other = b if a == pid else a
+            form = words.get(f"past_{how}", words["past_ended"])
+            items.append(form.format(name=name(other), begin=begin, end=end, by=name(by) if by >= 0 else ""))
+        lines.append(words["past"].format(list="; ".join(items)))
+    return "".join(f'<div style="font-size:12px" data-allies="{k}">{html.escape(s)}</div>'
+                   for k, s in zip(("now", "wars", "past"), lines))
 
 
 def looks_html(model, pid: int, vcfg: VizConfig, words: dict, sp, color: str) -> str:
@@ -309,6 +339,8 @@ def inspector(model, pid: int, vcfg: VizConfig, n_symbols: int | None = None) ->
            "<h4>Their ways</h4>",
            _worded_bars([(tr.replace("_", " "), trait_word(words, tr, float(v)), float(v))
                          for tr, v in zip(model.config.founders.culture_traits, P.culture[pid])], color),
+           "<h4>Allies and enemies</h4>",
+           allies_html(model, pid, words, sp),
            "<h4>How they look</h4>",
            looks_html(model, pid, vcfg, words, sp, color),
            "<h4>What they lean toward this year</h4>",

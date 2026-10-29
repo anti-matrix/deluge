@@ -190,3 +190,26 @@ def affinity(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
             years = model.year - began
             out[i] = cfg.affinity_weight * years / (years + cfg.affinity_half_years)
     return out
+
+
+def networks(model) -> dict[int, int]:
+    """Alliance networks (Round 14): each allied living polity -> the index of its network (the
+    polities joined by alliances), networks numbered by their lowest polity id."""
+    near: dict[int, set[int]] = {}
+    for a, b in model.alliances:
+        near.setdefault(a, set()).add(b)
+        near.setdefault(b, set()).add(a)
+    bloc: dict[int, int] = {}
+    k = 0
+    for p in sorted(near):
+        if p in bloc:
+            continue
+        stack = [p]
+        while stack:
+            q = stack.pop()
+            if q in bloc:
+                continue
+            bloc[q] = k
+            stack.extend(near[q] - bloc.keys())
+        k += 1
+    return bloc

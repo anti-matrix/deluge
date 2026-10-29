@@ -246,7 +246,14 @@ def line_sets(model, vcfg: VizConfig, layer: str) -> list[tuple[np.ndarray, floa
 # --- overlays -----------------------------------------------------------------------------------------
 
 
-WAR_OVERLAYS = ("arrows", "supply lines", "banners")
+WAR_OVERLAYS = ("arrows", "supply lines", "banners", "alliances")
+
+
+def alliance_blocs(model) -> dict[int, int]:
+    """Alliance networks (``systems/alliances.networks``)."""
+    from deluge.systems.alliances import networks
+
+    return networks(model)
 
 
 def war_display(model, vcfg: VizConfig, year: int | None = None) -> dict:
@@ -263,7 +270,8 @@ def war_display(model, vcfg: VizConfig, year: int | None = None) -> dict:
       to where the attack set out, opacity the logistics decay it fought at; none when it set
       out from the capital;
     - ``banners``: per living polity among those attacks, [x, y, colour, polity, attacks it
-      made, attacks against it] at its capital."""
+      made, attacks against it, alliance mark] at its capital; the mark is the colour its alliance
+      network shares (``alliance_blocs``, ``viz.alliance_bloc_colors``), "" for none."""
     out = {"arrows": [], "supply": [], "banners": []}
     log = getattr(model, "_campaigns", None)
     if log is None or not len(log):
@@ -304,12 +312,15 @@ def war_display(model, vcfg: VizConfig, year: int | None = None) -> dict:
         made[a] = made.get(a, 0) + 1
         against[b] = against.get(b, 0) + 1
     t = model.settlements
+    bloc = alliance_blocs(model)
+    marks_ = list(vcfg.alliance_bloc_colors)
     for p in sorted(set(made) | set(against)):
         if P.ended[p] >= 0:
             continue
         cell = int(t.cell[P.capital[p]])
         out["banners"].append([float(pos[cell, 0]), float(pos[cell, 1]), palette[int(P.lineage[p])], p,
-                               made.get(p, 0), against.get(p, 0)])
+                               made.get(p, 0), against.get(p, 0),
+                               marks_[bloc[p] % len(marks_)] if p in bloc and marks_ else ""])
     return out
 
 
@@ -334,6 +345,15 @@ def marks(model, vcfg: VizConfig, overlays=WAR_OVERLAYS) -> dict:
     out["arrows"] = war["arrows"] if "arrows" in overlays else []
     out["supply"] = war["supply"] if "supply lines" in overlays else []
     out["banners"] = war["banners"] if "banners" in overlays else []
+    # Alliances (Round 14): a thin line between the capitals of each allied pair.
+    out["alliance_color"], out["alliance_px"] = vcfg.alliance_color, vcfg.alliance_px
+    out["alliances"] = []
+    if "alliances" in overlays:
+        for a, b in sorted(model.alliances):
+            if P.ended[a] >= 0 or P.ended[b] >= 0:
+                continue
+            ca, cb = int(t.cell[P.capital[a]]), int(t.cell[P.capital[b]])
+            out["alliances"].append([float(pos[ca, 0]), float(pos[ca, 1]), float(pos[cb, 0]), float(pos[cb, 1]), a, b])
     ts = model.teachers_state
     if ts.present or (ts.visits and not ts.departed):
         cells = [int(t.cell[v["settlement"]]) for v in ts.visits if v.get("settlement", -1) >= 0]

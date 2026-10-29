@@ -869,6 +869,10 @@ viz:                          # browser UI only; no effect on the simulation
   supply_color: "#7a0000"     # supply lines: the attacker's capital to where the attack set out, opacity =
   supply_px: 1.0              # the logistics decay it fought at
   banner_px: 11.0             # war banners: a flag in the lineage colour on each capital at war
+  alliance_color: "#6e6e6e"   # thin lines between allied capitals (Round 14), a neutral colour
+  alliance_px: 1.0
+  # The common mark of allied banners: one colour per alliance network (polities joined by alliances), in turn.
+  alliance_bloc_colors: ["#ffffff", "#000000", "#ffd400", "#00b3b3", "#b000b0", "#808000"]
   teachers_color: "#ff00ff"   # the teachers' path and position during the contact phase
   teachers_px: 2.0
   map_height_px: 620

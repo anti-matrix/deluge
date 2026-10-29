@@ -42,6 +42,19 @@ looks_neighbours: "How different their neighbours look to them (0 alike, 1 most 
 looks_no_neighbours: "No other polity is in contact with them."
 looks_blind: "They perceive no difference in looks (blind perception: the control condition)."
 
+# Allies and enemies (Round 14): alliances now and before, wars now.
+allies_now: "Allies: {list}."
+ally: "{name} (since year {year})"
+no_allies: "No allies."
+wars_now: "At war with: {list}."
+war: "{name} (last battle in year {year})"
+no_wars: "At war with no one."
+past: "Alliances before: {list}."
+past_rescored: "{name} (years {begin} to {end}; {by} let it go)"
+past_ended: "{name} (years {begin} to {end}, until one of them ended)"
+past_betrayed: "{name} (years {begin} to {end}; broken by {by}, who attacked the other)"
+tree_allies: "; allies: {list}"
+
 # State in words, by level of the value (cohesion and pressure in 0..1).
 cohesion: [loosely held together, tightly held together]
 pressure: [at ease, under strain]

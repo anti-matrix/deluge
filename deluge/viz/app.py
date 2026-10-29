@@ -218,7 +218,9 @@ def LayerSelect(view: solara.Reactive[View], refresh, model: DelugeModel):
         f'to the one attacked (dashed: across the sea; fading over {VIZ.war_fade_years} years), '
         f'<span style="color:{VIZ.supply_color}">thin lines</span>: supply from the attacker\'s capital, as faint as '
         'its reach is stretched; <b>flags</b> on capitals at war: a sword for attacks made, a shield for attacks '
-        'suffered, with their counts. Hover an arrow or a flag to light up its war. Wheel or +/- to zoom, drag to '
+        'suffered, with their counts; <span style="color:' + VIZ.alliance_color + '">thin grey lines</span>: '
+        'alliances between capitals, and a small disc on a flag: the colour its alliance network shares. '
+        'Hover an arrow or a flag to light up its war. Wheel or +/- to zoom, drag to '
         'pan, click a cell to inspect its polity.</div>'))
 
 

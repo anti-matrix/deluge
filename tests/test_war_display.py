@@ -127,13 +127,13 @@ def test_banners_match_the_years_attacks(warring):
             against[arrow[7]] = against.get(arrow[7], 0) + 1
         living = {p for p in set(made) | set(against) if P.ended[p] < 0}
         assert {b[3] for b in d["banners"]} == living
-        for x, y, color, p, n_made, n_against in d["banners"]:
+        for x, y, color, p, n_made, n_against, _ in d["banners"]:
             assert n_made == made.get(p, 0) and n_against == against.get(p, 0)  # sword / shield counts
             assert color == portrayal.lineage_palette(VIZ)[int(P.lineage[p])]
             shown += 1
     assert shown > 0
     # At the shown year, banners stand on the capitals.
-    for x, y, _, p, _, _ in portrayal.war_display(m, VIZ)["banners"]:
+    for x, y, _, p, _, _, _ in portrayal.war_display(m, VIZ)["banners"]:
         cap = m.geom.positions[m.settlements.cell[P.capital[p]]]
         assert (x, y) == (float(cap[0]), float(cap[1]))
 

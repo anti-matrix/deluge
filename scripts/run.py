@@ -190,6 +190,29 @@ def settlements_frame(model) -> pd.DataFrame:
                          "ended": t.ended[:n], "population": t.population[:n]})
 
 
+def alliances_frame(model) -> pd.DataFrame:
+    """Every alliance (Round 14): the two polities (low id first), the years it began and ended (-1:
+    living at the end), how it ended (rescored, betrayed, ended: a partner ended) and by whom."""
+    rows = [(a, b, began, end, how, by) for a, b, began, end, how, by in model.alliance_history]
+    rows += [(a, b, began, -1, "", -1) for (a, b), began in sorted(model.alliances.items())]
+    return pd.DataFrame(rows, columns=["a", "b", "began", "ended", "how", "by"])
+
+
+def heads_frame(model) -> pd.DataFrame:
+    """Each living polity's per-neighbour head weights this year (Round 14): target_<feature> and
+    alliance_<feature> (the weights the brain gives each feature of a neighbour)."""
+    from deluge.brains.features import ALLIANCE_FEATURES, TARGET_FEATURES
+
+    P, B = model.polities, model.brains
+    pids = P.alive_ids()
+    df = pd.DataFrame({"polity": pids, "lineage": P.lineage[pids]})
+    for j, f in enumerate(TARGET_FEATURES):
+        df[f"target_{f}"] = B.target_w[pids, j]
+    for j, f in enumerate(ALLIANCE_FEATURES):
+        df[f"alliance_{f}"] = B.alliance_w[pids, j]
+    return df
+
+
 def chronicle_entries(model) -> int:
     """Length of the browser chronicle of the whole run (entries told one by one plus the
     generation summaries)."""
@@ -214,6 +237,9 @@ def write_tables(model, recorder, out_dir: Path) -> None:
     recorder.samples_frame().to_parquet(out_dir / "settlement_samples.parquet", index=False)
     recorder.frontier_frame().to_parquet(out_dir / "frontier.parquet", index=False)
     recorder.scale_frame().to_parquet(out_dir / "polity_scale.parquet", index=False)
+    recorder.diplomacy_frame().to_parquet(out_dir / "diplomacy.parquet", index=False)
+    alliances_frame(model).to_parquet(out_dir / "alliances.parquet", index=False)
+    heads_frame(model).to_parquet(out_dir / "brains_final.parquet", index=False)
     if getattr(model, "_campaigns", None) is not None:
         model._campaigns.frame().to_parquet(out_dir / "campaigns.parquet", index=False)
     model.events.write(out_dir / "events.parquet")
