@@ -29,6 +29,19 @@ outputs:
   newcomers: taking in newcomers
   core_migration: moving their heartland
 
+# How they look (ancestry.appearance_traits, each 0..1): [label, word for the low end, for the high end].
+# Markers only: looks have no effect on any capability (spec "Ancestry, appearance and identity").
+appearance:
+  skin_tone: [skin tone, light, dark]
+  hair_color: [hair colour, light, dark]
+  eye_color: [eye colour, light, dark]
+  stature: [stature, short, tall]
+looks_columns: [these people, all of their people now, the first of their people at year 0]
+# The perceived difference in looks from each polity in contact (0 alike .. 1 most unlike), as their brain perceives it.
+looks_neighbours: "How different their neighbours look to them (0 alike, 1 most unlike): most alike {closest}; most different {farthest}."
+looks_no_neighbours: "No other polity is in contact with them."
+looks_blind: "They perceive no difference in looks (blind perception: the control condition)."
+
 # State in words, by level of the value (cohesion and pressure in 0..1).
 cohesion: [loosely held together, tightly held together]
 pressure: [at ease, under strain]

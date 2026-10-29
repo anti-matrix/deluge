@@ -65,6 +65,8 @@ def draw_founders(model, founder_sids: list[int]) -> None:
         t.dialect[sid] = rng.normal(0.0, a.dialect_founder_sigma, size=a.dialect_dims)
     # Each founding people's dialect at year 0, kept for naming only (``founding_dialect``).
     model.founding_dialects = t.dialect[founder_sids].copy()
+    # And how its founders looked, for the inspector only (``looks``; private: no simulation reads it).
+    model._founding_appearance = t.appearance_mean[founder_sids].copy()
     if a.teachers_appearance:
         if len(a.teachers_appearance) != k:
             raise ValueError(f"ancestry.teachers_appearance needs {k} values")
@@ -229,6 +231,44 @@ def lineage_means(model) -> tuple[np.ndarray, np.ndarray]:
         app[g] = p @ t.appearance_mean[sel]
         dia[g] = p @ t.dialect[sel]
     return app, dia
+
+
+def looks(model, pid: int) -> dict[str, np.ndarray]:
+    """How polity ``pid`` looks, for the inspector (never read by the simulation): its
+    people's mean appearance traits (population-weighted over its settlements), its founding
+    lineage's now (``lineage_means``) and its lineage's founders at year 0 (NaN if unknown)."""
+    t, P = model.settlements, model.polities
+    ids = t.alive_ids()
+    mine = ids[t.polity[ids] == pid]
+    k = t.appearance_mean.shape[1]
+    own = np.full(k, np.nan)
+    if len(mine) and t.population[mine].sum() > 0:
+        own = t.population[mine] @ t.appearance_mean[mine] / t.population[mine].sum()
+    g = int(P.lineage[pid])
+    founders = getattr(model, "_founding_appearance", None)
+    return {"polity": own, "lineage": lineage_means(model)[0][g],
+            "founders": founders[g].copy() if founders is not None else np.full(k, np.nan)}
+
+
+def neighbour_looks(model, pid: int) -> list[tuple[int, float]]:
+    """How different each polity in contact with ``pid`` looks to it, as its brain perceives
+    it when scoring that polity's settlements as targets (``pair_distances`` from its capital,
+    the target feature ``appearance_distance``): the mean over that polity's settlements in
+    contact with ``pid``'s. Pairs (polity, perceived difference 0..1), most alike first."""
+    t, P = model.settlements, model.polities
+    ids = t.alive_ids()
+    mine = ids[t.polity[ids] == pid]
+    if len(mine) == 0:
+        return []
+    near = np.append(model.occupant, -1)[model.contact_cells[t.cell[mine]]].ravel()
+    near = np.unique(near[near >= 0])
+    near = near[(t.polity[near] != pid) & (t.polity[near] >= 0)]
+    if len(near) == 0:
+        return []
+    app, _ = pair_distances(model, np.full(len(near), P.capital[pid]), near)
+    pol = t.polity[near]
+    out = [(int(q), float(app[pol == q].mean())) for q in np.unique(pol)]
+    return sorted(out, key=lambda x: (x[1], x[0]))
 
 
 def contact_distances(model) -> dict[str, float]:

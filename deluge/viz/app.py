@@ -111,9 +111,12 @@ def charts(model: DelugeModel) -> list[str]:
     names = CONFIG.founders.names
     s = panels.series(model, [f"pop_{n}" for n in names] + ["n_polities", "sea_level"] + [f"pop_{m}" for m in MODES])
     xs = s["year"]
+    groups = []
+    for n in names:  # a people that died out: its line drops to zero and stops, its label says when
+        vals, ended = panels.died_out(xs, s[f"pop_{n}"])
+        groups.append((n if ended is None else f"{n} (ended {ended:,})", vals, GROUP_PLOT_COLORS[f"pop_{n}"]))
     return [
-        panels.line_chart(VIZ, "Population per founding group", xs,
-                          [(n, s[f"pop_{n}"], GROUP_PLOT_COLORS[f"pop_{n}"]) for n in names]),
+        panels.line_chart(VIZ, "Population per founding group", xs, groups),
         panels.line_chart(VIZ, "Polities", xs, [("polities", s["n_polities"], "#333333")]),
         panels.line_chart(VIZ, "Population per subsistence mode", xs,
                           [(m, s[f"pop_{m}"], VIZ.mode_colors[m]) for m in MODES]),

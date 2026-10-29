@@ -3,9 +3,11 @@
 - ``line_chart``: series over the years (population per founding group, polity count, ...),
   thinned to at most ``viz.chart_points`` points per series.
 - ``lineage_tree``: a snapshot of the polity descent tree: every living polity and its
-  ancestors, one horizontal line per polity from its founding to its end (or now), joined to
-  its parent at the year it split off, coloured by founding group; hovering a branch shows the
-  polity's name and years.
+  ancestors (and, for a founding group with none left, its last polities and theirs), one
+  horizontal line per polity from its founding to its end (with a small end mark) or, while
+  it lives, to now, joined to its parent at the year it split off, coloured by founding
+  group; hovering a branch shows the polity's name, years and how it ended.
+- ``died_out``: a people's population line drops to zero where it died out and stops there.
 - ``inspector``: one polity, in the narrator's language (``deluge/naming.py``, words in
   ``viz.inspector_file``): who they are, their culture and this year's brain outputs in words,
   and "What they remember": for each of the heaviest symbols of its store, the narrator's
@@ -63,13 +65,32 @@ def line_chart(vcfg: VizConfig, title: str, xs, lines: list[tuple[str, list[floa
              f'<text x="{pad}" y="{h - 4}" font-size="9">{x0:,.0f}</text>',
              f'<text x="{w - 40}" y="{h - 4}" font-size="9">{x1:,.0f}</text>',
              f'<line x1="{pad}" y1="{h - 18}" x2="{w - 8}" y2="{h - 18}" stroke="#999"/>']
-    for k, (label, vals, color) in enumerate(lines):
+    lx = pad + 4
+    for label, vals, color in lines:
         v = np.asarray(vals, dtype=float)
-        pts = " ".join(f"{sx(xs[i]):.1f},{sy(v[i]):.1f}" for i in keep if i < len(v))
-        parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="1.5" points="{pts}"/>')
-        parts.append(f'<text x="{pad + 4 + 46 * k}" y="26" font-size="9" fill="{color}">{html.escape(label)}</text>')
+        # A shorter series (a line that stops, e.g. a people that died out) ends at its last point.
+        idx = [i for i in keep if i < len(v)] + ([len(v) - 1] if len(v) and len(v) - 1 not in keep else [])
+        pts = " ".join(f"{sx(xs[i]):.1f},{sy(v[i]):.1f}" for i in idx)
+        parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="1.5" points="{pts}" '
+                     f'data-label="{html.escape(label)}"/>')
+        parts.append(f'<text x="{lx}" y="26" font-size="9" fill="{color}">{html.escape(label)}</text>')
+        lx += max(46, 6 * len(label) + 8)
     parts.append("</svg>")
     return "".join(parts)
+
+
+def died_out(xs, values) -> tuple[list[float], int | None]:
+    """A people's series cut where it died out: if its last value is 0, the series up to its
+    first zero after the last year with people (the line drops to zero and stops there), and
+    that year; else the series whole and None."""
+    v = list(values)
+    if not v or v[-1] > 0:
+        return v, None
+    alive = [i for i, x in enumerate(v) if x > 0]
+    if not alive:
+        return v[:1], int(xs[0])
+    end = alive[-1] + 1
+    return v[: end + 1], int(xs[end])
 
 
 def lineage_tree(model, vcfg: VizConfig) -> str:
@@ -79,6 +100,16 @@ def lineage_tree(model, vcfg: VizConfig) -> str:
     nodes: set[int] = set()
     for p in alive:
         nodes.update(model.lineages.polity_ancestry(P, p))
+    # A founding group with no living polity: its last polities (those that ended last) and theirs.
+    n = P.n
+    living_groups = set(P.lineage[alive].tolist())
+    for g in range(len(model.lineages.names)):
+        mine = np.flatnonzero(P.lineage[:n] == g)
+        if g in living_groups or len(mine) == 0:
+            continue
+        last = mine[P.ended[mine] == P.ended[mine].max()]
+        for p in last.tolist():
+            nodes.update(model.lineages.polity_ancestry(P, p))
     if not nodes:
         return "<i>No polities.</i>"
     children: dict[int, list[int]] = {}
@@ -108,20 +139,32 @@ def lineage_tree(model, vcfg: VizConfig) -> str:
     sy = lambda r: 20 + (h - 30) * r / rows  # noqa: E731
     from deluge.data.events import entity
 
+    from deluge.agents.polity import END_CAUSES
+
     palette = lineage_palette(vcfg)
     sp = Speaker(model, tags=True)
+    words = inspector_words(vcfg)
     parts = [f'<svg width="{w}" height="{h}" style="background:#fff;border:1px solid #ddd">',
              f'<text x="{pad}" y="12" font-size="11" font-weight="bold">Polity descent: {len(alive)} living, '
              f'{len(nodes)} with ancestors (year {max(now - 1, 0):,})</text>']
     for p, r in order.items():
-        end = int(P.ended[p]) if P.ended[p] >= 0 else now
+        ended = P.ended[p] >= 0
+        end = int(P.ended[p]) if ended else now  # an ended polity's branch stops at its end; the living run on
         c = palette[int(P.lineage[p])]
         label = sp.entity(entity("polity", p))
-        years = f"{int(P.founded[p]):,} to {int(P.ended[p]):,}" if P.ended[p] >= 0 else f"{int(P.founded[p]):,} on"
+        years = f"{int(P.founded[p]):,} to {int(P.ended[p]):,}" if ended else f"{int(P.founded[p]):,} on"
+        how = ""
+        if ended:
+            other = int(P.merged_into[p])
+            how = "; " + words["ended"][END_CAUSES[int(P.end_cause[p])]].format(
+                year=int(P.ended[p]), other=sp.entity(entity("polity", other)) if other >= 0 else "")
         x1, x2, y = sx(P.founded[p]), sx(end), sy(r)
-        parts.append(f'<g><title>{html.escape(label[:1].upper() + label[1:])}, years {years}</title>'
+        mark = (f'<line x1="{x2:.1f}" y1="{y - 3:.1f}" x2="{x2:.1f}" y2="{y + 3:.1f}" stroke="{c}" '
+                f'stroke-width="1.2"/>') if ended else ""
+        parts.append(f'<g data-polity="{p}" data-end="{end}"><title>{html.escape(label[:1].upper() + label[1:])}, '
+                     f'years {years}{html.escape(how)}</title>'
                      f'<line x1="{x1:.1f}" y1="{y:.1f}" x2="{x2:.1f}" y2="{y:.1f}" '
-                     f'stroke="{c}" stroke-width="{1.6 if P.ended[p] < 0 else 0.8}"/>'
+                     f'stroke="{c}" stroke-width="{1.6 if not ended else 0.8}"/>{mark}'
                      f'<line x1="{x1:.1f}" y1="{y:.1f}" x2="{max(x2, x1 + 3):.1f}" y2="{y:.1f}" '
                      f'stroke="transparent" stroke-width="4"/></g>')
         parent = int(P.parent[p])
@@ -177,6 +220,48 @@ def _worded_bars(rows, color: str) -> str:
     return f"<div>{out}</div>"
 
 
+def looks_html(model, pid: int, vcfg: VizConfig, words: dict, sp, color: str) -> str:
+    """"How they look": per appearance trait, bars for the polity's people, all of its founding
+    people now and its founders at year 0 (drift and mixing show as the gap between them), then
+    one line on how different the polities in contact look to it (``identity.neighbour_looks``:
+    the perceived difference its brain reads), the three most alike and the three most unlike."""
+    from deluge.data.events import entity
+    from deluge.systems import identity
+
+    seen = identity.looks(model, pid)
+    cols = list(zip(("polity", "lineage", "founders"), words["looks_columns"], (color, "#888888", "#cccccc")))
+    head = "".join(f'<span style="display:inline-flex;align-items:center;gap:3px;margin-right:10px">'
+                   f'<span style="display:inline-block;width:10px;height:10px;background:{c}"></span>'
+                   f'{html.escape(label)}</span>' for _, label, c in cols)
+    rows = []
+    for j, trait in enumerate(model.config.ancestry.appearance_traits):
+        label, low, high = words["appearance"].get(trait, [trait.replace("_", " "), "low", "high"])
+        bars = ""
+        for key, col_label, c in cols:
+            v = float(seen[key][j])
+            bars += ('<div style="display:flex;align-items:center;gap:4px;height:11px">'
+                     + ("<span style='font-size:10px;color:#999'>unknown</span>" if np.isnan(v) else
+                        f'<span title="{html.escape(col_label)}: {v:.2f}" style="display:inline-block;height:8px;'
+                        f'width:{80 * min(max(v, 0.0), 1.0):.0f}px;background:{c}"></span>'
+                        f'<span style="font-size:10px;color:#777">{v:.2f}</span>') + "</div>")
+        rows.append(f'<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0" '
+                    f'data-trait="{trait}"><span style="width:14em">{html.escape(label)} '
+                    f'<span style="color:#888">({html.escape(low)} to {html.escape(high)})</span></span>'
+                    f'<div>{bars}</div></div>')
+    if model.config.ancestry.blind_perception:
+        line = words["looks_blind"]
+    else:
+        near = identity.neighbour_looks(model, pid)
+        if not near:
+            line = words["looks_no_neighbours"]
+        else:
+            def named(items):
+                return ", ".join(f"{sp.entity(entity('polity', q))} {d:.2f}" for q, d in items)
+            line = words["looks_neighbours"].format(closest=named(near[:3]), farthest=named(near[::-1][:3]))
+    return (f'<div style="font-size:11px;margin-bottom:2px">{head}</div>' + "".join(rows)
+            + f'<div style="font-size:12px;margin-top:4px" data-looks="neighbours">{html.escape(line)}</div>')
+
+
 def _details(lines: list[str]) -> str:
     return ('<details style="margin:0 0 6px 1em"><summary style="font-size:11px;color:#666;cursor:pointer">'
             'details</summary><pre style="white-space:pre-wrap;font-size:11px;margin:2px 0">'
@@ -224,6 +309,8 @@ def inspector(model, pid: int, vcfg: VizConfig, n_symbols: int | None = None) ->
            "<h4>Their ways</h4>",
            _worded_bars([(tr.replace("_", " "), trait_word(words, tr, float(v)), float(v))
                          for tr, v in zip(model.config.founders.culture_traits, P.culture[pid])], color),
+           "<h4>How they look</h4>",
+           looks_html(model, pid, vcfg, words, sp, color),
            "<h4>What they lean toward this year</h4>",
            _worded_bars([(words["outputs"][o], level_word(words, float(v)), float(v))
                          for o, v in zip(OUTPUTS, model.brains.output[pid])], "#555")]
