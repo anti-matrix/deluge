@@ -114,16 +114,28 @@ def run(model) -> None:
     for x, y in model.alliances:
         count[x] = count.get(x, 0) + 1
         count[y] = count.get(y, 0) + 1
+    # Every score this year's proposals can need, in one batch both ways (no feature changes while
+    # they are made: a pair allied this year is no candidate again).
+    pa, pb = [], []
+    for p in seeking.tolist():
+        for q in near.get(p, ()):
+            if not allied(model, p, q):
+                pa.append(p)
+                pb.append(q)
+    if not pa:
+        return
+    s_pq = score(model, np.array(pa + pb), np.array(pb + pa))
+    to = dict(zip(zip(pa + pb, pb + pa), s_pq.tolist()))
     for p in seeking.tolist():
         if full(count.get(p, 0)):
             continue
         cand = [q for q in near.get(p, ()) if not allied(model, p, q) and not full(count.get(q, 0))]
         if not cand:
             continue
-        s = score(model, np.full(len(cand), p), np.array(cand))
+        s = np.array([to[(p, q)] for q in cand])
         k = int(np.argmax(s))
         q = cand[k]
-        if s[k] <= cfg.score_threshold or score(model, [q], [p])[0] <= cfg.score_threshold:
+        if s[k] <= cfg.score_threshold or to[(q, p)] <= cfg.score_threshold:
             continue
         model.alliances[key(p, q)] = model.year
         count[p] = count.get(p, 0) + 1

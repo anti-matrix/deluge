@@ -180,21 +180,23 @@ def shared_memory_overlap(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
 def common_enemy(model, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """1 where both polities of a pair are at war (``model.wars``) with the same third polity."""
     a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
+    if not model.wars or len(a) == 0:
+        return np.zeros(len(a))
     enemies: dict[int, set[int]] = {}
     for p, q in model.wars:
         enemies.setdefault(p, set()).add(q)
         enemies.setdefault(q, set()).add(p)
-    # Two polities share an enemy r exactly when both are among r's enemies (r is neither:
-    # no polity is its own enemy).
-    shared = [(p, q) for r, es in enemies.items() if len(es) > 1 for p in es for q in es if p < q and r not in (p, q)]
-    shared += [(p, p) for p, es in enemies.items() if es - {p}]  # a polity paired with itself
-    if not shared or len(a) == 0:
-        return np.zeros(len(a))
-    n = np.int64(max(max(max(pq) for pq in shared), int(a.max()), int(b.max())) + 1)
-    codes = np.unique(np.array([p * n + q for p, q in shared], dtype=np.int64))
-    pairs = np.minimum(a, b) * n + np.maximum(a, b)
-    at = np.minimum(np.searchsorted(codes, pairs), len(codes) - 1)
-    return (codes[at] == pairs).astype(float)
+    # Two polities share an enemy r when some r (neither of them) is at war with both; a polity
+    # paired with itself, when it has any enemy. Per pair, from the two enemy sets.
+    out = np.zeros(len(a))
+    none: set[int] = set()
+    for i, (p, q) in enumerate(zip(a.tolist(), b.tolist())):
+        ep, eq = enemies.get(p, none), enemies.get(q, none)
+        if p == q:
+            out[i] = float(bool(ep - {p}))
+        elif ep and eq and (ep & eq) - {p, q}:
+            out[i] = 1.0
+    return out
 
 
 def contact_pairs(model) -> np.ndarray:

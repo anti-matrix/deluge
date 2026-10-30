@@ -48,6 +48,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from deluge.config import DEFAULT_CONFIG_PATH, load_config, read_overrides  # noqa: E402
@@ -213,6 +214,30 @@ def heads_frame(model) -> pd.DataFrame:
     return df
 
 
+def prior_frame(model) -> pd.DataFrame:
+    """Per polity pair in contact at the end (Round 14), both ways: the appearance similarity of
+    their capitals, the shift the appearance prior adds to the alliance score's sum and takes from
+    the target score's sum (0 when it is off; ``would_shift``: its size were it on), and the brain's
+    own appearance terms (head weight x perceived appearance difference) for alliance and target."""
+    from deluge.brains.features import ALLIANCE_FEATURES, TARGET_FEATURES
+    from deluge.systems import identity, politics
+
+    P, B = model.polities, model.brains
+    pairs = politics.contact_pairs(model)
+    if len(pairs) == 0:
+        return pd.DataFrame(columns=["a", "b", "similarity", "shift", "would_shift", "alliance_term", "target_term"])
+    a = np.r_[pairs[:, 0], pairs[:, 1]]
+    b = np.r_[pairs[:, 1], pairs[:, 0]]
+    ca, cb = P.capital[a], P.capital[b]
+    app, _ = identity.pair_distances(model, ca, cb)
+    sim, _ = identity.pair_similarities(model, ca, cb)
+    kp = model.config.memory.kin_prior
+    return pd.DataFrame({"a": a, "b": b, "similarity": sim, "shift": identity.kin_prior(model, ca, cb),
+                         "would_shift": kp.weight * sim,
+                         "alliance_term": B.alliance_w[a, ALLIANCE_FEATURES.index("appearance_distance")] * app,
+                         "target_term": B.target_w[a, TARGET_FEATURES.index("appearance_distance")] * app})
+
+
 def chronicle_entries(model) -> int:
     """Length of the browser chronicle of the whole run (entries told one by one plus the
     generation summaries)."""
@@ -240,6 +265,7 @@ def write_tables(model, recorder, out_dir: Path) -> None:
     recorder.diplomacy_frame().to_parquet(out_dir / "diplomacy.parquet", index=False)
     alliances_frame(model).to_parquet(out_dir / "alliances.parquet", index=False)
     heads_frame(model).to_parquet(out_dir / "brains_final.parquet", index=False)
+    prior_frame(model).to_parquet(out_dir / "prior_shift.parquet", index=False)
     if getattr(model, "_campaigns", None) is not None:
         model._campaigns.frame().to_parquet(out_dir / "campaigns.parquet", index=False)
     model.events.write(out_dir / "events.parquet")
