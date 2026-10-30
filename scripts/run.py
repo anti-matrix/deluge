@@ -291,9 +291,15 @@ def run(cfg, out_dir: Path, config_path: str, overrides_path: str | None, fresh:
     found = [] if fresh else checkpoints(out_dir)
     if found:
         state = load_checkpoint(found[-1])
-        if state["config_hash"] != cfg.hash():
-            raise ValueError(f"{found[-1]} was written with another config")
         model = state["model"]
+        if state["config_hash"] != cfg.hash():
+            # Only sections the simulation never reads (outputs, UI, reports) may differ, e.g. how often
+            # checkpoints are written; the history is the same.
+            from deluge.data.state import simulation_config_hash
+
+            if simulation_config_hash(model.config) != simulation_config_hash(cfg):
+                raise ValueError(f"{found[-1]} was written with another config")
+            log(f"resuming with other output settings (the simulation's config is the same)")
         state["resumed_from"].append(model.year)
         log(f"resumed from {found[-1].name} (year {model.year})")
     else:

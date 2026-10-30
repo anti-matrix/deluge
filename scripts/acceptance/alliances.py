@@ -86,6 +86,12 @@ def summary(run: Run) -> dict:
     out["allies_end_max"] = int(now[alive].max()) if alive.any() else 0
     out["allies_end_median"] = float(np.median(now[alive])) if alive.any() else 0.0
     out["allies_end_share_4plus"] = float((now[alive] >= 4).mean()) if alive.any() else 0.0
+    ps = run.path / "prior_shift.parquet"
+    pr = pd.read_parquet(ps) if ps.exists() else pd.DataFrame()
+    for k in ("shift", "would_shift"):
+        out[f"prior_{k}"] = float(pr[k].mean()) if len(pr) else float("nan")
+    for k in ("alliance_term", "target_term"):
+        out[f"brain_{k}"] = (float(pr[k].mean()), float(pr[k].abs().mean())) if len(pr) else (float("nan"),) * 2
     peak = dip.loc[dip.largest_network.idxmax()] if len(dip) else None
     out["largest_network_peak"] = (int(peak.largest_network), int(peak.year), int(peak.polities)) if peak is not None else None
     last = dip.iloc[-1] if len(dip) else None
@@ -98,7 +104,7 @@ def summary(run: Run) -> dict:
 
 def fmt(v) -> str:
     if isinstance(v, tuple) and len(v) == 2 and all(isinstance(x, float) for x in v):
-        return f"{v[0]:+.3f} ± {v[1]:.3f}"
+        return "-" if np.isnan(v[0]) else f"{v[0]:+.3f} ± {v[1]:.3f}"
     if isinstance(v, float):
         return "-" if np.isnan(v) else (f"{v:.3f}" if abs(v) < 10 else f"{v:,.0f}")
     return f"{v:,}" if isinstance(v, int) else str(v)
@@ -116,6 +122,10 @@ ROWS = [
     ("target head: appearance difference", "target_appearance_distance"),
     ("target head: dialect similarity", "target_dialect_similarity"),
     ("target head: shared descent", "target_shared_descent"),
+    ("prior's shift of a score's sum, mean over pairs in contact at the end (+ alliance, - target)", "prior_shift"),
+    ("... the same were the prior on", "prior_would_shift"),
+    ("brain's own appearance term in the alliance sum (mean, mean of |.|)", "brain_alliance_term"),
+    ("brain's own appearance term in the target sum (mean, mean of |.|)", "brain_target_term"),
     ("polity births", "polity_births"), ("median lifespan, 3+ settlements", "median_lifespan_3plus"),
     ("mergers", "mergers"),
     ("alliances per polity over its life: max", "allies_life_max"),
