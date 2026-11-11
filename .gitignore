@@ -28,3 +28,6 @@ htmlcov/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Claude Code project instructions (never committed)
+CLAUDE.md
